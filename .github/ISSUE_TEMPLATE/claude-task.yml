@@ -1,0 +1,78 @@
+name: Claude Task
+description: Structured task for Claude Code execution
+title: "[TASK] "
+labels: ["claude-task"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Prepare this task in ChatGPT first.
+        Weak tasks will be automatically flagged and Claude will not run.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the bug or change clearly.
+      placeholder: Explain exactly what is broken or what needs to change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files to Edit
+      description: Exact files Claude is allowed to modify.
+      placeholder: |
+        app.js
+        styles.css
+    validations:
+      required: true
+
+  - type: textarea
+    id: plan
+    attributes:
+      label: Implementation Plan
+      description: Numbered steps only.
+      placeholder: |
+        1. Update ...
+        2. Change ...
+        3. Verify ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: do_not
+    attributes:
+      label: Do Not Change
+      description: What must stay untouched.
+      placeholder: |
+        - Do not refactor unrelated logic
+        - Do not change layout
+        - Do not touch other files
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Clear, testable outcomes.
+      placeholder: |
+        - Future week remains after refresh
+        - No console errors
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I used ChatGPT or another planning step before creating this issue.
+          required: true
+        - label: I listed the exact files to edit.
+          required: true
+        - label: I included acceptance criteria.
+          required: true
