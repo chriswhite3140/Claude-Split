@@ -1,0 +1,186 @@
+name: Validate Claude Issue
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  validate:
+    if: contains(join(github.event.issue.labels.*.name, ','), 'claude-task')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate issue body
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || "";
+            const problems = [];
+
+            const requiredSections = [
+              "### Problem",
+              "### Files to Edit",
+              "### Implementation Plan",
+              "### Do Not Change",
+              "### Acceptance Criteria",
+              "### Confirmations"
+            ];
+
+            const missingSections = requiredSections.filter(section => !body.includes(section));
+            if (missingSections.length) {
+              problems.push(`Missing required sections: ${missingSections.join(", ")}`);
+            }
+
+            function extractSection(title, nextTitles) {
+              const escapedNext = nextTitles.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|");
+              const re = new RegExp(`### ${title}\\s+([\\s\\S]*?)(?=### (${escapedNext})|$)`, "m");
+              const match = body.match(re);
+              return match ? match[1].trim() : "";
+            }
+
+            const filesText = extractSection("Files to Edit", [
+              "Implementation Plan",
+              "Do Not Change",
+              "Acceptance Criteria",
+              "Confirmations"
+            ]);
+
+            const planText = extractSection("Implementation Plan", [
+              "Do Not Change",
+              "Acceptance Criteria",
+              "Confirmations"
+            ]);
+
+            const doNotText = extractSection("Do Not Change", [
+              "Acceptance Criteria",
+              "Confirmations"
+            ]);
+
+            const acceptanceText = extractSection("Acceptance Criteria", [
+              "Confirmations"
+            ]);
+
+            const fileLines = filesText
+              .split("\n")
+              .map(x => x.trim())
+              .filter(Boolean);
+
+            if (fileLines.length === 0) {
+              problems.push("Files to Edit is empty.");
+            }
+
+            if (fileLines.some(line => !line.includes("."))) {
+              problems.push("Files to Edit must contain actual file names such as app.js or styles.css.");
+            }
+
+            const numberedSteps = (planText.match(/^\s*\d+\./gm) || []).length;
+            if (numberedSteps < 2) {
+              problems.push("Implementation Plan must include at least 2 numbered steps.");
+            }
+
+            const acceptanceBullets = (acceptanceText.match(/^\s*-\s/gm) || []).length;
+            if (acceptanceBullets < 2) {
+              problems.push("Acceptance Criteria must include at least 2 bullet points.");
+            }
+
+            if (doNotText.length < 15) {
+              problems.push("Do Not Change is too vague.");
+            }
+
+            const bannedPhrases = [
+              "fix this",
+              "look into this",
+              "improve this",
+              "clean this up",
+              "whatever is needed",
+              "as needed"
+            ];
+
+            const lowerBody = body.toLowerCase();
+            const foundBanned = bannedPhrases.filter(p => lowerBody.includes(p));
+            if (foundBanned.length) {
+              problems.push(`Issue contains vague phrases: ${foundBanned.join(", ")}`);
+            }
+
+            core.setOutput("valid", problems.length === 0 ? "true" : "false");
+            core.setOutput("problems", problems.join("\n"));
+
+      - name: Add invalid label
+        if: steps.validate.outputs.valid == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ["invalid-claude-task"]
+            });
+
+      - name: Comment on invalid issue
+        if: steps.validate.outputs.valid == 'false'
+        uses: actions/github-script@v7
+        env:
+          PROBLEMS: ${{ steps.validate.outputs.problems }}
+        with:
+          script: |
+            const problems = process.env.PROBLEMS || "";
+            const lines = problems ? problems.split("\n").filter(Boolean).map(p => `- ${p}`).join("\n") : "- Unknown validation problem";
+            const body = [
+              "❌ This issue was rejected by the Claude task validator.",
+              "",
+              "Problems found:",
+              lines,
+              "",
+              "Required standard:",
+              "- exact file names (e.g., app.js, not 'files')",
+              "- at least 2 numbered implementation steps",
+              "- clear non-goals (Do Not Change)",
+              "- at least 2 acceptance criteria",
+              "",
+              "Fix the issue and edit it. Claude will remain blocked while the `invalid-claude-task` label is present."
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body
+            });
+
+      - name: Remove invalid label when fixed
+        if: steps.validate.outputs.valid == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                name: "invalid-claude-task"
+              });
+            } catch (e) {
+              core.info("No invalid label to remove.");
+            }
+
+      - name: Add claude-ready label
+        if: steps.validate.outputs.valid == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: ["claude-ready"]
+              });
+            } catch (e) {
+              core.info("Could not add claude-ready label.");
+            }
