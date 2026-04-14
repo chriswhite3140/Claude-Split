@@ -1,0 +1,38 @@
+name: Claude Task Execution
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  claude:
+    if: |
+      !contains(join(github.event.issue.labels.*.name, ','), 'invalid-claude-task') &&
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '/claude'))
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          trigger_phrase: "/claude"
+          claude_args: |
+            --model claude-sonnet-4-6
+            --max-turns 4
