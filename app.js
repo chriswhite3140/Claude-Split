@@ -168,6 +168,7 @@ const YLM = {
   'F':'Foundation','1':'Year 1','2':'Year 2','3':'Year 3',
   '4':'Year 4','5':'Year 5','6':'Year 6',
 };
+const PLANNER_SUBJECTS = ['English','Mathematics','Science','HASS','The Arts','Technologies','Health & PE','Languages'];
 function subjectCol(subj)   { return (SUBJECT_COLOURS[subj] || {col:'var(--blue)'}).col; }
 function subjectBg(subj)    { return (SUBJECT_COLOURS[subj] || {bg:'var(--surface-alt)'}).bg; }
 function subjectShort(subj) {
@@ -866,7 +867,10 @@ function renderPlanner(main) {
             </div>
             <div class="form-group">
               <label class="form-label">Subject</label>
-              <input class="form-input" type="text" value="${escapeHtml(selectedLesson.subject || '')}" oninput="plannerUpdateSelectedLessonField('subject', this.value)">
+              <select class="form-input" onchange="plannerUpdateSelectedLessonField('subject', this.value)">
+                <option value="">— select subject —</option>
+                ${PLANNER_SUBJECTS.map(s => `<option value="${s}" ${selectedLesson.subject === s ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">Day</label>
