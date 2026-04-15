@@ -44,7 +44,7 @@ Test by opening the GitHub Pages URL in a browser. Hard refresh (Ctrl+Shift+R) w
 
 These define product intent, rules, and scope. Consult the relevant doc before making changes — do not add features or behaviours that contradict them.
 
-- `docs/MASTER-PROJECT-SUMMAR.md` – single source of truth for product definition, scope, and what the product is NOT
+- `docs/MASTER-PROJECT-SUMMARY.md` – single source of truth for product definition, scope, and what the product is NOT
 - `docs/PRODUCT-RULES-DOCUMENT.md` – enforcement rules every feature must be checked against (IC-centric, planning-first, etc.)
 - `docs/DATA-SCHEMA-DOCUMENT.md` – technical source of truth for entities, fields, and relationships
 - `docs/WEEKLY-PLANNER-SPEC.md` – product and interaction spec for the Weekly Planner (the primary working screen)
