@@ -13,7 +13,9 @@ ClassTracker is a browser-based classroom planning and assessment tool for Austr
 
 ## Backend
 
-Google Apps Script connects to Google Sheets for data storage. The frontend communicates with it via fetch calls to a deployed Apps Script URL.
+Current: Google Apps Script connects to Google Sheets for data storage. The frontend communicates with it via fetch calls to a deployed Apps Script URL.
+
+Target (V1.5): Supabase in the Sydney region (ap-southeast-2), with magic-link email auth and Row Level Security for per-teacher data isolation. See `docs/V1.5-SAAS-SHELL.md`.
 
 ## Key conventions
 
@@ -45,8 +47,9 @@ Test by opening the GitHub Pages URL in a browser. Hard refresh (Ctrl+Shift+R) w
 These define product intent, rules, and scope. Consult the relevant doc before making changes — do not add features or behaviours that contradict them.
 
 - `docs/MASTER-PROJECT-SUMMARY.md` – single source of truth for product definition, scope, and what the product is NOT
-- `docs/PRODUCT-RULES-DOCUMENT.md` – enforcement rules every feature must be checked against (IC-centric, planning-first, etc.)
+- `docs/PRODUCT-RULES-DOCUMENT.md` – enforcement rules every feature must be checked against (IC-centric, planning-first, single four-term mastery vocabulary, etc.)
 - `docs/DATA-SCHEMA-DOCUMENT.md` – technical source of truth for entities, fields, and relationships
 - `docs/WEEKLY-PLANNER-SPEC.md` – product and interaction spec for the Weekly Planner (the primary working screen)
 - `docs/FIRST-BUILD-SLICE.md` – the minimum vertical slice that proves the core loop; do not expand beyond this without approval
+- `docs/V1.5-SAAS-SHELL.md` – auth, backend (Supabase, Sydney), payment, privacy, pricing; wraps the slice to make it a paid public product
 

@@ -32,7 +32,7 @@ The following loop must always be fast and intact:
 3. Attach 1–3 ICs
 4. Mark lesson as taught
 5. Update mastery quickly
-6. View weak ICs
+6. View ICs needing reteach
 7. Plan next lesson
 
 If any step becomes slow, complex, or optional to the point of being skipped, the system breaks.
@@ -45,18 +45,19 @@ If any step becomes slow, complex, or optional to the point of being skipped, th
     - teachable in 1–2 lessons
     - observable in student work
     - assessable quickly
-- 
 
 No vague or untestable ICs allowed.
 
 # **5. Mastery Rules**
 
-**Allowed Status Values**
+**Single Vocabulary (used at every level: per-student, per-IC, per-descriptor)**
 
-- Not Yet
+- Emerging
 - Developing
-- Secure
-- Absent (optional only during entry)
+- Consolidating
+- Mastery
+
+These four terms are the only vocabulary used for mastery and progress anywhere in the product. Legacy terms such as "Not Yet", "Secure", "Competent", "Highly Competent", "weak", "strong" are not to appear in the UI or data model.
 
 **Mastery Constraints**
 
@@ -70,13 +71,11 @@ No vague or untestable ICs allowed.
 - Mastery must be quick to enter
 - Teachers can skip students
 - Blank data is allowed
+- Blank means no evidence yet, not a low score
 
-**Absent Rule**
+**No Absent value**
 
-- Absent is optional
-- Only used during mastery entry
-- Not a separate attendance system
-- Not required for saving
+Attendance is not a concept in the mastery model. If a student was not present for a learning opportunity, the teacher simply leaves the cell blank.
 
 # **6. Data Reality Rule**
 
@@ -90,7 +89,7 @@ No feature should assume full data coverage.
 
 # **7. Taught Rule**
 
-An IC is considered “taught” only when:
+An IC is considered "taught" only when:
 
 - the lesson is marked as taught
 
@@ -99,6 +98,8 @@ Not when:
 - scheduled
 - planned
 - partially delivered
+
+**Revert rule:** a teacher may revert a lesson from taught back to planned. Reverting does **not** delete attached mastery records. The teacher is trusted to have seen real evidence when they entered it.
 
 # **8. Planning Rules**
 
@@ -137,25 +138,39 @@ The planner must feel fluid, not constrained.
 
 - Must be derived from IC patterns
 - Must remain approximate
+- Must use the single four-term vocabulary (Emerging, Developing, Consolidating, Mastery)
 
 **Constraints**
 
-- No strict percentage thresholds in Version 1
+- No strict percentage thresholds for individual progress in Version 1
 - No artificial precision
 - No claims beyond available evidence
 
 **Interpretation Rule**
 
-- Emerging = mostly Not Yet or no evidence
-- Developing = mixed evidence
-- Competent = mostly Secure
-- Highly Competent = consistent Secure
+- Emerging = mostly Emerging or no evidence
+- Developing = mixed evidence with lower rungs common
+- Consolidating = mostly Consolidating, some Mastery
+- Mastery = consistent Mastery across recent evidence
 
-# **11. Progress and Gap Rules**
+# **11. Reteach Threshold Rule**
+
+An IC is flagged as **needs reteach** at the whole-class level when, across the class's most recent mastery record per student for that IC:
+
+- **≥40% of students are at Emerging or Developing**
+
+**Rules:**
+
+- 40% is the default and is teacher-adjustable via settings in V1.5
+- This is a whole-class signal that drives "what do I teach next to the whole class?"
+- It is separate from per-student intervention signals: a student has unfinished business on an IC if their most recent record is Emerging or Developing, regardless of class threshold
+- Both signals are computed from the same mastery data; no extra entry burden
+
+# **12. Progress and Gap Rules**
 
 Progress views must:
 
-- highlight weak ICs
+- highlight ICs needing reteach
 - highlight untaught ICs
 - identify student gaps
 - support next teaching decisions
@@ -166,7 +181,7 @@ Progress views must NOT:
 - overwhelm with data
 - rely on perfect inputs
 
-# **12. AI Rules**
+# **13. AI Rules**
 
 **AI is allowed to:**
 
@@ -183,19 +198,20 @@ Progress views must NOT:
 
 Teacher always confirms.
 
-# **13. Scope Rules (Version 1)**
+# **14. Scope Rules (Version 1)**
 
 The system must NOT include:
 
 - behaviour tracking
 - parent communication
-- full report writing
 - large resource management
 - standalone attendance system
 
-Any attempt to add these breaks scope.
+**Report-writing support is a future capability (Phase 6), not V1. V1 must, however, store data in a form that makes report-writing support buildable later without schema rework.**
 
-# **14. Duplication Rule**
+Any attempt to add out-of-scope modules to V1 breaks scope.
+
+# **15. Duplication Rule**
 
 No duplicate workflows allowed.
 
@@ -203,18 +219,18 @@ No duplicate workflows allowed.
 - No separate assessment interface that repeats work
 - No entering the same information twice
 
-# **15. Speed Rules**
+# **16. Speed Rules**
 
 **Required Performance Targets**
 
 - Lesson creation ≤ 60 seconds
 - Mastery update very fast
 - Weekly planning must be quick
-- Gap identification ≤ 5 minutes
+- Identifying ICs needing reteach ≤ 5 minutes
 
 If a feature slows these down, it must be simplified or removed.
 
-# **16. Failure Tolerance Rule**
+# **17. Failure Tolerance Rule**
 
 The system must continue to work if:
 
@@ -224,14 +240,22 @@ The system must continue to work if:
 
 The system must recover without penalty or confusion.
 
-# **17. Integrity Rules**
+# **18. Integrity Rules**
 
 - No lesson without ICs (final workflow)
 - No mastery record without student + IC
 - Descriptor summaries must come from ICs only
 - No hidden or conflicting data sources
+- Lesson time is represented by a single canonical field (`date`); other time references are derived
 
-# **18. Feature Evaluation Rule**
+# **19. Class Model Rules**
+
+- A class is one `ClassGroup`
+- Composite classes use `yearLevels: string[]`
+- Each student carries their own `yearLevel`
+- IC filtering respects the year levels present in the class
+
+# **20. Feature Evaluation Rule**
 
 Before building any feature, check:
 
@@ -243,7 +267,7 @@ Before building any feature, check:
 
 If any answer is no, the feature should not be built.
 
-# **19. Design Philosophy Rule**
+# **21. Design Philosophy Rule**
 
 Speed over completeness
 
@@ -260,7 +284,7 @@ If the system becomes:
 - overly precise
 - or admin-focused
 
-It has failed, regardless of how “correct” it looks.
+It has failed, regardless of how "correct" it looks.
 
 The product must always prioritise:
 

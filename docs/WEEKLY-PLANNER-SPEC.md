@@ -16,7 +16,7 @@ Its job is to help a teacher:
 - move lessons easily when plans change
 - mark lessons as taught
 - move directly into mastery entry
-- notice weak, untaught, or priority ICs while planning
+- notice ICs needing reteach, untaught ICs, or priority ICs while planning
 
 This screen must support real teacher behaviour:
 
@@ -34,7 +34,7 @@ If this screen is slow or rigid, the whole product fails.
 
 The Weekly Planner sits at the centre of the product loop:
 
-**ICs → Lessons → Taught → Mastery → Weak ICs → Next Lessons**
+**ICs → Lessons → Taught → Mastery → ICs needing reteach → Next Lessons**
 
 It is not just a calendar.
 
@@ -196,7 +196,8 @@ Allow teachers to hold lesson cards that are not yet assigned to a day.
 
 ### Behaviour
 
-- unscheduled lessons still belong to the selected week
+- unscheduled lessons belong to a specific week (per-week bucket, not global)
+- a lesson can be moved between the unscheduled area of one week and the unscheduled area of another week, which is how rollover works
 - unscheduled lessons are not counted as taught
 - unscheduled lessons remain visible after refresh
 
@@ -401,9 +402,9 @@ This is one of the most important interactions in the product.
 
 For each IC displayed, show lightweight indicators such as:
 
-- recent use
-- weak or needs attention
-- mostly secure
+- recently taught (within the last 2 weeks)
+- needs reteach (whole-class threshold met — see PRODUCT-RULES §11)
+- mostly at Mastery
 - untaught
 
 ### Why this matters
@@ -578,11 +579,11 @@ It should provide useful context while planning.
 
 ### Useful signals may include
 
-- weak ICs needing attention
+- ICs needing reteach (whole-class threshold met)
 - ICs not yet taught this term/unit
-- recently taught ICs
+- recently taught ICs (last 2 weeks)
 - summary assessment follow-up needed
-- students or groups needing revisit tied to specific ICs
+- students or groups needing revisit tied to specific ICs (per-student intervention signal)
 
 ### Placement of signals
 
@@ -603,7 +604,7 @@ Signals should guide action, not clutter the screen.
 
 The Weekly Planner may include a secondary support panel showing:
 
-- weak ICs
+- ICs needing reteach
 - untaught ICs
 - upcoming planned ICs from long-term plan
 - suggested next ICs
@@ -681,7 +682,7 @@ At minimum, the planner should support:
 
 Optional later:
 
-- show only weak IC lessons
+- show only lessons with ICs needing reteach
 - show only untaught planned lessons
 - filter by class/group
 
@@ -709,13 +710,12 @@ The Weekly Planner depends on:
 
 - id
 - weekKey
-- day
+- date (day is derived from date)
 - title
-- subject
-- linkedICIds
+- linkedICIds (subject is derived from these)
 - status
 - classGroupId
-- position
+- position (normalised bandStart/bandSpan; see DATA-SCHEMA §2.6)
 
 ---
 
@@ -725,8 +725,8 @@ The planner should compute lightweight derived information such as:
 
 ### Lesson-level
 
-- whether linked ICs are weak
-- whether linked ICs are recently taught
+- whether linked ICs currently need reteach
+- whether linked ICs are recently taught (last 2 weeks)
 - whether mastery follow-up exists
 
 ### Week-level
@@ -784,7 +784,7 @@ For Version 1, the Weekly Planner must include:
 - duplicate lesson
 - delete lesson
 - mark lesson taught
-- basic context indicators for weak/priority ICs
+- basic context indicators for ICs needing reteach or priority ICs
 
 ---
 

@@ -26,16 +26,28 @@ The system connects curriculum → teaching → mastery → next decisions.
 - planning tool
 - instructional decision support tool
 - lightweight mastery tracking system
+- paid SaaS for Australian primary (P–6) teachers
 
 **What the Product Is NOT (Version 1 Scope Boundary)**
 
 - behaviour tracking
 - parent communication
 - attendance system (no separate module)
-- full report-writing system
 - large resource management platform
 
-# **2. Core System Model**
+**Future capability (not V1, must be enabled by data model):**
+
+- report-writing assistance. V1 is not a report writer, but V1's mastery data must be structured so a later report-writing module can be built without reworking the schema.
+
+# **2. Commercial Model**
+
+- publicly available, paid subscription product
+- free tier: 1 class, up to 30 students, valid until end of current Australian semester (extended into the next semester if the teacher signs up with less than 3 weeks remaining in the current semester)
+- paid tier: ~AU$8/month or ~AU$80/year, unlimited classes and students
+- per-teacher accounts in V1.5; school-level plans deferred
+- details in `V1.5-SAAS-SHELL.md`
+
+# **3. Core System Model**
 
 **Backbone Flow**
 
@@ -54,19 +66,19 @@ All systems must connect through ICs:
 
 No feature should bypass ICs.
 
-# **3. Core Workflow (Non-Negotiable)**
+# **4. Core Workflow (Non-Negotiable)**
 
 1. Select ICs
 2. Create lesson
 3. Attach 1–3 ICs
 4. Mark lesson as taught
 5. Update mastery quickly
-6. View weak or untaught ICs
+6. View ICs needing reteach or untaught ICs
 7. Plan next lesson based on that
 
 If this loop is not fast and smooth, the product fails.
 
-# **4. Data Reality**
+# **5. Data Reality**
 
 - Data will be partial, uneven, and approximate
 - Teachers may skip updates
@@ -74,14 +86,16 @@ If this loop is not fast and smooth, the product fails.
 
 No logic should assume perfect data.
 
-# **5. Mastery Model**
+# **6. Mastery Model**
 
-**Status Levels**
+**Status Levels (single vocabulary used at every level of the system)**
 
-- Not Yet
+- Emerging
 - Developing
-- Secure
-- Absent (optional during mastery entry only)
+- Consolidating
+- Mastery
+
+These four terms are used at per-student per-IC mastery entry, at derived IC-level status, and at derived descriptor-level progress. One vocabulary, four rungs, everywhere.
 
 **Rules**
 
@@ -90,29 +104,36 @@ No logic should assume perfect data.
 - No complex rubrics
 - Mastery is teacher judgement
 - AI does not auto-assign mastery
+- Blank is allowed and means no evidence yet (not a low score)
 
-# **6. Aggregation Model**
+# **7. Aggregation Model**
 
 - Descriptor progress is derived from IC patterns
+- IC status is derived from per-student mastery records
 - Use loose pattern-based aggregation, not strict thresholds
-
-**Example Logic**
-
-- Emerging → mostly Not Yet
-- Developing → mixed
-- Competent → mostly Secure
-- Highly Competent → consistent Secure
+- All derived signals use the same four-term vocabulary above
 
 Avoid fake precision.
 
-# **7. IC Governance**
+# **8. Reteach Threshold**
+
+An IC is flagged as **needs reteach** when, across the class's most recent mastery record per student for that IC:
+
+- **≥40% of students are at Emerging or Developing** (the bottom two rungs)
+
+The 40% is the default. It is teacher-adjustable via a settings slider in V1.5.
+
+This is a whole-class signal used to drive "what do I teach next to the whole class?" It is separate from per-student intervention signals.
+
+# **9. IC Governance**
 
 - Each descriptor has a default IC set
-- Teachers can edit ICs locally
-- Defaults remain intact
+- Teachers can edit or override ICs locally
+- Default ICs remain intact and visible unless explicitly archived by the teacher
+- Local override model defined in `DATA-SCHEMA-DOCUMENT.md`
 - IC count per descriptor: 6–12 maximum
 
-# **8. Definition of “Taught”**
+# **10. Definition of "Taught"**
 
 An IC is considered taught when:
 
@@ -123,7 +144,9 @@ Not when:
 - it is scheduled
 - mastery is recorded
 
-# **9. Planning System Design**
+Reverting a lesson from taught to planned does **not** delete attached mastery records. Teachers are trusted to have seen evidence and made valid judgements.
+
+# **11. Planning System Design**
 
 **Structure Direction**
 
@@ -142,7 +165,7 @@ Hybrid planner:
 - Unfinished lessons must be easy to reschedule
 - Planning must be faster than Word or paper
 
-# **10. Home Screen**
+# **12. Home Screen**
 
 Default landing screen:
 
@@ -153,7 +176,7 @@ Reason:
 - aligns with daily teacher behaviour
 - supports planning-first model
 
-# **11. Subject Scope (Version 1)**
+# **13. Subject Scope (Version 1)**
 
 Build for:
 
@@ -164,14 +187,22 @@ Reason:
 - validates cross-subject flexibility
 - avoids overgeneralising too early
 
-# **12. AI Role (Version 1)**
+Subject list is sourced from the curriculum CSVs in the repo, not hardcoded.
+
+# **14. Classes and Year Levels**
+
+- A class is represented as a single `ClassGroup`
+- Composite classes (e.g. Year 3/4) are supported via `yearLevels: string[]` on `ClassGroup`
+- Each student carries their own `yearLevel` so individual progress is tracked correctly even in composite classes
+
+# **15. AI Role (Version 1)**
 
 **AI is allowed to:**
 
 - generate IC drafts
 - suggest assessment tasks
 - suggest next ICs to teach
-- flag likely mastery thresholds for teacher review
+- flag possible mastery thresholds for teacher review
 
 **AI is NOT allowed to:**
 
@@ -181,7 +212,7 @@ Reason:
 
 Teacher remains the decision-maker.
 
-# **13. Product Rules (Critical Constraints)**
+# **16. Product Rules (Critical Constraints)**
 
 **Non-Negotiables**
 
@@ -204,9 +235,9 @@ Teacher remains the decision-maker.
 - Create basic lesson in ≤60 seconds
 - Update mastery quickly for a class
 - Plan a rough week quickly
-- Identify gaps in ≤5 minutes
+- Identify ICs needing reteach in ≤5 minutes
 
-# **14. Core Data Objects**
+# **17. Core Data Objects**
 
 Minimum required:
 
@@ -221,28 +252,20 @@ Minimum required:
 - MasteryRecord
 - AssessmentTask
 
-All relationships must connect through ICs.
+All relationships must connect through ICs. See `DATA-SCHEMA-DOCUMENT.md`.
 
-# **15. Core Modules**
+# **18. Core Modules**
 
 1. Curriculum Module
 2. IC Module
-3. Planning Module
-    - Long-term
-    - Weekly
-    - Lesson
-4. 
-5. Assessment Module
-    - Pre
-    - In-flow
-    - Summary
-6. 
-7. Progress Module
-8. Aggregation Module
-9. Recommendation Layer
-10. Support Module
+3. Planning Module (long-term, weekly, lesson)
+4. Assessment Module (pre, in-flow, summary)
+5. Progress Module
+6. Aggregation Module
+7. Recommendation Layer
+8. Support Module
 
-# **16. Build Strategy**
+# **19. Build Strategy**
 
 **Phase 1 – Foundation**
 
@@ -250,7 +273,7 @@ All relationships must connect through ICs.
 - IC structure
 - student/class setup
 
-**Phase 2 – Core Loop (MOST IMPORTANT)**
+**Phase 2 – First Build Slice (proves the core loop works)**
 
 - weekly planner
 - lesson creation
@@ -259,27 +282,44 @@ All relationships must connect through ICs.
 - quick mastery entry
 - basic IC progress view
 
-**Phase 3 – Coherence**
+See `FIRST-BUILD-SLICE.md` for full detail.
+
+**Phase 3 – V1.5 SaaS Shell**
+
+- authentication (magic-link email + Google)
+- Supabase backend, Sydney region
+- payment via Stripe
+- privacy, terms, account deletion
+- onboarding
+
+See `V1.5-SAAS-SHELL.md`.
+
+**Phase 4 – Coherence**
 
 - long-term planning
 - gap detection
 - student progress view
 - descriptor aggregation
 
-**Phase 4 – Full Learning Loop**
+**Phase 5 – Full Learning Loop**
 
 - pre-assessment
 - summary assessment
 - AI IC generation
 - AI suggestions
 
-**Phase 5 – Refinement**
+**Phase 6 – Report-Writing Support**
+
+- export mastery summaries in report-ready form
+- integration with literacy and numeracy progressions
+
+**Phase 7 – Refinement**
 
 - usability improvements
 - smarter recommendations
 - performance optimisation
 
-# **17. Success Criteria**
+# **20. Success Criteria**
 
 The product succeeds if:
 
@@ -288,7 +328,7 @@ The product succeeds if:
 - planning, teaching, and mastery tracking happen in one workflow
 - teachers do not feel like they are doing extra admin
 
-# **18. Core Design Principle**
+# **21. Core Design Principle**
 
 Planning drives usage.
 

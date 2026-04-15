@@ -10,9 +10,11 @@ Do not expand this. Do not “just add one more thing.” This slice exists to t
 
 Build the smallest usable vertical slice that proves this loop works:
 
-**ICs → lesson planning → mark taught → mastery entry → weak IC visibility**
+**ICs → lesson planning → mark taught → mastery entry → reteach-flag visibility**
 
 If this slice is not smooth, nothing else matters.
+
+**Target for this slice:** a real teacher using it in a real classroom for a real week. That means cloud persistence and basic auth are required from the first live use. See `V1.5-SAAS-SHELL.md` for how the SaaS shell wraps this slice.
 
 ---
 
@@ -25,7 +27,7 @@ A teacher must be able to:
 - attach 1–3 ICs
 - mark the lesson as taught
 - enter quick mastery for students
-- see which ICs are weak and need reteaching
+- see which ICs need reteach and act on it
 
 That is the whole point.
 
@@ -43,7 +45,7 @@ That is the whole point.
 - IC linking
 - taught status
 - mastery entry
-- basic weak IC view
+- basic reteach-flag view
 
 ## Out of scope
 
@@ -73,7 +75,7 @@ It must prove five things:
 2. Lessons can move easily in a weekly space
 3. Marking a lesson as taught feels natural
 4. Mastery entry is fast enough to use
-5. Weak ICs are useful enough to affect next planning decisions
+5. The reteach flag is useful enough to affect next planning decisions
 
 If any of those fail, stop and fix before building further.
 
@@ -87,13 +89,14 @@ To keep the build tight:
 - one year level only
 - one class group only
 - one fixed set of 6–10 ICs
-- one mastery scale:
-    - Not Yet
+- one mastery scale (the single four-term vocabulary):
+    - Emerging
     - Developing
-    - Secure
-    - Absent optional
+    - Consolidating
+    - Mastery
+- blank cells are allowed and mean "no evidence yet" (no "Absent" value)
 - one week planner view
-- local persistence only is acceptable for this slice
+- cloud persistence is required from first live use (teacher relies on it in the real classroom). Supabase is the target backend; see `V1.5-SAAS-SHELL.md`.
 
 This is not the final system. It is the first proof.
 
@@ -117,7 +120,7 @@ Opened after marking a lesson as taught.
 
 ### D. Basic IC Progress View
 
-A simple view showing weak and recent IC status.
+A simple view showing reteach flags and recent IC status.
 
 That is enough.
 
@@ -205,11 +208,11 @@ Opened when the teacher marks a lesson as taught, or from a lesson action.
 
 ## Each cell must allow
 
-- Not Yet
+- Emerging
 - Developing
-- Secure
-- Absent optional
-- blank allowed
+- Consolidating
+- Mastery
+- blank allowed (means no evidence yet)
 
 ## Required behaviour
 
@@ -233,19 +236,19 @@ This does not need to be fancy.
 For each IC:
 
 - whether it has been linked to a taught lesson
-- rough recent mastery pattern
-- whether it appears weak
+- rough recent mastery pattern (using the four-term vocabulary)
+- whether it is currently flagged as needs reteach
 
 ## Simple categories are enough
 
 - not taught
 - introduced
-- weak
-- mostly secure
+- needs reteach (≥40% of class at Emerging or Developing — see PRODUCT-RULES §11)
+- mostly at Mastery
 
 ## Optional
 
-A simple list of students with repeated Not Yet for an IC
+A simple list of students with recent Emerging or Developing records for an IC
 
 ## This screen must prove
 
@@ -299,13 +302,12 @@ Do not build full schema complexity into the first proof if it is not required t
 
 - id
 - weekKey
-- day
+- date (day is derived from date)
 - title
-- subject
-- linkedICIds
+- linkedICIds (subject is derived from these)
 - status
 - classGroupId
-- position
+- position (normalised bandStart/bandSpan)
 
 ### Student
 
@@ -351,10 +353,10 @@ That is enough to test the core loop.
 4. Update students quickly
 5. Save
 
-## Flow 4 – Check weak ICs
+## Flow 4 – Check ICs needing reteach
 
 1. Open IC Progress View
-2. See which ICs are weak
+2. See which ICs are flagged needs reteach
 3. Go back to planner
 4. Create next lesson using those ICs
 
@@ -368,11 +370,13 @@ That is the first real cycle.
 - no more than 3 ICs per lesson
 - no long text fields required
 - blank mastery entries allowed
-- absent optional only
+- no "Absent" value — blank means no evidence yet
 - marking a lesson as taught counts linked ICs as introduced
+- reverting a lesson to planned does not delete attached mastery records
 - week view must persist after refresh
 - lessons must persist after refresh
 - mastery must persist after refresh
+- persistence is cloud-backed, not local-only
 
 If any of this breaks, the slice is not valid.
 
@@ -432,7 +436,7 @@ Build mastery entry:
 
 Build simple IC progress view:
 
-- weak / introduced / not taught / mostly secure
+- not taught / introduced / needs reteach / mostly at Mastery
 
 That is the correct order. Anything else first is poor sequencing.
 
@@ -456,14 +460,13 @@ The slice is complete only if all of these are true:
 
 ### Mastery
 
-- I can enter mastery for a full class quickly
+- I can enter mastery for a full class quickly using the four-term vocabulary
 - Blank cells are allowed
-- Absent is optional
-- Mastery saves correctly
+- Mastery saves correctly to cloud persistence
 
 ### Progress
 
-- I can see which ICs are weak
+- I can see which ICs are flagged as needs reteach
 - I can use that information to plan another lesson
 
 If even one of those is clunky, the build slice needs revision before expansion.
@@ -498,7 +501,7 @@ Once built, test it like this:
 2. Can I drag one to another day when plans change?
 3. Can I mark one lesson as taught?
 4. Can I update mastery for the class without frustration?
-5. Can I tell which IC now needs reteaching?
+5. Can I tell which IC now needs reteach?
 6. Can I create a new lesson based on that?
 
 If the answer to any of these is no, the product is not ready for more features.
