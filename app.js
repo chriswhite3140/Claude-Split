@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.12
- * Last updated: 2026-04-04
+ * THIS FILE IS VERSION: 1.13.0
+ * Last updated: 2026-04-15
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.0 - First Build Slice Step 1: IC-centric data layer scaffolded (InstructionalComponent, ContentDescriptor, ClassGroup entities + 6–10 seed ICs for Year 3 Maths). Not yet wired into planner UI.
  * v1.12.12 - Planner lesson cards now include a quick delete action
  * v1.12.11 - Planner lesson cards now include a quick duplicate action
  * v1.12.10 - Planner lesson cards now support drag-and-drop movement between columns
@@ -40,8 +41,12 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.12';
+const APP_VERSION = '1.13.0';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
+// First Build Slice (IC-centric model) — see docs/DATA-SCHEMA-DOCUMENT.md and docs/FIRST-BUILD-SLICE.md
+const IC_STORAGE_KEY = 'ct_instructional_components_v1';
+const CONTENT_DESCRIPTORS_STORAGE_KEY = 'ct_content_descriptors_v1';
+const CLASS_GROUPS_STORAGE_KEY = 'ct_class_groups_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
 const APP_UI_STATE_STORAGE_KEY = 'ct_ui_state_v1';
@@ -169,6 +174,152 @@ const YLM = {
   '4':'Year 4','5':'Year 5','6':'Year 6',
 };
 const PLANNER_SUBJECTS = ['English','Mathematics','Science','HASS','The Arts','Technologies','Health & PE','Languages'];
+
+// ── FIRST BUILD SLICE SEED DATA ──
+// Per docs/FIRST-BUILD-SLICE.md §5 & §11: one subject, one class, one descriptor, 6–10 ICs.
+// Per docs/DATA-SCHEMA-DOCUMENT.md §2.3 / §2.8 / §2.1.
+// Seed data is used only on first load; after that, data persists in localStorage.
+const SEED_CLASS_GROUP = {
+  id: 'cg_year3_maths',
+  name: 'Year 3 Maths',
+  yearLevel: '3',
+  subjectScope: ['Mathematics'],
+};
+
+const SEED_CONTENT_DESCRIPTOR = {
+  id: 'cd_ac9m3n01',
+  code: 'AC9M3N01',
+  subject: 'Mathematics',
+  yearLevel: '3',
+  strand: 'Number',
+  subStrand: null,
+  description: 'Recognise, represent and order natural numbers beyond 10 000.',
+  elaborations: [],
+  linkedAchievementStandardIds: [],
+};
+
+const SEED_INSTRUCTIONAL_COMPONENTS = [
+  {
+    id: 'ic_ac9m3n01_01',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Read and write 4-digit numbers',
+    description: 'Read and write natural numbers up to 10 000 using numerals and words.',
+    sequenceOrder: 1,
+    difficultyStage: 'early',
+    exampleOfSuccess: 'Writes "three thousand four hundred and six" as 3406.',
+    commonError: 'Writes 3000406 left-to-right for "three thousand four hundred and six".',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+  {
+    id: 'ic_ac9m3n01_02',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Identify place value in 4-digit numbers',
+    description: 'Name the value of each digit (thousands, hundreds, tens, ones) in a 4-digit number.',
+    sequenceOrder: 2,
+    difficultyStage: 'early',
+    exampleOfSuccess: 'States that the 7 in 4725 represents 700.',
+    commonError: 'Names the column ("hundreds") but not the value (700).',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+  {
+    id: 'ic_ac9m3n01_03',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Represent 4-digit numbers with base-10 materials',
+    description: 'Use MAB / place-value blocks to model 4-digit numbers.',
+    sequenceOrder: 3,
+    difficultyStage: 'early',
+    exampleOfSuccess: 'Models 2 341 with 2 thousand-blocks, 3 hundred-flats, 4 tens, 1 one.',
+    commonError: 'Uses only ones-blocks to model large numbers.',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+  {
+    id: 'ic_ac9m3n01_04',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Partition 4-digit numbers (standard form)',
+    description: 'Partition a 4-digit number into thousands, hundreds, tens and ones.',
+    sequenceOrder: 4,
+    difficultyStage: 'middle',
+    exampleOfSuccess: '5 268 = 5 000 + 200 + 60 + 8.',
+    commonError: 'Writes 5 268 = 5 + 2 + 6 + 8, ignoring place value.',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+  {
+    id: 'ic_ac9m3n01_05',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Compare 4-digit numbers with <, >, =',
+    description: 'Compare pairs of 4-digit numbers using inequality symbols.',
+    sequenceOrder: 5,
+    difficultyStage: 'middle',
+    exampleOfSuccess: 'Writes 4 712 > 4 172 and justifies by comparing hundreds.',
+    commonError: 'Compares by digit count rather than place value.',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+  {
+    id: 'ic_ac9m3n01_06',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Order sets of 4-digit numbers',
+    description: 'Order a set of 4-digit numbers smallest-to-largest and largest-to-smallest.',
+    sequenceOrder: 6,
+    difficultyStage: 'middle',
+    exampleOfSuccess: 'Orders 3 204, 2 340, 3 024, 3 240 as 2 340 < 3 024 < 3 204 < 3 240.',
+    commonError: 'Orders by first digit only.',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+  {
+    id: 'ic_ac9m3n01_07',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Round 4-digit numbers to nearest 10 or 100',
+    description: 'Round a 4-digit number to the nearest 10 or 100.',
+    sequenceOrder: 7,
+    difficultyStage: 'late',
+    exampleOfSuccess: 'Rounds 3 476 to 3 480 (nearest 10) and 3 500 (nearest 100).',
+    commonError: 'Always rounds down regardless of the following digit.',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+  {
+    id: 'ic_ac9m3n01_08',
+    descriptorId: 'cd_ac9m3n01',
+    name: 'Locate 4-digit numbers on a number line',
+    description: 'Place 4-digit numbers on a partially marked number line.',
+    sequenceOrder: 8,
+    difficultyStage: 'late',
+    exampleOfSuccess: 'Places 4 650 halfway between 4 600 and 4 700.',
+    commonError: 'Treats all tick intervals as equal without reading endpoints.',
+    checkpointTask: null,
+    isOptional: false,
+    isArchived: false,
+    sourceType: 'system',
+    localOverrideOf: null,
+  },
+];
 function subjectCol(subj)   { return (SUBJECT_COLOURS[subj] || {col:'var(--blue)'}).col; }
 function subjectBg(subj)    { return (SUBJECT_COLOURS[subj] || {bg:'var(--surface-alt)'}).bg; }
 function subjectShort(subj) {
@@ -237,6 +388,10 @@ let state = {
   planLog: loadPlanLogState(),
   weeklyPlanner: loadWeeklyPlannerState(),
   lessonPlans: loadLessonPlansState(),
+  // First Build Slice: IC-centric core entities
+  instructionalComponents: loadInstructionalComponentsState(),
+  contentDescriptors: loadContentDescriptorsState(),
+  classGroups: loadClassGroupsState(),
   plannerUi: {
     selectedLessonId: null,
     drawerOpen: false,
@@ -571,6 +726,115 @@ function addComponentForCode(code, description) {
   saveComponentsState();
   return component;
 }
+
+// ──────────────────────────────────────────────────────────────
+// FIRST BUILD SLICE: IC-CENTRIC DATA LAYER
+// See docs/DATA-SCHEMA-DOCUMENT.md §2.1, §2.3, §2.8
+// These helpers operate on the new IC model. They are deliberately
+// kept separate from the legacy `state.components` layer above,
+// which will be retired as the planner is rebuilt around ICs.
+// ──────────────────────────────────────────────────────────────
+
+function normalizeInstructionalComponent(raw = {}) {
+  return {
+    id: String(raw.id || `ic_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`),
+    descriptorId: String(raw.descriptorId || ''),
+    name: String(raw.name || ''),
+    description: String(raw.description || ''),
+    sequenceOrder: Number.isFinite(raw.sequenceOrder) ? raw.sequenceOrder : 0,
+    difficultyStage: ['early', 'middle', 'late'].includes(raw.difficultyStage) ? raw.difficultyStage : 'middle',
+    exampleOfSuccess: raw.exampleOfSuccess == null ? null : String(raw.exampleOfSuccess),
+    commonError: raw.commonError == null ? null : String(raw.commonError),
+    checkpointTask: raw.checkpointTask == null ? null : String(raw.checkpointTask),
+    isOptional: Boolean(raw.isOptional),
+    isArchived: Boolean(raw.isArchived),
+    sourceType: ['system', 'ai', 'teacher'].includes(raw.sourceType) ? raw.sourceType : 'system',
+    localOverrideOf: raw.localOverrideOf == null ? null : String(raw.localOverrideOf),
+  };
+}
+
+function loadInstructionalComponentsState() {
+  try {
+    const raw = localStorage.getItem(IC_STORAGE_KEY);
+    if (!raw) {
+      const seeded = SEED_INSTRUCTIONAL_COMPONENTS.map(normalizeInstructionalComponent);
+      localStorage.setItem(IC_STORAGE_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeInstructionalComponent) : [];
+  } catch (e) {
+    return SEED_INSTRUCTIONAL_COMPONENTS.map(normalizeInstructionalComponent);
+  }
+}
+
+function saveInstructionalComponentsState() {
+  try {
+    const ics = Array.isArray(state.instructionalComponents)
+      ? state.instructionalComponents.map(normalizeInstructionalComponent)
+      : [];
+    localStorage.setItem(IC_STORAGE_KEY, JSON.stringify(ics));
+  } catch (e) {}
+}
+
+function loadContentDescriptorsState() {
+  try {
+    const raw = localStorage.getItem(CONTENT_DESCRIPTORS_STORAGE_KEY);
+    if (!raw) {
+      const seeded = [{ ...SEED_CONTENT_DESCRIPTOR }];
+      localStorage.setItem(CONTENT_DESCRIPTORS_STORAGE_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [{ ...SEED_CONTENT_DESCRIPTOR }];
+  } catch (e) {
+    return [{ ...SEED_CONTENT_DESCRIPTOR }];
+  }
+}
+
+function loadClassGroupsState() {
+  try {
+    const raw = localStorage.getItem(CLASS_GROUPS_STORAGE_KEY);
+    if (!raw) {
+      const seeded = [{ ...SEED_CLASS_GROUP }];
+      localStorage.setItem(CLASS_GROUPS_STORAGE_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [{ ...SEED_CLASS_GROUP }];
+  } catch (e) {
+    return [{ ...SEED_CLASS_GROUP }];
+  }
+}
+
+// IC accessors — used by planner, drawer and progress view.
+function getAllInstructionalComponents() {
+  return (state.instructionalComponents || []).filter(ic => !ic.isArchived);
+}
+
+function getInstructionalComponentById(id) {
+  return (state.instructionalComponents || []).find(ic => ic.id === id) || null;
+}
+
+function getInstructionalComponentsForDescriptor(descriptorId) {
+  return getAllInstructionalComponents()
+    .filter(ic => ic.descriptorId === descriptorId)
+    .sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+}
+
+function getContentDescriptorById(id) {
+  return (state.contentDescriptors || []).find(cd => cd.id === id) || null;
+}
+
+function getClassGroupById(id) {
+  return (state.classGroups || []).find(cg => cg.id === id) || null;
+}
+
+function getDefaultClassGroupId() {
+  const first = (state.classGroups || [])[0];
+  return first ? first.id : null;
+}
+
 function componentLabelToLegacyMastery(label) {
   if (label === 'Highly Competent' || label === 'Competent') return 'Achieved';
   if (label === 'Developing') return 'Developing';
