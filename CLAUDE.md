@@ -39,3 +39,7 @@ The subject dropdown in the lesson drawer does not show the full subject list. T
 ## Testing
 
 Test by opening the GitHub Pages URL in a browser. Hard refresh (Ctrl+Shift+R) when testing after changes to avoid cache issues.
+
+## Planning docs
+See `docs/` for the current roadmap and feature specs. Consult these before making planner changes.
+
