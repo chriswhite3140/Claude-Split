@@ -7140,8 +7140,9 @@ const SLICE_MASTERY_LEVELS = ['emerging', 'developing', 'consolidating', 'master
 // See PRODUCT-RULES-DOCUMENT.md §11.
 const SLICE_DEFAULT_RETEACH_THRESHOLD = 0.40;
 
-// Seed: one real English Year 2 content descriptor from the curriculum
-// CSV. Elaborations left empty pending upload of the elaborations CSV.
+// Seed: one real English Year 2 content descriptor, sourced verbatim
+// from acara_english_v9_tagged_with_AS.csv. Step 2 will load the full
+// English P–6 descriptor and elaboration set from that CSV dynamically.
 const SLICE_SEED_DESCRIPTORS = [
   {
     id: 'AC9E2LY08',
@@ -7149,9 +7150,11 @@ const SLICE_SEED_DESCRIPTORS = [
     subject: 'English',
     yearLevel: '2',
     strand: 'Literacy',
-    subStrand: 'Handwriting',
-    description: 'Write words using consistently legible unjoined letters.',
-    elaborations: [],
+    subStrand: 'Creating texts',
+    description: 'write words legibly and with growing fluency using unjoined upper-case and lower-case letters',
+    elaborations: [
+      'consolidating a functional pencil grip/grasp'
+    ],
     linkedAchievementStandardIds: ['Year2-AS-2218']
   }
 ];
