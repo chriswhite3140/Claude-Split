@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.12
- * Last updated: 2026-04-04
+ * THIS FILE IS VERSION: 1.13.0
+ * Last updated: 2026-04-16
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.0 - First Build Slice step 1: IC-centric seed data (descriptors, ICs, class, students) scaffolded in localStorage (see docs/FIRST-BUILD-SLICE.md)
  * v1.12.12 - Planner lesson cards now include a quick delete action
  * v1.12.11 - Planner lesson cards now include a quick duplicate action
  * v1.12.10 - Planner lesson cards now support drag-and-drop movement between columns
@@ -7105,12 +7106,208 @@ console.info(
   'color:#60a5fa;font-family:monospace;font-size:11px'
 );
 
+// ================================================================
+// FIRST BUILD SLICE — step 1: IC-centric data foundation
+// ================================================================
+// Self-contained module that introduces the IC-centric data model
+// described in docs/DATA-SCHEMA-DOCUMENT.md. Lives alongside existing
+// app state without interfering with it. All slice state is stored
+// under ct_slice_* localStorage keys. Future steps will add UI.
+//
+// Debug: `slice` is exposed on window. Try:
+//   slice.load()    — dump current slice state
+//   slice.reset()   — clear and reseed
+//   slice.keys      — list storage keys used
+// ================================================================
+
+const SLICE_STORAGE_VERSION = 1;
+const SLICE_STORAGE_KEYS = {
+  descriptors: `ct_slice_descriptors_v${SLICE_STORAGE_VERSION}`,
+  ics: `ct_slice_ics_v${SLICE_STORAGE_VERSION}`,
+  classGroup: `ct_slice_class_group_v${SLICE_STORAGE_VERSION}`,
+  students: `ct_slice_students_v${SLICE_STORAGE_VERSION}`,
+  lessons: `ct_slice_lessons_v${SLICE_STORAGE_VERSION}`,
+  masteryRecords: `ct_slice_mastery_records_v${SLICE_STORAGE_VERSION}`,
+  settings: `ct_slice_settings_v${SLICE_STORAGE_VERSION}`
+};
+
+// Four-term mastery vocabulary — used at every level of the product.
+// See PRODUCT-RULES-DOCUMENT.md §5.
+const SLICE_MASTERY_LEVELS = ['emerging', 'developing', 'consolidating', 'mastery'];
+
+// Default reteach threshold: an IC is flagged when ≥40% of the class
+// (most recent record per student) is at emerging or developing.
+// See PRODUCT-RULES-DOCUMENT.md §11.
+const SLICE_DEFAULT_RETEACH_THRESHOLD = 0.40;
+
+// Seed: one real English Year 2 content descriptor from the curriculum
+// CSV. Elaborations left empty pending upload of the elaborations CSV.
+const SLICE_SEED_DESCRIPTORS = [
+  {
+    id: 'AC9E2LY08',
+    code: 'AC9E2LY08',
+    subject: 'English',
+    yearLevel: '2',
+    strand: 'Literacy',
+    subStrand: 'Handwriting',
+    description: 'Write words using consistently legible unjoined letters.',
+    elaborations: [],
+    linkedAchievementStandardIds: ['Year2-AS-2218']
+  }
+];
+
+// Seed: 6 ICs for AC9E2LY08 — each teachable in 1–2 lessons,
+// observable in student work, and assessable quickly.
+// (See PRODUCT-RULES-DOCUMENT.md §4.)
+const SLICE_SEED_ICS = [
+  {
+    id: 'ic-ac9e2ly08-01', descriptorId: 'AC9E2LY08',
+    name: 'Correct lowercase letter formation',
+    description: 'Form each lowercase letter starting from the correct entry point and in the correct direction.',
+    sequenceOrder: 1, difficultyStage: 'early',
+    exampleOfSuccess: null, commonError: null, checkpointTask: null,
+    isOptional: false, isArchived: false, sourceType: 'system', localOverrideOf: null
+  },
+  {
+    id: 'ic-ac9e2ly08-02', descriptorId: 'AC9E2LY08',
+    name: 'Correct uppercase letter formation',
+    description: 'Form each uppercase letter starting from the correct entry point and in the correct direction.',
+    sequenceOrder: 2, difficultyStage: 'early',
+    exampleOfSuccess: null, commonError: null, checkpointTask: null,
+    isOptional: false, isArchived: false, sourceType: 'system', localOverrideOf: null
+  },
+  {
+    id: 'ic-ac9e2ly08-03', descriptorId: 'AC9E2LY08',
+    name: 'Consistent letter size',
+    description: 'Write letters at a consistent size within a single line of text.',
+    sequenceOrder: 3, difficultyStage: 'middle',
+    exampleOfSuccess: null, commonError: null, checkpointTask: null,
+    isOptional: false, isArchived: false, sourceType: 'system', localOverrideOf: null
+  },
+  {
+    id: 'ic-ac9e2ly08-04', descriptorId: 'AC9E2LY08',
+    name: 'Consistent spacing within words',
+    description: 'Keep letters evenly spaced within each word.',
+    sequenceOrder: 4, difficultyStage: 'middle',
+    exampleOfSuccess: null, commonError: null, checkpointTask: null,
+    isOptional: false, isArchived: false, sourceType: 'system', localOverrideOf: null
+  },
+  {
+    id: 'ic-ac9e2ly08-05', descriptorId: 'AC9E2LY08',
+    name: 'Consistent spacing between words',
+    description: 'Leave a consistent, finger-width gap between words.',
+    sequenceOrder: 5, difficultyStage: 'middle',
+    exampleOfSuccess: null, commonError: null, checkpointTask: null,
+    isOptional: false, isArchived: false, sourceType: 'system', localOverrideOf: null
+  },
+  {
+    id: 'ic-ac9e2ly08-06', descriptorId: 'AC9E2LY08',
+    name: 'Legibility across a full sentence',
+    description: 'Maintain consistent letter formation, size and spacing across a full sentence so another reader can read it without effort.',
+    sequenceOrder: 6, difficultyStage: 'late',
+    exampleOfSuccess: null, commonError: null, checkpointTask: null,
+    isOptional: false, isArchived: false, sourceType: 'system', localOverrideOf: null
+  }
+];
+
+// Seed: one class group — Year 2 English.
+// yearLevels is an array to support composite classes (see DATA-SCHEMA §2.8).
+const SLICE_SEED_CLASS_GROUP = {
+  id: 'class-2e',
+  name: '2E',
+  yearLevels: ['2'],
+  subjectScope: ['English']
+};
+
+// Seed: 10 students with diverse names. Each carries its own yearLevel
+// so composite classes work naturally in future (see DATA-SCHEMA §2.7).
+const SLICE_SEED_STUDENTS = [
+  { id: 'stu-01', firstName: 'Aarav',     lastName: 'Patel',    classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-02', firstName: 'Bea',       lastName: 'Nguyen',   classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-03', firstName: 'Charlotte', lastName: "O'Brien",  classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-04', firstName: 'Declan',    lastName: 'Murphy',   classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-05', firstName: 'Eli',       lastName: 'Cohen',    classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-06', firstName: 'Farah',     lastName: 'Abadi',    classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-07', firstName: 'Georgia',   lastName: 'Hughes',   classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-08', firstName: 'Harper',    lastName: 'Williams', classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-09', firstName: 'Isla',      lastName: 'MacLeod',  classGroupId: 'class-2e', yearLevel: '2', status: 'active' },
+  { id: 'stu-10', firstName: 'Jackson',   lastName: 'Tran',     classGroupId: 'class-2e', yearLevel: '2', status: 'active' }
+];
+
+function sliceReadKey(key, fallback) {
+  try {
+    const raw = localStorage.getItem(SLICE_STORAGE_KEYS[key]);
+    if (raw === null) return fallback;
+    return JSON.parse(raw);
+  } catch (e) {
+    console.warn(`[slice] failed to read ${key}; returning fallback`, e);
+    return fallback;
+  }
+}
+
+function sliceWriteKey(key, value) {
+  try {
+    localStorage.setItem(SLICE_STORAGE_KEYS[key], JSON.stringify(value));
+  } catch (e) {
+    console.warn(`[slice] failed to write ${key}`, e);
+  }
+}
+
+function sliceLoadAll() {
+  return {
+    descriptors:    sliceReadKey('descriptors',    []),
+    ics:            sliceReadKey('ics',            []),
+    classGroup:     sliceReadKey('classGroup',     null),
+    students:       sliceReadKey('students',       []),
+    lessons:        sliceReadKey('lessons',        []),
+    masteryRecords: sliceReadKey('masteryRecords', []),
+    settings:       sliceReadKey('settings',       { reteachThreshold: SLICE_DEFAULT_RETEACH_THRESHOLD })
+  };
+}
+
+// Seed only empty buckets so teacher edits aren't overwritten on reload.
+function sliceSeedIfEmpty() {
+  const data = sliceLoadAll();
+  if (!data.descriptors.length)                                      sliceWriteKey('descriptors',    SLICE_SEED_DESCRIPTORS);
+  if (!data.ics.length)                                              sliceWriteKey('ics',            SLICE_SEED_ICS);
+  if (!data.classGroup)                                              sliceWriteKey('classGroup',     SLICE_SEED_CLASS_GROUP);
+  if (!data.students.length)                                         sliceWriteKey('students',       SLICE_SEED_STUDENTS);
+  if (localStorage.getItem(SLICE_STORAGE_KEYS.lessons)        === null) sliceWriteKey('lessons',        []);
+  if (localStorage.getItem(SLICE_STORAGE_KEYS.masteryRecords) === null) sliceWriteKey('masteryRecords', []);
+  if (localStorage.getItem(SLICE_STORAGE_KEYS.settings)       === null) sliceWriteKey('settings',       { reteachThreshold: SLICE_DEFAULT_RETEACH_THRESHOLD });
+}
+
+function sliceInit() {
+  sliceSeedIfEmpty();
+  const data = sliceLoadAll();
+  console.log(
+    `[slice] ready · ${data.descriptors.length} descriptor(s), ${data.ics.length} IC(s), ` +
+    `${data.students.length} student(s), ${data.lessons.length} lesson(s), ` +
+    `${data.masteryRecords.length} mastery record(s), reteach threshold ${Math.round(data.settings.reteachThreshold * 100)}%`
+  );
+}
+
+// Debug handle on window for console use
+window.slice = {
+  load:  sliceLoadAll,
+  write: sliceWriteKey,
+  seed:  sliceSeedIfEmpty,
+  keys:  SLICE_STORAGE_KEYS,
+  levels: SLICE_MASTERY_LEVELS,
+  reset: () => {
+    Object.values(SLICE_STORAGE_KEYS).forEach(k => localStorage.removeItem(k));
+    sliceSeedIfEmpty();
+    console.log('[slice] reset and reseeded');
+  }
+};
+
 async function init() {
   const verEl = document.getElementById('sidebar-version');
   if (verEl) verEl.textContent = APP_VERSION;
   initTheme();
   initTextSize();
   loadAssessmentScale();
+  sliceInit();
 
   const uiState = loadUIState();
   setCurrentView(uiState.currentView, { persist: false });
