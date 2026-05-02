@@ -1,57 +1,51 @@
 # ClassTracker
 
-ClassTracker is a browser-based classroom assessment tracker for Australian Curriculum learning areas (P–6).
+ClassTracker is a browser-based classroom planning and mastery tracking tool for Australian Curriculum v9 (P–6) teachers.
 
 It helps teachers:
 
-- keep a class list and student profiles
-- record curriculum code progress and mastery
-- log what was taught in each session
-- track achievement standards judgments
-- place students on literacy and numeracy progression levels
-- review dashboards, class overviews, and coverage gaps
+- plan learning using Instructional Components (ICs)
+- record what has been taught
+- capture lightweight mastery evidence
+- identify what to teach next
 
-The app is a static front end (`index.html`, `styles.css`, `app.js`) that loads curriculum reference data from CSV files included in this repository and syncs student/progress data to a Google Apps Script endpoint configured in `app.js`.
+The app is a static front end (`index.html`, `styles.css`, `app.js`) that runs directly in the browser via GitHub Pages.
 
-## Preferred usage (GitHub Pages)
+## Live URL
 
-I usually run and access this app through GitHub Pages in a browser, rather than running it locally.
-
-Live URL:
-
-```text
-https://chriswhite3140.github.io/class-tracker-split
+```
+https://chriswhite3140.github.io/claude-split
 ```
 
-## Optional: run locally for development
+## Repo structure
 
-If needed for development or troubleshooting, you can run the app locally.
+- `index.html` — main entry point and UI shell
+- `app.js` — all application logic (vanilla JS)
+- `styles.css` — all styling
+- `docs/` — authoritative design documents (read before making changes)
+- `data/` — curriculum source files (CSV)
+- `.github/` — Claude Code workflows and issue templates
 
-### 1) Clone the repository
+## Design documents
 
-```bash
-git clone https://github.com/chriswhite3140/class-tracker-split.git
-cd class-tracker-split
-```
+| File | Purpose |
+|---|---|
+| `docs/MASTER-PROJECT-SUMMARY.md` | Product overview and build strategy |
+| `docs/PRODUCT-RULES-DOCUMENT.md` | Rules — check before every feature |
+| `docs/DATA-SCHEMA-DOCUMENT.md` | All data structures and relationships |
+| `docs/IC-FRAMEWORK-SPEC.md` | IC generation rules and ownership model |
+| `docs/IC-GENERATION-PROMPT-TEMPLATE.md` | AI prompt template for generating system default ICs |
 
-### 2) Start a local static server
+## Data files
 
-You can use Python (available on most systems):
+| File | Purpose |
+|---|---|
+| `data/acara_maths_f6_elaborations_v3.csv` | AC v9 Maths F–6 content descriptors with elaborations (rebuilt from official ACARA PDF) |
 
-```bash
-python3 -m http.server 8000
-```
+## Backend
 
-### 3) Open the app in your browser
+Google Apps Script connects to Google Sheets for data storage. The frontend communicates with it via fetch calls to a deployed Apps Script URL configured in `app.js`.
 
-Visit:
+## Development workflow
 
-```text
-http://localhost:8000
-```
-
-## Notes
-
-- Opening `index.html` directly via `file://` may cause fetch/CORS issues in some browsers; using a local server is recommended when running locally.
-- The repository includes curriculum CSV files used by the app UI.
-- Live data operations (students, progress, taught log, judgments, placements) depend on the configured Google Apps Script API URL in `app.js`.
+Changes are implemented via Claude Code GitHub Actions. Create a GitHub issue using the `claude-task` template and trigger with `@claude`.
