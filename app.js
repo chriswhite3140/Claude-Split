@@ -40,7 +40,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.12';
+const APP_VERSION = '1.12.13';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -198,7 +198,7 @@ function truncateWithTooltip(text, maxChars = 80, extraClass = '', focusable = f
 
 // ── CONFIG ──
 const API_URL = 'https://script.google.com/macros/s/AKfycbzbS0mCTPLmcTDECGSmGbdK6Wd75lpinKDLs7wtvlKg-xo00IpZqNiQGF6RoR9Xpy2I/exec';
-const GITHUB_RAW = 'https://raw.githubusercontent.com/chriswhite3140/class-tracker-split/main/';
+const GITHUB_RAW = 'https://raw.githubusercontent.com/chriswhite3140/claude-split/main/data/';
 
 const CSV_FILES = {
   curriculumCodes: { file: 'MASTER_Content_Descriptors_UPDATED_MATCHED.csv',  iconId: 'icon-cd', navId: 'nav-load-cd' },
@@ -206,6 +206,7 @@ const CSV_FILES = {
   progressions:    { file: 'literacy progressions.csv',                         iconId: 'icon-pr', navId: 'nav-load-pr' },
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
   aspectLinks:     { file: 'english_aspect_to_cd_links.csv',                   iconId: 'icon-lk', navId: 'nav-load-lk' },
+  elaborations:    { file: 'acara_maths_f6_elaborations_v3.csv',               iconId: 'icon-el', navId: 'nav-load-el' },
 };
 
 // ── STATE ──
@@ -222,6 +223,7 @@ let state = {
   progressions: [],
   numeracyProgressions: [],
   aspectLinks: [],
+  elaborations: [],
   currentView: 'dashboard',
   selectedStudent: null,
   loading: true,
@@ -3279,6 +3281,7 @@ async function fetchAllCSVs() {
     fetchCSVFromGitHub('progressions'),
     fetchCSVFromGitHub('numeracyProgressions'),
     fetchCSVFromGitHub('aspectLinks'),
+    fetchCSVFromGitHub('elaborations'),
   ]);
   const total = results.reduce((a,b) => a+b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
@@ -4496,6 +4499,7 @@ function renderAdmin(main) {
     'nav-load-pr': state.progressions.length > 0,
     'nav-load-np': state.numeracyProgressions.length > 0,
     'nav-load-lk': state.aspectLinks.length > 0,
+    'nav-load-el': state.elaborations.length > 0,
   };
 
   main.innerHTML = `
@@ -4639,6 +4643,13 @@ function renderAdmin(main) {
               <span style="font-size:12px;color:var(--text-muted)">${label}</span>
               <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:${count>0?'var(--green)':'var(--text3)'}">${count}</span>
             </div>`).join('')}
+            <div id="nav-load-el" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface-alt);border-radius:6px;color:${state.elaborations.length>0?'var(--green)':'var(--text-muted)'}">
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px">
+                <span id="icon-el" style="color:${state.elaborations.length>0?'var(--green)':'var(--text3)'}">${state.elaborations.length>0?'●':'○'}</span>
+                Elaborations
+              </span>
+              <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:${state.elaborations.length>0?'var(--green)':'var(--text3)'}">${state.elaborations.length}</span>
+            </div>
           </div>
         `
       })}
