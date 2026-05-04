@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.14 - ContentDescriptor enriched with descriptorType and elaborations at init
  * v1.12.12 - Planner lesson cards now include a quick delete action
  * v1.12.11 - Planner lesson cards now include a quick duplicate action
  * v1.12.10 - Planner lesson cards now support drag-and-drop movement between columns
@@ -40,7 +41,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.13';
+const APP_VERSION = '1.12.14';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -3285,6 +3286,23 @@ async function fetchAllCSVs() {
   ]);
   const total = results.reduce((a,b) => a+b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
+}
+
+function buildDescriptorIndex() {
+  // curriculumCodes uses 'Code'; elaborations uses 'Content code' and 'Elaboration'
+  state.curriculumCodes = state.curriculumCodes.map(cd => {
+    const code = cd['Code'] || '';
+
+    // AC9HS{year}S{n} pattern = skill; everything else = knowledge
+    const descriptorType = /^AC9HS\d+S\d+$/.test(code) ? 'skill' : 'knowledge';
+
+    const elaborations = state.elaborations
+      .filter(e => (e['Content code'] || '') === code)
+      .map(e => e['Elaboration'] || '')
+      .filter(Boolean);
+
+    return { ...cd, descriptorType, elaborations };
+  });
 }
 
 
@@ -7157,6 +7175,7 @@ async function init() {
   if (sheetsResult.status === 'rejected') console.warn('Sheets load failed:', sheetsResult.reason);
   if (csvResult.status   === 'rejected') console.warn('CSV load failed:',    csvResult.reason);
 
+  buildDescriptorIndex();
   state.loading = false;
   renderView();
   checkDailyLogBadge();
