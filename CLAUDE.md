@@ -67,17 +67,18 @@ Google Apps Script connects to Google Sheets for data storage. The frontend comm
 
 ---
 
-## Current build focus
+## Current build status
 
-The IC framework. Design is complete — build has not started.
+### Completed (Foundation)
+- CSV auto-fetch wired for all six curriculum files including elaborations
+- `buildDescriptorIndex()` enriches `state.curriculumCodes` at init with `descriptorType` and `elaborations[]`
+- All descriptors correctly typed: HASS skill codes (`AC9HS{Y}S{n}`) → `"skill"`, all others → `"knowledge"`
 
-The immediate build priorities in order are:
-
-1. **Curriculum data layer** — load and display content descriptors with `descriptorType`, elaborations, and linked achievement standards
-2. **IC data structure** — implement the IC entity with all fields from `docs/DATA-SCHEMA-DOCUMENT.md`
-3. **System default IC display** — teachers can browse ICs per descriptor
-4. **Core planning loop** — lesson creation linking 1–3 ICs, mark as taught, quick mastery entry
-5. **IC progress view** — mastery trajectory per IC per student
+### Next build priorities (in order)
+1. **IC data structure** — implement `state.instructionalComponents[]` with all fields from `docs/DATA-SCHEMA-DOCUMENT.md` section 2.3; wire into `buildDescriptorIndex()` so each descriptor can reference its ICs
+2. **System default IC display** — teachers can browse ICs per descriptor in the Curriculum Codes view
+3. **Core planning loop** — lesson creation linking 1–3 ICs, mark as taught, quick mastery entry
+4. **IC progress view** — mastery trajectory per IC per student
 
 Do not build features outside this sequence without explicit instruction.
 
