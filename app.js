@@ -3356,9 +3356,11 @@ function getICCoverageRatio(descriptorId, taughtICIds = []) {
   const activeDefaults = getSystemDefaultICsForDescriptor(descriptorId);
   if (activeDefaults.length === 0) return null;
   const taughtDefaults = activeDefaults.filter(ic => taughtICIds.includes(ic.id));
+  const activeDefaultIds = new Set(activeDefaults.map(ic => ic.id));
   const equivalentTaught = state.instructionalComponents.filter(ic =>
     ic.ownerTier === 'teacher_original' &&
     ic.equivalentToId !== null &&
+    activeDefaultIds.has(ic.equivalentToId) &&
     taughtICIds.includes(ic.id)
   );
   return (taughtDefaults.length + equivalentTaught.length) / activeDefaults.length;
