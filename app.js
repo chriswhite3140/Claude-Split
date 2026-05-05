@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.16 - IC panel added to Curriculum Codes descriptor detail view (display only)
  * v1.12.15 - IC data structure: state.instructionalComponents[], createIC(), selector helpers
  * v1.12.14 - ContentDescriptor enriched with descriptorType and elaborations at init
  * v1.12.12 - Planner lesson cards now include a quick delete action
@@ -42,7 +43,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.15';
+const APP_VERSION = '1.12.16';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1980,6 +1981,10 @@ function openCodeDetail(code, studentId) {
     : '';
   const prog = studentId ? state.progress.find(p => p.student_id === studentId && p.code === code) : null;
 
+  const ics = getICsForDescriptor(code);
+  const descriptorType = cd.descriptorType || 'knowledge';
+  const icCountRange = descriptorType === 'skill' ? '3–6' : '6–10';
+
   const existing = document.getElementById('code-detail-panel');
   if (existing) existing.remove();
 
@@ -2046,6 +2051,44 @@ function openCodeDetail(code, studentId) {
               <div style="flex-shrink:0"><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--purple);background:var(--purple-dim);padding:2px 6px;border-radius:3px;display:block;margin-bottom:3px">L${p['Progression level']||'?'}</span><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${p['Indicator ID']||''}</span></div>
               <div style="flex:1"><div style="font-size:11px;color:var(--text-muted);line-height:1.5">${p['Indicator text (no examples)']||p['Indicator text (verbatim)']||'—'}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${p['Sub-element']||''}</div></div>
             </div>`).join('')}
+      </div>
+      <div style="padding:16px 20px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3)">Instructional Components</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;background:var(--surface-alt);color:var(--text3)">${ics.length} ICs</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;background:${descriptorType === 'skill' ? 'var(--teal-dim)' : 'var(--blue-dim)'};color:${descriptorType === 'skill' ? 'var(--teal)' : 'var(--blue)'}">${descriptorType}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:12px">${icCountRange} ICs for ${descriptorType}</div>
+        ${ics.length === 0
+          ? `<div style="display:flex;flex-direction:column;align-items:center;padding:24px 16px;gap:8px;background:var(--surface-alt);border-radius:6px;border:1px solid var(--border)">
+              <span style="font-size:20px;color:var(--text3)">◈</span>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted)">No instructional components yet</div>
+              <div style="font-size:11px;color:var(--text3);text-align:center">System default ICs will appear here once generated</div>
+            </div>`
+          : ics.map(ic => {
+              const stageColour = ic.difficultyStage === 'early'
+                ? 'background:var(--green-dim);color:var(--green)'
+                : ic.difficultyStage === 'late'
+                  ? 'background:var(--rust-dim);color:var(--rust)'
+                  : 'background:var(--gold-dim);color:var(--gold)';
+              const tierLabel = ic.ownerTier === 'teacher_copy'
+                ? 'teacher copy'
+                : ic.ownerTier === 'teacher_original'
+                  ? 'teacher original'
+                  : 'system default';
+              return `<div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:8px;background:var(--surface)">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);line-height:1.4">
+                    <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-right:5px">${ic.sequenceOrder}.</span>${ic.name}
+                  </div>
+                  <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;flex-shrink:0;${stageColour}">${ic.difficultyStage}</span>
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:6px">${ic.description}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:${(ic.exampleOfSuccess || ic.commonError) ? '8px' : '0'}">${tierLabel}</div>
+                ${ic.exampleOfSuccess ? `<div style="margin-top:6px"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green);margin-bottom:2px">Example of success</div><div style="font-size:11px;color:var(--text-muted);line-height:1.4">${ic.exampleOfSuccess}</div></div>` : ''}
+                ${ic.commonError ? `<div style="margin-top:6px"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--rust);margin-bottom:2px">Common error</div><div style="font-size:11px;color:var(--text-muted);line-height:1.4">${ic.commonError}</div></div>` : ''}
+              </div>`;
+            }).join('')}
       </div>
     </div>
     ${studentId ? `
