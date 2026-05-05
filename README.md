@@ -14,7 +14,7 @@ The app is a static front end (`index.html`, `styles.css`, `app.js`) that runs d
 ## Live URL
 
 ```
-https://chriswhite3140.github.io/claude-split
+https://chriswhite3140.github.io/Claude-Split
 ```
 
 ## Repo structure
