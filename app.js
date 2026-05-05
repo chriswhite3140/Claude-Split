@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.12
- * Last updated: 2026-04-04
+ * THIS FILE IS VERSION: 1.12.15
+ * Last updated: 2026-05-05
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.15 - IC data structure: state.instructionalComponents[], createIC(), selector helpers
  * v1.12.14 - ContentDescriptor enriched with descriptorType and elaborations at init
  * v1.12.12 - Planner lesson cards now include a quick delete action
  * v1.12.11 - Planner lesson cards now include a quick duplicate action
@@ -41,7 +42,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.14';
+const APP_VERSION = '1.12.15';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -219,6 +220,7 @@ let state = {
   progressionPlacements: [],  // { id, student_id, element, sub_element, level, date, notes, ext_label, ext_value }
   components: loadComponentsState(),          // [{ id, description, contentDescriptorCode }]
   componentProgress: loadComponentProgressState(), // [{ id, student_id, component_id, code, mastery, date, notes }]
+  instructionalComponents: [],
   curriculumCodes: [],
   standards: [],
   progressions: [],
@@ -3305,6 +3307,62 @@ function buildDescriptorIndex() {
   });
 }
 
+
+// ── IC FACTORY AND SELECTORS ──
+
+function createIC(fields = {}) {
+  return {
+    id: fields.id ?? crypto.randomUUID(),
+    homeDescriptorId: fields.homeDescriptorId ?? null,
+    linkedDescriptorIds: fields.linkedDescriptorIds ?? [],
+    name: fields.name ?? '',
+    description: fields.description ?? '',
+    sequenceOrder: fields.sequenceOrder ?? 0,
+    difficultyStage: fields.difficultyStage ?? 'early',
+    exampleOfSuccess: fields.exampleOfSuccess ?? null,
+    commonError: fields.commonError ?? null,
+    checkpointTask: fields.checkpointTask ?? null,
+    isOptional: fields.isOptional ?? false,
+    isArchived: fields.isArchived ?? false,
+    ownerTier: fields.ownerTier ?? 'system_default',
+    copiedFromId: fields.copiedFromId ?? null,
+    equivalentToId: fields.equivalentToId ?? null,
+    suppressedByTeacher: fields.suppressedByTeacher ?? false,
+    icReadinessStatus: fields.icReadinessStatus ?? 'active',
+    aiQualityFlags: fields.aiQualityFlags ?? null,
+  };
+}
+
+// All active ICs for a descriptor (home + linked, not archived, not suppressed system defaults)
+function getICsForDescriptor(descriptorId) {
+  return state.instructionalComponents.filter(ic =>
+    !ic.isArchived &&
+    (ic.homeDescriptorId === descriptorId || ic.linkedDescriptorIds.includes(descriptorId))
+  );
+}
+
+// System default ICs for a descriptor (for threshold calculation)
+function getSystemDefaultICsForDescriptor(descriptorId) {
+  return state.instructionalComponents.filter(ic =>
+    ic.ownerTier === 'system_default' &&
+    !ic.isArchived &&
+    !ic.suppressedByTeacher &&
+    ic.homeDescriptorId === descriptorId
+  );
+}
+
+// Validity ratio for a descriptor (section 9.5 — does not check lesson taught status yet)
+function getICCoverageRatio(descriptorId, taughtICIds = []) {
+  const activeDefaults = getSystemDefaultICsForDescriptor(descriptorId);
+  if (activeDefaults.length === 0) return null;
+  const taughtDefaults = activeDefaults.filter(ic => taughtICIds.includes(ic.id));
+  const equivalentTaught = state.instructionalComponents.filter(ic =>
+    ic.ownerTier === 'teacher_original' &&
+    ic.equivalentToId !== null &&
+    taughtICIds.includes(ic.id)
+  );
+  return (taughtDefaults.length + equivalentTaught.length) / activeDefaults.length;
+}
 
 // ── COVERAGE TOOLTIP ──
 function showCoverageTooltip(event, code, descriptor, subject, strand) {
@@ -7176,6 +7234,8 @@ async function init() {
   if (csvResult.status   === 'rejected') console.warn('CSV load failed:',    csvResult.reason);
 
   buildDescriptorIndex();
+  console.log('[IC] state.instructionalComponents ready. Count:', state.instructionalComponents.length);
+  console.log('[IC] createIC test:', createIC({ homeDescriptorId: 'test-id', name: 'Test IC' }));
   state.loading = false;
   renderView();
   checkDailyLogBadge();
