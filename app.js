@@ -3337,6 +3337,7 @@ function createIC(fields = {}) {
 function getICsForDescriptor(descriptorId) {
   return state.instructionalComponents.filter(ic =>
     !ic.isArchived &&
+    !(ic.ownerTier === 'system_default' && ic.suppressedByTeacher) &&
     (ic.homeDescriptorId === descriptorId || ic.linkedDescriptorIds.includes(descriptorId))
   );
 }
