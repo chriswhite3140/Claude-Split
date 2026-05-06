@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.18 - reviewNotes added to createIC() and mapped from CSV in fetchICsCSVFromGitHub()
  * v1.12.17 - IC CSV loaded from GitHub at init and parsed into state.instructionalComponents
  * v1.12.16 - IC panel added to Curriculum Codes descriptor detail view (display only)
  * v1.12.15 - IC data structure: state.instructionalComponents[], createIC(), selector helpers
@@ -44,7 +45,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.17';
+const APP_VERSION = '1.12.18';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -3350,6 +3351,7 @@ async function fetchICsCSVFromGitHub() {
         suppressedByTeacher: (row.suppressedByTeacher || '').toLowerCase() === 'true',
         icReadinessStatus: row.icReadinessStatus || 'active',
         aiQualityFlags: row.aiQualityFlags || null,
+        reviewNotes: row.reviewNotes || '',
       });
     });
     state.instructionalComponents.push(...ics);
@@ -3414,6 +3416,7 @@ function createIC(fields = {}) {
     suppressedByTeacher: fields.suppressedByTeacher ?? false,
     icReadinessStatus: fields.icReadinessStatus ?? 'active',
     aiQualityFlags: fields.aiQualityFlags ?? null,
+    reviewNotes: fields.reviewNotes ?? '',
   };
 }
 
