@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.17 - IC CSV loaded from GitHub at init and parsed into state.instructionalComponents
  * v1.12.16 - IC panel added to Curriculum Codes descriptor detail view (display only)
  * v1.12.15 - IC data structure: state.instructionalComponents[], createIC(), selector helpers
  * v1.12.14 - ContentDescriptor enriched with descriptorType and elaborations at init
@@ -43,7 +44,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.16';
+const APP_VERSION = '1.12.17';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -210,6 +211,7 @@ const CSV_FILES = {
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
   aspectLinks:     { file: 'english_aspect_to_cd_links.csv',                   iconId: 'icon-lk', navId: 'nav-load-lk' },
   elaborations:    { file: 'acara_maths_f6_elaborations_v3.csv',               iconId: 'icon-el', navId: 'nav-load-el' },
+  ics_year2_maths_number: { file: 'ics_year2_maths_number.csv' },
 };
 
 // ── STATE ──
@@ -3320,6 +3322,44 @@ async function fetchCSVFromGitHub(key) {
   }
 }
 
+async function fetchICsCSVFromGitHub() {
+  const file = CSV_FILES.ics_year2_maths_number.file;
+  try {
+    const url = GITHUB_RAW + file;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const rows = parseCSV(await resp.text());
+    const ics = rows.map(row => {
+      const rawLinked = (row.linkedDescriptorIds || '').replace(/^\[|\]$/g, '').trim();
+      return createIC({
+        id: row.id || undefined,
+        homeDescriptorId: row.homeDescriptorId || null,
+        linkedDescriptorIds: rawLinked ? rawLinked.split(',').map(s => s.trim()).filter(Boolean) : [],
+        name: row.name || '',
+        description: row.description || '',
+        sequenceOrder: parseInt(row.sequenceOrder, 10) || 0,
+        difficultyStage: row.difficultyStage || 'early',
+        exampleOfSuccess: row.exampleOfSuccess || null,
+        commonError: row.commonError || null,
+        checkpointTask: row.checkpointTask || null,
+        isOptional: (row.isOptional || '').toLowerCase() === 'true',
+        isArchived: (row.isArchived || '').toLowerCase() === 'true',
+        ownerTier: row.ownerTier || 'system_default',
+        copiedFromId: row.copiedFromId || null,
+        equivalentToId: row.equivalentToId || null,
+        suppressedByTeacher: (row.suppressedByTeacher || '').toLowerCase() === 'true',
+        icReadinessStatus: row.icReadinessStatus || 'active',
+        aiQualityFlags: row.aiQualityFlags || null,
+      });
+    });
+    state.instructionalComponents.push(...ics);
+    return ics.length;
+  } catch(e) {
+    console.warn('Could not auto-load ' + file + ':', e);
+    return 0;
+  }
+}
+
 async function fetchAllCSVs() {
   const results = await Promise.all([
     fetchCSVFromGitHub('curriculumCodes'),
@@ -3328,6 +3368,7 @@ async function fetchAllCSVs() {
     fetchCSVFromGitHub('numeracyProgressions'),
     fetchCSVFromGitHub('aspectLinks'),
     fetchCSVFromGitHub('elaborations'),
+    fetchICsCSVFromGitHub(),
   ]);
   const total = results.reduce((a,b) => a+b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
