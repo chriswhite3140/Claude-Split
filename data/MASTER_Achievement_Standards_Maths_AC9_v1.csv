@@ -1,0 +1,108 @@
+Achievement Standard ID,Year Level,Subject,Standard Text,Codes,Category,Linked Content Descriptor Codes
+P-AS-01,Foundation,Maths,"Students make connections between number names, numerals and position in the sequence of numbers from zero to at least 20.",AC9MFN01,Number,AC9MFN01
+P-AS-02,Foundation,Maths,"They collect, sort and compare data in response to questions in familiar contexts.",AC9MFST01,Number,AC9MFST01
+P-AS-03,Foundation,Maths,They compare the size of collections to at least 20.,AC9MFN03,Number,AC9MFN03
+P-AS-04,Foundation,Maths,They copy and continue repeating patterns.,AC9MFA01,Algebra,AC9MFA01
+P-AS-05,Foundation,Maths,They describe the position and the location of themselves and objects in relation to other objects and people within a familiar space.,AC9MFSP02,Space,AC9MFSP02
+P-AS-06,Foundation,Maths,"They identify the attributes of mass, capacity, length and duration, and use direct comparison strategies to compare objects and events.",AC9MFM01,Measurement,AC9MFM01
+P-AS-07,Foundation,Maths,"They name, create and sort familiar shapes and give their reasoning.",AC9MFSP01,Space,AC9MFSP01
+P-AS-08,Foundation,Maths,"They partition and combine collections up to 10 in different ways, representing these with numbers.","AC9MFN02, AC9MFN04",Number,"AC9MFN02, AC9MFN04"
+P-AS-09,Foundation,Maths,"They represent practical situations that involve quantifying, equal sharing, adding to and taking away from collections to at least 10.","AC9MFN03, AC9MFN05, AC9MFN06",Number,"AC9MFN03, AC9MFN05, AC9MFN06"
+P-AS-10,Foundation,Maths,They sequence and connect familiar events to the time of day.,AC9MFM02,Measurement,AC9MFM02
+P-AS-11,Foundation,Maths,They use subitising and counting strategies to quantify collections.,"AC9MFN02, AC9MFN03, AC9MFN04, AC9MFN05",Number,"AC9MFN02, AC9MFN03, AC9MFN04, AC9MFN05"
+Y1-AS-01,Year 1,Maths,"Students connect number names, numerals and quantities, and order numbers to at least 120.",AC9M1N01,Number,AC9M1N01
+Y1-AS-02,Year 1,Maths,"They collect and record categorical data, create one-to-one displays, and compare and discuss the data using frequencies.","AC9M1ST01, AC9M1ST02",Statistics,"AC9M1ST01, AC9M1ST02"
+Y1-AS-03,Year 1,Maths,"They compare and order objects and events based on the attributes of length, mass, capacity and duration, communicating reasoning.","AC9M1M01, AC9M1M03",Measurement,"AC9M1M01, AC9M1M03"
+Y1-AS-04,Year 1,Maths,They demonstrate how one- and two-digit numbers can be partitioned in different ways and that two-digit numbers can be partitioned into tens and ones.,"AC9M1N02, AC9M1N04",Number,"AC9M1N02, AC9M1N04"
+Y1-AS-05,Year 1,Maths,They give and follow directions to move people and objects within a space.,AC9M1SP02,Space,AC9M1SP02
+Y1-AS-06,Year 1,Maths,"They make, compare and classify shapes and objects using obvious features.",AC9M1SP01,Space,AC9M1SP01
+Y1-AS-07,Year 1,Maths,They measure the length of shapes and objects using uniform informal units.,AC9M1M02,Measurement,AC9M1M02
+Y1-AS-08,Year 1,Maths,"They partition collections into equal groups and skip count in twos, fives or tens to quantify collections to at least 120.",AC9M1N03,Number,AC9M1N03
+Y1-AS-09,Year 1,Maths,"They solve problems involving addition and subtraction of numbers to 20 and use mathematical modelling to solve practical problems involving addition, subtraction, equal sharing and grouping, using calculation strategies.","AC9M1N04, AC9M1N05, AC9M1N06",Number,"AC9M1N04, AC9M1N05, AC9M1N06"
+Y1-AS-10,Year 1,Maths,"They use numbers, symbols and objects to create skip counting and repeating patterns, identifying the repeating unit.","AC9M1A01, AC9M1A02",Algebra,"AC9M1A01, AC9M1A02"
+Y2-AS-01,Year 2,Maths,"Students order and represent numbers to at least 1000, apply knowledge of place value to partition, rearrange and rename two- and three-digit numbers in terms of their parts, and regroup partitioned numbers to assist in.","AC9M2N01, AC9M2N02, AC9M2N04, AC9M2N05",Number,"AC9M2N01, AC9M2N02, AC9M2N04, AC9M2N05"
+Y2-AS-02,Year 2,Maths,"They compare and classify shapes, describing features using formal spatial term.",AC9M2SP01,Space,AC9M2SP01
+Y2-AS-03,Year 2,Maths,They describe and continue patterns that increase and decrease additively by a constant amount and identify missing elements in the pattern.,AC9M2A01,Algebra,AC9M2A01
+Y2-AS-04,Year 2,Maths,"They determine the number of days between events using a calendar and read time on an analog clock to the hour, half hour and quarter hour.","AC9M2M03, AC9M2M04",Measurement,"AC9M2M03, AC9M2M04"
+Y2-AS-05,Year 2,Maths,"They identify and represent part-whole relationships of halves, quarters and eighths in measurement contexts.","AC9M2M02, AC9M2M04, AC9M2M05, AC9M2N03",Measurement,"AC9M2M02, AC9M2M04, AC9M2M05, AC9M2N03"
+Y2-AS-06,Year 2,Maths,They locate and identify positions of features in two-dimensional representations and move position by following directions and pathways.,AC9M2SP02,Space,AC9M2SP02
+Y2-AS-07,Year 2,Maths,They recall and demonstrate proficiency with addition and subtraction facts within 20 and multiplication facts for twos.,"AC9M2A02, AC9M2A03, AC9M2N04",Algebra,"AC9M2A02, AC9M2A03, AC9M2N04"
+Y2-AS-08,Year 2,Maths,"They use a range of methods to collect, record, represent and interpret categorical data in response to questions.","AC9M2ST01, AC9M2ST02",Statistics,"AC9M2ST01, AC9M2ST02"
+Y2-AS-09,Year 2,Maths,"They use mathematical modelling to solve practical additive and multiplicative problems, including money transactions, representing the situation and choosing calculation strategies.","AC9M2N04, AC9M2N05, AC9M2N06",Number,"AC9M2N04, AC9M2N05, AC9M2N06"
+Y2-AS-10,Year 2,Maths,They use uniform informal units to measure and compare shapes and objects.,AC9M2M01,Measurement,AC9M2M01
+Y3-AS-01,Year 3,Maths,Students order and represent natural numbers beyond 10 000.,AC9M3N01,Number,AC9M3N01
+Y3-AS-02,Year 3,Maths,"They conduct guided statistical investigations involving categorical and discrete numerical data, and interpret their results in terms of the context.","AC9M3ST01, AC9M3ST02, AC9M3ST03",Statistics,"AC9M3ST01, AC9M3ST02, AC9M3ST03"
+Y3-AS-03,Year 3,Maths,They conduct repeated chance experiments and discuss variation in results.,AC9M3P02,Probability,AC9M3P02
+Y3-AS-04,Year 3,Maths,They create algorithms to investigate numbers and explore simple patterns.,AC9M3N07,Number,AC9M3N07
+Y3-AS-05,Year 3,Maths,They estimate and compare measures of duration using formal units of time.,"AC9M3M03, AC9M3M04",Measurement,"AC9M3M03, AC9M3M04"
+Y3-AS-06,Year 3,Maths,They extend and use single-digit addition and related subtraction facts and apply additive strategies to model and solve problems involving two- and three-digit numbers.,"AC9M3A02, AC9M3N03, AC9M3N06",Algebra,"AC9M3A02, AC9M3N03, AC9M3N06"
+Y3-AS-07,Year 3,Maths,They identify angles as measures of turn and compare them to right angles.,AC9M3M05,Measurement,AC9M3M05
+Y3-AS-08,Year 3,Maths,They interpret and create two-dimensional representations of familiar environments.,AC9M3SP02,Space,AC9M3SP02
+Y3-AS-09,Year 3,Maths,They make estimates and determine the reasonableness of financial and other calculations.,"AC9M3M06, AC9M3N05, AC9M3N06",Measurement,"AC9M3M06, AC9M3N05, AC9M3N06"
+Y3-AS-10,Year 3,Maths,"They make, compare and classify objects using key features.",AC9M3SP01,Space,AC9M3SP01
+Y3-AS-11,Year 3,Maths,"They partition, rearrange and regroup two- and three-digit numbers in different ways to assist in calculations.","AC9M3A01, AC9M3N03",Algebra,"AC9M3A01, AC9M3N03"
+Y3-AS-12,Year 3,Maths,"They record, represent and compare data they have collected.","AC9M3ST01, AC9M3ST02",Statistics,"AC9M3ST01, AC9M3ST02"
+Y3-AS-13,Year 3,Maths,They represent money values in different ways.,AC9M3M06,Measurement,AC9M3M06
+Y3-AS-14,Year 3,Maths,They represent unit fractions and their multiples in different ways.,AC9M3N02,Number,AC9M3N02
+Y3-AS-15,Year 3,Maths,"They use familiar metric units when estimating, comparing and measuring the attributes of objects and events.","AC9M3M01, AC9M3M02, AC9M3M03",Measurement,"AC9M3M01, AC9M3M02, AC9M3M03"
+Y3-AS-16,Year 3,Maths,"They use mathematical modelling to solve practical problems involving single-digit multiplication and division, recalling multiplication facts for twos, threes, fours, fives and tens, and using a range of strategies.","AC9M3A03, AC9M3N04, AC9M3N06",Algebra,"AC9M3A03, AC9M3N04, AC9M3N06"
+Y3-AS-17,Year 3,Maths,"They use practical activities, observation or experiment to identify and describe outcomes and the likelihood of everyday events explaining reasoning.","AC9M3P01, AC9M3P02",Probability,"AC9M3P01, AC9M3P02"
+Y4-AS-01,Year 4,Maths,Students use their understanding of place value to represent tenths and hundredths in decimal form and to multiply natural numbers by multiples of 10.,"AC9M4N01, AC9M4N05",Number,"AC9M4N01, AC9M4N05"
+Y4-AS-02,Year 4,Maths,They choose rounding and estimation strategies to determine whether results of calculations are reasonable.,AC9M4N07,Number,AC9M4N07
+Y4-AS-03,Year 4,Maths,They compare angles relative to a right angle using angle names.,AC9M4M04,Measurement,AC9M4M04
+Y4-AS-04,Year 4,Maths,They conduct repeated chance experiments and describe the variation in results.,AC9M4P02,Probability,AC9M4P02
+Y4-AS-05,Year 4,Maths,They convert between units of time when solving problems involving duration.,AC9M4M03,Measurement,AC9M4M03
+Y4-AS-06,Year 4,Maths,They count and represent fractions on a number line.,AC9M4N04,Number,AC9M4N04
+Y4-AS-07,Year 4,Maths,They create and interpret grid references.,AC9M4SP02,Space,AC9M4SP02
+Y4-AS-08,Year 4,Maths,"They create many-to-one data displays, assess the suitability of displays for representing data and discuss the shape of distributions and variation in data.","AC9M4ST01, AC9M4ST02",Statistics,"AC9M4ST01, AC9M4ST02"
+Y4-AS-09,Year 4,Maths,They find unknown values in numerical equations involving addition and subtraction.,AC9M4A01,Algebra,AC9M4A01
+Y4-AS-10,Year 4,Maths,They identify line and rotational symmetry in plane shapes and create symmetrical patterns.,AC9M4SP03,Space,AC9M4SP03
+Y4-AS-11,Year 4,Maths,They measure and approximate perimeters and areas.,AC9M4M02,Measurement,AC9M4M02
+Y4-AS-12,Year 4,Maths,They order events or the outcomes of chance experiments in terms of likelihood and identify whether events are independent or dependent.,AC9M4P01,Probability,AC9M4P01
+Y4-AS-13,Year 4,Maths,They recognise equivalent fractions and make connections between fraction and decimal notations.,"AC9M4N01, AC9M4N03",Number,"AC9M4N01, AC9M4N03"
+Y4-AS-14,Year 4,Maths,They represent and approximate shapes and objects in the environment.,AC9M4SP01,Space,AC9M4SP01
+Y4-AS-15,Year 4,Maths,"They use mathematical modelling to solve financial and other practical problems, formulating the problem using number sentences, solving the problem choosing efficient strategies and interpreting results in terms of the situation.","AC9M4N06, AC9M4N08",Number,"AC9M4N06, AC9M4N08"
+Y4-AS-16,Year 4,Maths,"They use scaled instruments and appropriate units to measure length, mass, capacity and temperature.",AC9M4M01,Measurement,AC9M4M01
+Y4-AS-17,Year 4,Maths,They use surveys and digital tools to generate categorical or discrete numerical data in statistical investigations and communicate their findings in context.,"AC9M4ST01, AC9M4ST03",Statistics,"AC9M4ST01, AC9M4ST03"
+Y4-AS-18,Year 4,Maths,They use the properties of odd and even numbers.,AC9M4N02,Number,AC9M4N02
+Y4-AS-19,Year 4,Maths,"They use their proficiency with addition and multiplication facts to add and subtract, multiply and divide numbers efficiently.","AC9M4A02, AC9M4N06, AC9M4N08",Algebra,"AC9M4A02, AC9M4N06, AC9M4N08"
+Y5-AS-01,Year 5,Maths,Students use place value to write and order decimals including decimals greater than one.,AC9M5N01,Number,AC9M5N01
+Y5-AS-02,Year 5,Maths,They apply properties of numbers and operations to find unknown values in numerical equations involving multiplication and division.,"AC9M5A01, AC9M5A02",Algebra,"AC9M5A01, AC9M5A02"
+Y5-AS-03,Year 5,Maths,They check the reasonableness of their calculations using estimation.,AC9M5N08,Number,AC9M5N08
+Y5-AS-04,Year 5,Maths,"They choose and use appropriate metric units to measure the attributes of length, mass and capacity, and to solve problems involving perimeter and area.","AC9M5M01, AC9M5M02",Measurement,"AC9M5M01, AC9M5M02"
+Y5-AS-05,Year 5,Maths,"They conduct repeated chance experiments, list the possible outcomes, estimate likelihoods and make comparisons between those with and without equally likely outcomes.","AC9M5P01, AC9M5P02",Probability,"AC9M5P01, AC9M5P02"
+Y5-AS-06,Year 5,Maths,They connect objects to their two-dimensional nets.,AC9M5SP01,Space,AC9M5SP01
+Y5-AS-07,Year 5,Maths,They convert between 12- and 24-hour time.,AC9M5M03,Measurement,AC9M5M03
+Y5-AS-08,Year 5,Maths,They create and use algorithms to identify and explain patterns in the factors and multiples of numbers.,AC9M5N10,Number,AC9M5N10
+Y5-AS-09,Year 5,Maths,"They estimate, construct and measure angles in degrees.",AC9M5M04,Measurement,AC9M5M04
+Y5-AS-10,Year 5,Maths,They express natural numbers as products of factors and identify multiples.,AC9M5N02,Number,AC9M5N02
+Y5-AS-11,Year 5,Maths,They identify the mode and interpret the shape of distributions of data in context.,AC9M5ST01,Statistics,AC9M5ST01
+Y5-AS-12,Year 5,Maths,They interpret and compare data represented in line graphs.,AC9M5ST02,Statistics,AC9M5ST02
+Y5-AS-13,Year 5,Maths,"They order and represent, add and subtract fractions with the same or related denominators.","AC9M5N03, AC9M5N05",Number,"AC9M5N03, AC9M5N05"
+Y5-AS-14,Year 5,Maths,They perform and describe the results of transformations and identify any symmetries.,AC9M5SP03,Space,AC9M5SP03
+Y5-AS-15,Year 5,Maths,They plan and conduct statistical investigations that collect nominal and ordinal categorical and discrete numerical data using digital tools.,"AC9M5ST01, AC9M5ST03",Statistics,"AC9M5ST01, AC9M5ST03"
+Y5-AS-16,Year 5,Maths,They represent common percentages and connect them to their fraction and decimal equivalents.,AC9M5N04,Number,AC9M5N04
+Y5-AS-17,Year 5,Maths,They use grid coordinates to locate and move positions.,AC9M5SP02,Space,AC9M5SP02
+Y5-AS-18,Year 5,Maths,"They use mathematical modelling to solve financial and other practical problems, formulating and solving problems, choosing arithmetic operations and interpreting results in terms of the situation.","AC9M5N07, AC9M5N09",Number,"AC9M5N07, AC9M5N09"
+Y5-AS-19,Year 5,Maths,They use their proficiency with multiplication facts and efficient calculation strategies to multiply large numbers by one- and two-digit numbers and divide by single-digit numbers.,"AC9M5A01, AC9M5N06, AC9M5N07",Algebra,"AC9M5A01, AC9M5N06, AC9M5N07"
+Y6-AS-01,Year 6,Maths,Students use integers to represent points on a number line and in the Cartesian plane.,"AC9M6N01, AC9M6SP02",Number,"AC9M6N01, AC9M6SP02"
+Y6-AS-02,Year 6,Maths,"They assign probabilities using common fractions, decimal and percentages.",AC9M6P01,Probability,AC9M6P01
+Y6-AS-03,Year 6,Maths,"They compare distributions of discrete and continuous numerical and ordinal categorical data sets as part of their statistical investigations, using digital tools.","AC9M6ST01, AC9M6ST03",Statistics,"AC9M6ST01, AC9M6ST03"
+Y6-AS-04,Year 6,Maths,They compare observed frequencies to the expected frequencies of the outcomes of chance experiments.,AC9M6P02,Probability,AC9M6P02
+Y6-AS-05,Year 6,Maths,"They conduct simulations using digital tools, to generate and record the outcomes from many trials of a chance experiment.",AC9M6P02,Probability,AC9M6P02
+Y6-AS-06,Year 6,Maths,"They convert between common units of length, mass and capacity.",AC9M6M01,Measurement,AC9M6M01
+Y6-AS-07,Year 6,Maths,"They create and use algorithms to generate sets of numbers, using a rule.",AC9M6A03,Algebra,AC9M6A03
+Y6-AS-08,Year 6,Maths,They create tessellating patterns using combinations of transformations.,AC9M6SP03,Space,AC9M6SP03
+Y6-AS-09,Year 6,Maths,They critique arguments presented in the media based on statistics.,AC9M6ST02,Statistics,AC9M6ST02
+Y6-AS-10,Year 6,Maths,They identify and explain rules used to create growing patterns.,AC9M6A01,Algebra,AC9M6A01
+Y6-AS-11,Year 6,Maths,They identify the parallel cross-section for right prisms.,AC9M6SP01,Space,AC9M6SP01
+Y6-AS-12,Year 6,Maths,They interpret and use timetables.,AC9M6M03,Measurement,AC9M6M03
+Y6-AS-13,Year 6,Maths,They locate an ordered pair in any one of the 4 quadrants on the Cartesian plane.,AC9M6SP02,Number,AC9M6SP02
+Y6-AS-14,Year 6,Maths,"They order common fractions, giving reasons, and add and subtract fractions with related denominators.","AC9M6N03, AC9M6N05",Number,"AC9M6N03, AC9M6N05"
+Y6-AS-15,Year 6,Maths,"They solve problems involving finding a fraction, decimal or percentage of a quantity and use estimation to find approximate solutions to problems involving rational numbers and percentages.","AC9M6N04, AC9M6N06, AC9M6N07, AC9M6N08",Number,"AC9M6N04, AC9M6N06, AC9M6N07, AC9M6N08"
+Y6-AS-16,Year 6,Maths,"They solve problems using the properties of prime, composite and square numbers.",AC9M6N02,Number,AC9M6N02
+Y6-AS-17,Year 6,Maths,They use all 4 operations with decimals and connect decimal representations of measurements to the metric system.,"AC9M6M01, AC9M6N04, AC9M6N06",Measurement,"AC9M6M01, AC9M6N04, AC9M6N06"
+Y6-AS-18,Year 6,Maths,"They use mathematical modelling to solve financial and other practical problems involving percentages and rational numbers, formulating and solving the problem, and justifying choices.",AC9M6N09,Number,AC9M6N09
+Y6-AS-19,Year 6,Maths,They use the formula for the area of a rectangle and angle properties to solve problems.,"AC9M6M02, AC9M6M04",Measurement,"AC9M6M02, AC9M6M04"
+Y4-AS-20,Year 4,Maths,They follow and create algorithms that generate sets of numbers and identify emerging patterns.,AC9M4N09,Number,AC9M4N09
+Y6-AS-20,Year 6,Maths,They find unknown values in numerical equations involving combinations of arithmetic operations.,AC9M6A02,Algebra,AC9M6A02
