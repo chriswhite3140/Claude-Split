@@ -45,7 +45,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.19';
+const APP_VERSION = '1.12.20';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1745,7 +1745,7 @@ function setDetailFilter(f)   { state.detailFilter = f; renderView(); }
 function setDetailSection(sec){ state.detailSection = sec; renderView(); }
 
 // ── CURRICULUM CODES VIEW ──
-let cdFilters = { subject: 'English', year: 'all', strand: 'all', sort: 'code', search: '' };
+let cdFilters = { subject: 'all', year: 'all', strand: 'all', sort: 'code', search: '' };
 
 function getFilteredCurriculumCodes() {
   const yearOrder = ['Foundation','Year 1','Year 2','Year 3','Year 4','Year 5','Year 6'];
@@ -1800,7 +1800,7 @@ function renderCurriculum(main) {
         : `<div class="card">
             <div class="card-head" style="padding:10px 18px">
               <div style="font-size:13px;color:var(--text-muted)">Showing <strong style="color:var(--text)">${codes.length}</strong> of ${allCodes.length} codes</div>
-              ${codes.length !== allCodes.length ? `<button class="btn" onclick="cdFilters={subject:'English',year:'all',strand:'all',sort:'code',search:''};renderCurriculum(document.getElementById('main-content'))">✕ Clear filters</button>` : ''}
+              ${codes.length !== allCodes.length ? `<button class="btn" onclick="cdFilters={subject:'all',year:'all',strand:'all',sort:'code',search:''};renderCurriculum(document.getElementById('main-content'))">✕ Clear filters</button>` : ''}
             </div>
             <div style="overflow-x:auto">
               <table class="codes-table" style="table-layout:fixed;width:100%">
