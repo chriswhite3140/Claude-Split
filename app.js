@@ -45,7 +45,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.18';
+const APP_VERSION = '1.12.19';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -206,8 +206,8 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbzbS0mCTPLmcTDECGSmGbdK
 const GITHUB_RAW = 'https://raw.githubusercontent.com/chriswhite3140/claude-split/main/data/';
 
 const CSV_FILES = {
-  curriculumCodes: { file: 'MASTER_Content_Descriptors_UPDATED_MATCHED.csv',  iconId: 'icon-cd', navId: 'nav-load-cd' },
-  standards:       { file: 'MASTER_Achievement_Standards_ALLCODES.csv',        iconId: 'icon-st', navId: 'nav-load-st' },
+  curriculumCodes: { file: 'MASTER_Content_Descriptors_Maths_AC9_v1.csv',      iconId: 'icon-cd', navId: 'nav-load-cd' },
+  standards:       { file: 'MASTER_Achievement_Standards_Maths_AC9_v1.csv',    iconId: 'icon-st', navId: 'nav-load-st' },
   progressions:    { file: 'literacy progressions.csv',                         iconId: 'icon-pr', navId: 'nav-load-pr' },
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
   aspectLinks:     { file: 'english_aspect_to_cd_links.csv',                   iconId: 'icon-lk', navId: 'nav-load-lk' },
