@@ -45,7 +45,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.20';
+const APP_VERSION = '1.12.21';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -212,7 +212,11 @@ const CSV_FILES = {
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
   aspectLinks:     { file: 'english_aspect_to_cd_links.csv',                   iconId: 'icon-lk', navId: 'nav-load-lk' },
   elaborations:    { file: 'acara_maths_f6_elaborations_v3.csv',               iconId: 'icon-el', navId: 'nav-load-el' },
-  ics_year2_maths_number: { file: 'ics_year2_maths_number.csv' },
+  ics_year2_maths_number:      { file: 'ics_year2_maths_number.csv' },
+  ics_year2_maths_algebra:     { file: 'ics_year2_maths_algebra.csv' },
+  ics_year2_maths_measurement: { file: 'ics_year2_maths_measurement.csv' },
+  ics_year2_maths_space:       { file: 'ics_year2_maths_space.csv' },
+  ics_year2_maths_statistics:  { file: 'ics_year2_maths_statistics.csv' },
 };
 
 // ── STATE ──
@@ -3323,8 +3327,8 @@ async function fetchCSVFromGitHub(key) {
   }
 }
 
-async function fetchICsCSVFromGitHub() {
-  const file = CSV_FILES.ics_year2_maths_number.file;
+async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
+  const file = CSV_FILES[key].file;
   try {
     const url = GITHUB_RAW + file;
     const resp = await fetch(url);
@@ -3370,7 +3374,11 @@ async function fetchAllCSVs() {
     fetchCSVFromGitHub('numeracyProgressions'),
     fetchCSVFromGitHub('aspectLinks'),
     fetchCSVFromGitHub('elaborations'),
-    fetchICsCSVFromGitHub(),
+    fetchICsCSVFromGitHub('ics_year2_maths_number'),
+    fetchICsCSVFromGitHub('ics_year2_maths_algebra'),
+    fetchICsCSVFromGitHub('ics_year2_maths_measurement'),
+    fetchICsCSVFromGitHub('ics_year2_maths_space'),
+    fetchICsCSVFromGitHub('ics_year2_maths_statistics'),
   ]);
   const total = results.reduce((a,b) => a+b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
