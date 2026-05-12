@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.22
+ * THIS FILE IS VERSION: 1.12.25
  * Last updated: 2026-05-12
  * ============================================================
  *
@@ -10,6 +10,8 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.25 - dlToggleCode ignores IC-derived codes; code list shows "via IC" badge for those rows
+ * v1.12.24 - Daily Log: selecting an IC auto-adds its homeDescriptorId to selectedCodes; footer shows code+IC counts
  * v1.12.22 - IC tracking: taughtICs state + API, IC Outcomes step in Daily Log Wizard, IC status toggles in descriptor detail panel
  * v1.12.18 - reviewNotes added to createIC() and mapped from CSV in fetchICsCSVFromGitHub()
  * v1.12.17 - IC CSV loaded from GitHub at init and parsed into state.instructionalComponents
@@ -5005,7 +5007,8 @@ let dlState = {
   step: 1,           // 1=attendance, 2=codes, 3=mastery, 4=ic-outcomes
   date: '',
   absentIds: new Set(),
-  selectedCodes: [],  // array of code strings
+  manualCodes: [],    // codes explicitly selected by the teacher via the code list
+  selectedCodes: [],  // union of manualCodes + homeDescriptorId of every selected IC
   masteryMap: {},     // key: studentId+'|'+code → 'Achieved'|'Developing'|'Emerging'|null
   selectedICs: [],    // array of ic ids selected via AI IC suggester
   icOutcomeMap: {},   // key: studentId+'|'+icId → 'taught'|'mastered'|'not_yet'|null
@@ -5019,6 +5022,7 @@ function openDailyLogWizard() {
     step: 1,
     date: new Date().toISOString().split('T')[0],
     absentIds: new Set(),
+    manualCodes: [],
     selectedCodes: [],
     masteryMap: {},
     selectedICs: [],
@@ -5061,7 +5065,7 @@ function renderDlModal() {
 
   const isLastStep = dlState.step === totalSteps;
   const nextLabel  = dlState.step === 1 ? `Next → Codes (${state.students.length - dlState.absentIds.size} present)`
-    : dlState.step === 2 ? `Next → Quick Mastery (${dlState.selectedCodes.length} codes)`
+    : dlState.step === 2 ? dlStep2NextLabel()
     : dlState.step === 3 && hasICStep ? `Next → IC Outcomes (${dlState.selectedICs.length} ICs)`
     : `✓ Save Session`;
 
@@ -5322,17 +5326,35 @@ function buildDlSelectedChips() {
 
 function buildDlCodeListHtml(codes) {
   if (!codes.length) return '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">No codes match your filters</div>';
+  const icDerivedSet = new Set(
+    (dlState.selectedICs || [])
+      .map(id => state.instructionalComponents.find(ic => ic.id === id)?.homeDescriptorId)
+      .filter(Boolean)
+  );
   return codes.map(c => {
-    const selected = dlState.selectedCodes.includes(c.Code);
-    return `<div onclick="dlToggleCode('${c.Code}')" data-dl-code="${c.Code}"
-      style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.1s;${selected?'background:var(--blue-dim);':''}"
-      onmouseover="if(!${selected})this.style.background='var(--surface-alt)'" onmouseout="if(!${selected})this.style.background='transparent'">
-      <div style="width:16px;height:16px;border-radius:3px;border:1.5px solid ${selected?'var(--blue)':'var(--border2)'};background:${selected?'var(--blue)':'none'};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px">
-        ${selected ? '<span style="color:var(--primary-contrast);font-size:10px;font-weight:700">✓</span>' : ''}
-      </div>
+    const icDerived = icDerivedSet.has(c.Code);
+    const manualSel = (dlState.manualCodes || []).includes(c.Code);
+    const selected  = manualSel || icDerived;
+
+    const rowBg     = icDerived ? 'background:var(--purple-dim);' : selected ? 'background:var(--blue-dim);' : '';
+    const cursor    = icDerived ? 'default' : 'pointer';
+    const clickAttr = icDerived ? '' : `onclick="dlToggleCode('${c.Code}')"`;
+    const hoverAttr = icDerived ? '' : `onmouseover="if(!${selected})this.style.background='var(--surface-alt)'" onmouseout="if(!${selected})this.style.background='transparent'"`;
+    const codeColor = icDerived ? 'var(--purple)' : selected ? 'var(--blue)' : 'var(--text3)';
+
+    const indicator = icDerived
+      ? `<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--purple);border:1px solid var(--purple);border-radius:3px;padding:1px 4px;white-space:nowrap;flex-shrink:0;margin-top:2px">via IC</div>`
+      : `<div style="width:16px;height:16px;border-radius:3px;border:1.5px solid ${selected?'var(--blue)':'var(--border2)'};background:${selected?'var(--blue)':'none'};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px">
+          ${selected ? '<span style="color:var(--primary-contrast);font-size:10px;font-weight:700">✓</span>' : ''}
+        </div>`;
+
+    return `<div ${clickAttr} data-dl-code="${c.Code}"
+      style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);cursor:${cursor};transition:background 0.1s;${rowBg}"
+      ${hoverAttr}>
+      ${indicator}
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span style="font-family:'DM Mono',monospace;font-size:10px;color:${selected?'var(--blue)':'var(--text3)'}">${c.Code}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:${codeColor}">${c.Code}</span>
           <span style="font-size:9px;background:var(--surface-alt);padding:1px 5px;border-radius:3px;color:var(--text3)">${c.Subject||''}</span>
           <span style="font-size:9px;color:var(--text3)">${c.Strand||''}</span>
         </div>
@@ -5342,28 +5364,43 @@ function buildDlCodeListHtml(codes) {
   }).join('');
 }
 
+function dlRecalcSelectedCodes() {
+  const icCodes = dlState.selectedICs
+    .map(id => state.instructionalComponents.find(ic => ic.id === id)?.homeDescriptorId)
+    .filter(Boolean);
+  dlState.selectedCodes = [...new Set([...dlState.manualCodes, ...icCodes])];
+}
+
+function dlStep2NextLabel() {
+  const codes = dlState.selectedCodes.length;
+  const ics   = dlState.selectedICs.length;
+  const parts = [];
+  if (codes) parts.push(`${codes} code${codes !== 1 ? 's' : ''}`);
+  if (ics)   parts.push(`${ics} IC${ics !== 1 ? 's' : ''}`);
+  return `Next → Quick Mastery${parts.length ? ` (${parts.join(', ')})` : ''}`;
+}
+
 function dlToggleCode(code) {
-  const idx = dlState.selectedCodes.indexOf(code);
-  if (idx >= 0) dlState.selectedCodes.splice(idx, 1);
-  else dlState.selectedCodes.push(code);
-  // Update chips
+  // Codes selected via IC selection are read-only — manual clicks are ignored
+  const icDerived = (dlState.selectedICs || []).some(icId => {
+    const ic = state.instructionalComponents.find(x => x.id === icId);
+    return ic && ic.homeDescriptorId === code;
+  });
+  if (icDerived) return;
+
+  const idx = (dlState.manualCodes || []).indexOf(code);
+  if (idx >= 0) dlState.manualCodes.splice(idx, 1);
+  else dlState.manualCodes.push(code);
+  dlRecalcSelectedCodes();
+
+  // Update chips and code list
   const chips = document.getElementById('dl-selected-chips');
   if (chips) chips.innerHTML = buildDlSelectedChips();
-  // Update row highlight
-  const row = document.querySelector(`[data-dl-code="${code}"]`);
-  if (row) {
-    const selected = dlState.selectedCodes.includes(code);
-    row.style.background = selected ? 'var(--blue-dim)' : 'transparent';
-    const box = row.querySelector('div');
-    if (box) {
-      box.style.borderColor = selected ? 'var(--blue)' : 'var(--border2)';
-      box.style.background  = selected ? 'var(--blue)' : 'none';
-      box.innerHTML = selected ? '<span style="color:var(--primary-contrast);font-size:10px;font-weight:700">✓</span>' : '';
-    }
-  }
+  dlFilterCodes();
+
   // Update footer
   const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
-  if (btn) btn.textContent = `Next → Quick Mastery (${dlState.selectedCodes.length} codes)`;
+  if (btn) btn.textContent = dlStep2NextLabel();
 }
 
 function dlFilterCodes() {
@@ -5604,6 +5641,14 @@ function dlAddAISuggestedIC(icId) {
   if (idx >= 0) dlState.selectedICs.splice(idx, 1);
   else dlState.selectedICs.push(icId);
 
+  // Auto-add/remove the IC's homeDescriptorId from selectedCodes
+  dlRecalcSelectedCodes();
+
+  // Refresh chips and code list so the auto-added code / "via IC" badge appear immediately
+  const chips = document.getElementById('dl-selected-chips');
+  if (chips) chips.innerHTML = buildDlSelectedChips();
+  dlFilterCodes();
+
   const selected = dlState.selectedICs.includes(icId);
   const ic = state.instructionalComponents.find(x => x.id === icId);
   const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
@@ -5626,21 +5671,24 @@ function dlAddAISuggestedIC(icId) {
     if (nameSpan) nameSpan.style.color = btnCol;
   }
 
-  // Update the Next button label to reflect IC Outcomes step
+  // Update the Next button label
   const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
-  if (btn && dlState.step === 3) {
-    btn.textContent = dlState.selectedICs.length > 0
-      ? `Next → IC Outcomes (${dlState.selectedICs.length} ICs)`
-      : '✓ Save Session';
+  if (btn) {
+    if (dlState.step === 2) {
+      btn.textContent = dlStep2NextLabel();
+    } else if (dlState.step === 3) {
+      btn.textContent = dlState.selectedICs.length > 0
+        ? `Next → IC Outcomes (${dlState.selectedICs.length} ICs)`
+        : '✓ Save Session';
+    }
   }
 }
 
 function dlAddAISuggested(code) {
-  if (!dlState.selectedCodes.includes(code)) {
-    dlState.selectedCodes.push(code);
-  } else {
-    dlState.selectedCodes.splice(dlState.selectedCodes.indexOf(code), 1);
-  }
+  const idx = dlState.manualCodes.indexOf(code);
+  if (idx < 0) dlState.manualCodes.push(code);
+  else dlState.manualCodes.splice(idx, 1);
+  dlRecalcSelectedCodes();
   const selected = dlState.selectedCodes.includes(code);
   const cd = state.curriculumCodes.find(c => c.Code === code);
   const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
@@ -5672,7 +5720,7 @@ function dlAddAISuggested(code) {
 
   // Update footer next button
   const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
-  if (btn) btn.textContent = `Next → Quick Mastery (${dlState.selectedCodes.length} codes)`;
+  if (btn) btn.textContent = dlStep2NextLabel();
 
   // Also highlight the row in the code list if it's visible
   const row = document.querySelector(`[data-dl-code="${code}"]`);
