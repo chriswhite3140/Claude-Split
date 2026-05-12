@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.15
- * Last updated: 2026-05-05
+ * THIS FILE IS VERSION: 1.12.22
+ * Last updated: 2026-05-12
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.22 - IC tracking: taughtICs state + API, IC Outcomes step in Daily Log Wizard, IC status toggles in descriptor detail panel
  * v1.12.18 - reviewNotes added to createIC() and mapped from CSV in fetchICsCSVFromGitHub()
  * v1.12.17 - IC CSV loaded from GitHub at init and parsed into state.instructionalComponents
  * v1.12.16 - IC panel added to Curriculum Codes descriptor detail view (display only)
@@ -45,7 +46,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.21';
+const APP_VERSION = '1.12.22';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -229,6 +230,7 @@ let state = {
   components: loadComponentsState(),          // [{ id, description, contentDescriptorCode }]
   componentProgress: loadComponentProgressState(), // [{ id, student_id, component_id, code, mastery, date, notes }]
   instructionalComponents: [],
+  taughtICs: [],               // { id, date, student_id, ic_id, status, notes }
   curriculumCodes: [],
   standards: [],
   progressions: [],
@@ -318,6 +320,13 @@ async function loadAll() {
     })).filter(t => t.id);
   }
 
+  // TaughtICs
+  if (Array.isArray(result.taughtICs) && result.taughtICs.length > 1) {
+    state.taughtICs = result.taughtICs.slice(1).map(r => ({
+      id: r[0], date: r[1], student_id: r[2], ic_id: r[3], status: r[4], notes: r[5] || ''
+    })).filter(t => t.id);
+  }
+
   // Standards Judgments
   if (Array.isArray(result.standardsJudgments) && result.standardsJudgments.length > 1) {
     state.standardsJudgments = result.standardsJudgments.slice(1).map(r => ({
@@ -397,6 +406,45 @@ async function loadProgressionPlacements() {
       })).filter(p => p.id);
     }
   } catch(e) { console.warn('ProgressionPlacements not loaded:', e); }
+}
+
+async function loadTaughtICs() {
+  try {
+    const rows = await apiCall('getTaughtICs');
+    if (Array.isArray(rows) && rows.length > 1) {
+      state.taughtICs = rows.slice(1).map(r => ({
+        id: r[0], date: r[1], student_id: r[2],
+        ic_id: r[3], status: r[4], notes: r[5] || ''
+      })).filter(t => t.id);
+    }
+  } catch(e) { console.warn('TaughtICs not loaded:', e); }
+}
+
+async function saveTaughtICRecord(data) {
+  const existing = state.taughtICs.find(
+    t => t.student_id === data.student_id && t.ic_id === data.ic_id
+  );
+  if (existing) {
+    const result = await apiCall('updateTaughtIC', { id: existing.id, status: data.status, notes: data.notes || '' });
+    if (result.success) { existing.status = data.status; existing.notes = data.notes || ''; }
+    return result;
+  } else {
+    const result = await apiCall('saveTaughtIC', data);
+    if (result.success) {
+      state.taughtICs.push({ id: result.id, ...data });
+    }
+    return result;
+  }
+}
+
+async function saveTaughtICsBatch(entries) {
+  const result = await apiCall('saveTaughtICs', { entries });
+  if (result.success) {
+    entries.forEach((e, i) => {
+      state.taughtICs.push({ id: result.ids?.[i] || 'local_' + Date.now() + '_' + i, ...e });
+    });
+  }
+  return result;
 }
 
 async function saveStandardsJudgment(data) {
@@ -2083,6 +2131,29 @@ function openCodeDetail(code, studentId) {
                 : ic.ownerTier === 'teacher_original'
                   ? 'teacher original'
                   : 'system default';
+              const icStatus = studentId ? getTaughtICStatus(studentId, ic.id) : null;
+              const statusPill = studentId ? (() => {
+                const statusMap = {
+                  'taught':   { col:'var(--blue)',  bg:'var(--blue-dim)',  label:'Taught' },
+                  'mastered': { col:'var(--green)', bg:'var(--green-dim)', label:'Mastered' },
+                  'not_yet':  { col:'var(--rust)',  bg:'var(--rust-dim)',  label:'Not yet' },
+                };
+                const s = icStatus ? statusMap[icStatus] : null;
+                const pillStyle = s
+                  ? `background:${s.bg};color:${s.col};border:1px solid ${s.col}`
+                  : 'background:var(--surface-alt);color:var(--text3);border:1px solid var(--border2)';
+                const pillLabel = s ? s.label : '— Not recorded';
+                return `<span style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:10px;${pillStyle}">${pillLabel}</span>`;
+              })() : '';
+              const statusCycle = studentId ? (() => {
+                const next = { null: 'taught', 'taught': 'mastered', 'mastered': 'not_yet', 'not_yet': null };
+                const nextStatus = next[icStatus] !== undefined ? next[icStatus] : 'taught';
+                const nextArg = nextStatus === null ? 'null' : `'${nextStatus}'`;
+                return `<button onclick="toggleICStatus('${studentId}','${ic.id}',${nextArg},'${code}')"
+                  style="padding:4px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:10px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
+                  Update status
+                </button>`;
+              })() : '';
               return `<div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:8px;background:var(--surface)">
                 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">
                   <div style="font-size:12px;font-weight:600;color:var(--text-muted);line-height:1.4">
@@ -2094,6 +2165,10 @@ function openCodeDetail(code, studentId) {
                 <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:${(ic.exampleOfSuccess || ic.commonError) ? '8px' : '0'}">${tierLabel}</div>
                 ${ic.exampleOfSuccess ? `<div style="margin-top:6px"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green);margin-bottom:2px">Example of success</div><div style="font-size:11px;color:var(--text-muted);line-height:1.4">${ic.exampleOfSuccess}</div></div>` : ''}
                 ${ic.commonError ? `<div style="margin-top:6px"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--rust);margin-bottom:2px">Common error</div><div style="font-size:11px;color:var(--text-muted);line-height:1.4">${ic.commonError}</div></div>` : ''}
+                ${studentId ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+                  ${statusPill}
+                  ${statusCycle}
+                </div>` : ''}
               </div>`;
             }).join('')}
       </div>
@@ -2104,6 +2179,27 @@ function openCodeDetail(code, studentId) {
     </div>` : ''}
   `;
   document.body.appendChild(panel);
+}
+
+async function toggleICStatus(studentId, icId, newStatus, code) {
+  try {
+    const data = { date: new Date().toISOString().split('T')[0], student_id: studentId, ic_id: icId, status: newStatus, notes: '' };
+    if (newStatus === null || newStatus === 'null') {
+      // Clear: remove from local state (backend doesn't support delete yet, so we set status to empty)
+      const existing = state.taughtICs.find(t => t.student_id === studentId && t.ic_id === icId);
+      if (existing) {
+        await apiCall('updateTaughtIC', { id: existing.id, status: '', notes: '' });
+        existing.status = '';
+      }
+    } else {
+      await saveTaughtICRecord(data);
+    }
+  } catch(e) {
+    console.warn('toggleICStatus failed:', e);
+    toast('Could not save IC status', 'error');
+  }
+  // Re-open the panel to reflect new state
+  openCodeDetail(code, studentId);
 }
 
 // ── CSV LOADERS ──
@@ -4903,21 +4999,28 @@ function resetAssessmentScale() {
 // ════════════════════════════════════════════════════
 
 let dlState = {
-  step: 1,           // 1=attendance, 2=codes, 3=mastery
+  step: 1,           // 1=attendance, 2=codes, 3=mastery, 4=ic-outcomes
   date: '',
   absentIds: new Set(),
   selectedCodes: [],  // array of code strings
   masteryMap: {},     // key: studentId+'|'+code → 'Achieved'|'Developing'|'Emerging'|null
+  selectedICs: [],    // array of ic ids selected via AI IC suggester
+  icOutcomeMap: {},   // key: studentId+'|'+icId → 'taught'|'mastered'|'not_yet'|null
+  selectedSubject: '',
   aiLoading: false,
 };
 
 function openDailyLogWizard() {
+  const availSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
   dlState = {
     step: 1,
     date: new Date().toISOString().split('T')[0],
     absentIds: new Set(),
     selectedCodes: [],
     masteryMap: {},
+    selectedICs: [],
+    icOutcomeMap: {},
+    selectedSubject: availSubjects[0] || '',
     aiLoading: false,
   };
   renderDlModal();
@@ -4931,32 +5034,36 @@ function renderDlModal() {
   overlay.id = 'dl-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:150;animation:fadeIn 0.15s ease';
 
-  const steps = ['Attendance','Codes Taught','Quick Mastery'];
+  const hasICStep = dlState.selectedICs.length > 0;
+  const totalSteps = hasICStep ? 4 : 3;
+  const steps = ['Attendance','Codes Taught','Quick Mastery', ...(hasICStep ? ['IC Outcomes'] : [])];
   const stepBar = steps.map((s, i) => {
     const n = i + 1;
     const active  = dlState.step === n;
     const done    = dlState.step > n;
     const col     = done ? 'var(--green)' : active ? 'var(--blue)' : 'var(--text3)';
     const bg      = done ? 'var(--green-dim)' : active ? 'var(--blue-dim)' : 'var(--surface-alt)';
-    return `<div style="display:flex;align-items:center;gap:6px;flex:1;${n < 3 ? 'margin-right:8px' : ''}">
+    return `<div style="display:flex;align-items:center;gap:6px;flex:1;${n < totalSteps ? 'margin-right:8px' : ''}">
       <div style="width:22px;height:22px;border-radius:50%;background:${bg};border:1.5px solid ${col};display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:${col};flex-shrink:0">${done ? '✓' : n}</div>
       <span style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:${col}">${s}</span>
-      ${n < 3 ? `<div style="flex:1;height:1px;background:${done?'var(--green)':'var(--border2)'}"></div>` : ''}
+      ${n < totalSteps ? `<div style="flex:1;height:1px;background:${done?'var(--green)':'var(--border2)'}"></div>` : ''}
     </div>`;
   }).join('');
 
   let bodyHtml = '';
   if (dlState.step === 1) bodyHtml = buildDlStep1();
   else if (dlState.step === 2) bodyHtml = buildDlStep2();
-  else bodyHtml = buildDlStep3();
+  else if (dlState.step === 3) bodyHtml = buildDlStep3();
+  else bodyHtml = buildDlStep4();
 
-  const isLastStep = dlState.step === 3;
+  const isLastStep = dlState.step === totalSteps;
   const nextLabel  = dlState.step === 1 ? `Next → Codes (${state.students.length - dlState.absentIds.size} present)`
     : dlState.step === 2 ? `Next → Quick Mastery (${dlState.selectedCodes.length} codes)`
+    : dlState.step === 3 && hasICStep ? `Next → IC Outcomes (${dlState.selectedICs.length} ICs)`
     : `✓ Save Session`;
 
-  // Modal width: step 3 gets much wider to fit the mastery grid
-  const modalWidth = dlState.step === 3
+  // Modal width: step 3 and 4 get much wider to fit the grids
+  const modalWidth = (dlState.step === 3 || dlState.step === 4)
     ? 'width:min(95vw,1100px)'
     : 'width:min(96vw,680px)';
 
@@ -4986,6 +5093,7 @@ function renderDlModal() {
         </button>
         <div style="display:flex;gap:8px">
           ${dlState.step === 3 ? `<button onclick="dlSkipMastery()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip mastery</button>` : ''}
+          ${dlState.step === 4 ? `<button onclick="dlSkipICOutcomes()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip IC outcomes</button>` : ''}
           <button onclick="dlNext()" style="padding:8px 20px;border-radius:6px;border:none;background:var(--blue);color:var(--primary-contrast);font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">
             ${nextLabel}
           </button>
@@ -5081,16 +5189,28 @@ function buildDlStep2() {
       Search, browse by subject/strand, or describe the lesson and let AI suggest codes.
     </div>
 
-    <!-- AI describe box -->
+    <!-- AI IC Suggester box -->
     <div style="background:var(--surface-alt);border:1px solid var(--border2);border-radius:8px;padding:12px 14px;margin-bottom:14px">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--purple);margin-bottom:8px">✦ AI Code Suggester</div>
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--purple);margin-bottom:8px">✦ AI IC Suggester</div>
+      <!-- Subject selector -->
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px" id="dl-ai-subject-btns">
+        ${availSubjects.map(s => {
+          const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
+          const col = subjColours[s] || 'var(--text3)';
+          const active = s === dlState.selectedSubject;
+          return `<button onclick="dlSetAISubject('${s.replace(/'/g,"\\'")}')"
+            style="padding:4px 10px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?col+'22':'none'};color:${active?col:'var(--text3)'};font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
+            ${s}
+          </button>`;
+        }).join('')}
+      </div>
       <div style="display:flex;gap:8px">
-        <input id="dl-ai-input" placeholder="Describe everything taught today across all subjects… e.g. '2 times tables and doubling, phonics blending, narrative writing openers, living vs non-living things'"
+        <input id="dl-ai-input" placeholder="Describe what you taught today… AI will suggest ICs matching your selected subject and present students' year levels"
           style="flex:1;background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:8px 12px;color:var(--text);font-size:12px;outline:none;font-family:'Instrument Sans',sans-serif"
           onkeydown="if(event.key==='Enter')dlAISuggest()">
         <button onclick="dlAISuggest()" id="dl-ai-btn"
           style="padding:8px 14px;border-radius:6px;border:1px solid var(--purple);background:var(--purple-dim);color:var(--purple);font-size:12px;cursor:pointer;white-space:nowrap;font-family:'Instrument Sans',sans-serif">
-          Suggest
+          Suggest ICs
         </button>
       </div>
       <div id="dl-ai-results" style="margin-top:10px"></div>
@@ -5162,6 +5282,24 @@ function wireDlStep2Events() {
 
   // Now run the filter with the pre-set values
   dlFilterCodes();
+}
+
+function dlSetAISubject(subject) {
+  dlState.selectedSubject = subject;
+  // Re-render just the subject buttons
+  const availSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
+  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
+  const container = document.getElementById('dl-ai-subject-btns');
+  if (container) {
+    container.innerHTML = availSubjects.map(s => {
+      const col = subjColours[s] || 'var(--text3)';
+      const active = s === subject;
+      return `<button onclick="dlSetAISubject('${s.replace(/'/g,"\\'")}')"
+        style="padding:4px 10px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?col+'22':'none'};color:${active?col:'var(--text3)'};font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
+        ${s}
+      </button>`;
+    }).join('');
+  }
 }
 
 function buildDlSelectedChips() {
@@ -5334,163 +5472,164 @@ async function dlAISuggest() {
 
   btn.textContent = '…'; btn.disabled = true;
   results.innerHTML = `<div style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:8px">
-    <div class="spinner" style="width:14px;height:14px;border-width:2px"></div> Searching across all subjects…
+    <div class="spinner" style="width:14px;height:14px;border-width:2px"></div> Finding relevant ICs…
   </div>`;
 
-  // Always search ALL subjects — only filter by year for relevance
-  // Subject filter still applies to the browse list below, but NOT to AI suggestions
-  const year = document.getElementById('dl-year-filter')?.value || 'all';
-  const relevantCodes = state.curriculumCodes.filter(c => {
-    if (year !== 'all' && (c['Year Level']||'').trim() !== year) return false;
-    return true;
+  // Build list of present students' year levels
+  const presentStudents = state.students.filter(s => !dlState.absentIds.has(s.id));
+  const presentYearLevels = [...new Set(presentStudents.map(s => YLM[normaliseYear(s.year_level)] || s.year_level))];
+
+  const relevantICs = state.instructionalComponents.filter(ic => {
+    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+    return cd &&
+      cd.Subject === dlState.selectedSubject &&
+      (presentYearLevels.length === 0 || presentYearLevels.includes((cd['Year Level']||'').trim())) &&
+      !ic.isArchived;
   });
 
-  if (!relevantCodes.length) {
-    results.innerHTML = `<div style="font-size:11px;color:var(--text3)">No codes loaded — make sure your CSV has loaded.</div>`;
-    btn.textContent = 'Suggest'; btn.disabled = false;
+  if (!relevantICs.length) {
+    results.innerHTML = `<div style="font-size:11px;color:var(--text3)">No ICs loaded for ${dlState.selectedSubject||'selected subject'} — ICs may not be generated yet for these year levels.</div>`;
+    btn.textContent = 'Suggest ICs'; btn.disabled = false;
     return;
   }
 
-  let suggestedCodes = [];
+  let suggestedICIds = [];
   let reasoning = '';
-  let method = 'ai';
 
-  // ── Try AI via Apps Script first ──
+  // ── Try AI via Apps Script ──
   try {
-    const yearContext = year !== 'all' ? ` for ${year}` : '';
-
-    // Send all codes across all subjects — AI picks the best regardless of subject
-    const codeList = relevantCodes.map(c =>
-      `${c.Code}|${c.Subject}|${c.Strand||''}|${(c.Descriptor||c.Aspect||'').slice(0,90)}`
-    ).join('\n');
-
-    const prompt = `You are helping an Australian primary school teacher identify Australian Curriculum v9 codes${yearContext}.
-The teacher has described everything taught in their day. Identify ALL relevant codes across ALL subjects.
+    const icList = relevantICs.map(ic => `${ic.id}|${ic.name}|${ic.description||''}`).join('\n');
+    const yearContext = presentYearLevels.length ? ` for ${presentYearLevels.join(', ')}` : '';
+    const prompt = `You are helping an Australian primary school teacher identify the instructional components (ICs) most relevant to what was taught today${yearContext} in ${dlState.selectedSubject||'their subject'}.
 Lesson description: "${text}"
-Available codes (Code|Subject|Strand|Descriptor):
-${codeList}
+Available ICs (id|name|description):
+${icList}
 Return ONLY valid JSON, no preamble, no backticks:
-{"codes":["CODE1","CODE2","CODE3"],"reasoning":"One sentence explanation"}
-Return up to 12 codes covering all subjects mentioned. Be generous — include any code that reasonably matches any part of the description.`;
+{"ics":["ic-id-1","ic-id-2"],"reasoning":"One sentence explanation"}
+Return up to 10 ICs that best match the lesson description.`;
 
     const result = await apiCall('claudeSuggest', { prompt });
 
-    if (result && result.codes && result.codes.length) {
-      suggestedCodes = result.codes.filter(code => state.curriculumCodes.some(c => c.Code === code));
+    if (result && result.ics && result.ics.length) {
+      suggestedICIds = result.ics.filter(id => relevantICs.some(ic => ic.id === id));
       reasoning = result.reasoning || '';
     } else if (result && result.text) {
       const parsed = JSON.parse(result.text.replace(/```json|```/g,'').trim());
-      suggestedCodes = (parsed.codes||[]).filter(code => state.curriculumCodes.some(c => c.Code === code));
+      suggestedICIds = (parsed.ics||[]).filter(id => relevantICs.some(ic => ic.id === id));
       reasoning = parsed.reasoning || '';
     }
 
-    if (!suggestedCodes.length) throw new Error('AI returned no valid codes');
+    if (!suggestedICIds.length) throw new Error('AI returned no valid IC ids');
 
   } catch(aiErr) {
-    // ── Keyword fallback — also searches all subjects ──
-    console.info('AI suggest fell back to keyword scoring:', aiErr.message);
-    method = 'keyword';
-    suggestedCodes = keywordSuggest(text, relevantCodes);
-    reasoning = suggestedCodes.length
-      ? 'Matched by keyword scoring across all subjects'
-      : '';
+    // ── Keyword fallback: score ICs by name+description match ──
+    console.info('AI IC suggest fell back to keyword scoring:', aiErr.message);
+    const scored = relevantICs.map(ic => ({
+      ic,
+      score: keywordScore(text, (ic.name || '') + ' ' + (ic.description || ''))
+    })).filter(x => x.score > 0).sort((a,b) => b.score - a.score).slice(0, 10);
+    suggestedICIds = scored.map(x => x.ic.id);
+    reasoning = suggestedICIds.length ? 'Matched by keyword scoring' : '';
   }
 
   // ── Render results ──
-  if (!suggestedCodes.length) {
-    // Show closest keyword matches as clickable buttons even when AI finds nothing
-    const closest = relevantCodes
-      .map(c => ({ code: c.Code, cd: c, score: keywordScore(text, c.Descriptor||c.Aspect||'') }))
-      .filter(x => x.score > 0)
-      .sort((a,b) => b.score - a.score)
-      .slice(0, 6);
-
-    if (closest.length) {
-      results.innerHTML = `
-        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">
-          No strong matches — showing closest results across all subjects. Click to add:
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:5px">
-          ${closest.map(({code, cd}) => {
-            const selected = dlState.selectedCodes.includes(code);
-            const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)'};
-            const col = selected ? 'var(--green)' : (subjColours[cd?.Subject] || 'var(--text3)');
-            return `<button onclick="dlAddAISuggested('${code}')" id="dl-ai-chip-${code}"
-              style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:5px;
-              border:1px solid ${col};background:${col}22;color:${col};
-              font-size:11px;cursor:pointer;transition:all 0.15s">
-              <span style="font-family:'DM Mono',monospace">${selected ? '✓' : '+'} ${code}</span>
-              <span style="font-size:10px;color:var(--text3)">${(cd?.Subject||'').slice(0,4).toUpperCase()}</span>
-            </button>`;
-          }).join('')}
-        </div>`;
-    } else {
-      results.innerHTML = `<div style="font-size:11px;color:var(--text3)">
-        No matches found. Try describing your lesson in more detail — include subject-specific terms
-        like "phonics", "multiplication", "narrative writing", "living things" etc.
-      </div>`;
-    }
-  } else {
-    const methodLabel = method === 'ai'
-      ? `<span style="color:var(--purple);font-size:10px;font-weight:600">✦ AI suggested · all subjects</span>`
-      : `<span style="color:var(--text3);font-size:10px">⌕ Keyword match · all subjects</span>`;
-
-    // Group suggested codes by subject for easier reading
-    const bySubject = {};
-    suggestedCodes.forEach(code => {
-      const cd = state.curriculumCodes.find(c => c.Code === code);
-      const subj = cd?.Subject || 'Other';
-      if (!bySubject[subj]) bySubject[subj] = [];
-      bySubject[subj].push({ code, cd });
-    });
-
-    const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-
-    const groupedHtml = Object.entries(bySubject).map(([subj, items]) => {
-      const col = subjColours[subj] || 'var(--text-muted)';
-      return `<div style="margin-bottom:10px">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:${col};text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px">${subj}</div>
-        <div style="display:flex;flex-direction:column;gap:5px">
-          ${items.map(({code, cd}) => {
-            const selected = dlState.selectedCodes.includes(code);
-            const btnCol = selected ? 'var(--green)' : col;
-            const btnBg  = selected ? 'var(--green-dim)' : 'var(--surface-alt)';
-            const descriptor = cd ? (cd.Descriptor || cd.Aspect || '') : '';
-            return `<button onclick="dlAddAISuggested('${code}')" id="dl-ai-chip-${code}"
-              style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:6px;
-              border:2px solid ${btnCol};background:${btnBg};
-              text-align:left;width:100%;cursor:pointer;transition:all 0.15s">
-              <!-- Tick / Plus indicator -->
-              <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${btnCol};
-                background:${selected?btnCol:'none'};display:flex;align-items:center;justify-content:center;
-                flex-shrink:0;margin-top:1px;font-size:11px;color:${selected?'var(--primary-contrast)':btnCol}">
-                ${selected ? '✓' : '+'}
-              </div>
-              <div style="flex:1;min-width:0">
-                <!-- Code + strand row -->
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
-                  <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:${btnCol}">${code}</span>
-                  ${cd?.Strand ? `<span style="font-size:9px;background:${col}22;color:${col};padding:1px 6px;border-radius:3px;font-family:'DM Mono',monospace">${cd.Strand}</span>` : ''}
-                </div>
-                <!-- Full descriptor -->
-                <div style="font-size:11px;color:var(--text-muted);line-height:1.5">${descriptor || '—'}</div>
-              </div>
-            </button>`;
-          }).join('')}
-        </div>
-      </div>`;
-    }).join('');
-
-    results.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        ${methodLabel}
-        <span style="font-size:11px;color:var(--text3);font-style:italic;flex:1">${reasoning}</span>
-      </div>
-      ${groupedHtml}
-      <div style="font-size:10px;color:var(--text3);margin-top:6px">Click any code to add it to your selection ↑</div>`;
+  if (!suggestedICIds.length) {
+    results.innerHTML = `<div style="font-size:11px;color:var(--text3)">
+      No ICs matched. Try describing the lesson using specific terms from ${dlState.selectedSubject||'the subject'}.
+    </div>`;
+    btn.textContent = 'Suggest ICs'; btn.disabled = false;
+    return;
   }
 
-  btn.textContent = 'Suggest'; btn.disabled = false;
+  // Group suggested ICs by homeDescriptorId
+  const byDescriptor = {};
+  suggestedICIds.forEach(icId => {
+    const ic = relevantICs.find(x => x.id === icId);
+    if (!ic) return;
+    if (!byDescriptor[ic.homeDescriptorId]) byDescriptor[ic.homeDescriptorId] = [];
+    byDescriptor[ic.homeDescriptorId].push(ic);
+  });
+
+  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
+  const subjectCol = subjColours[dlState.selectedSubject] || 'var(--purple)';
+
+  const groupedHtml = Object.entries(byDescriptor).map(([descriptorId, ics]) => {
+    const cd = state.curriculumCodes.find(c => c.Code === descriptorId);
+    return `<div style="margin-bottom:10px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:${subjectCol};margin-bottom:5px;display:flex;align-items:center;gap:6px">
+        <span>${descriptorId}</span>
+        ${cd ? `<span style="color:var(--text3);font-weight:400">${(cd.Descriptor||cd.Aspect||'').slice(0,60)}${(cd.Descriptor||cd.Aspect||'').length>60?'…':''}</span>` : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        ${ics.map(ic => {
+          const selected = dlState.selectedICs.includes(ic.id);
+          const btnCol = selected ? 'var(--green)' : subjectCol;
+          const btnBg  = selected ? 'var(--green-dim)' : 'var(--surface-alt)';
+          return `<button onclick="dlAddAISuggestedIC('${ic.id}')" id="dl-ai-ic-chip-${ic.id}"
+            style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:6px;
+            border:2px solid ${btnCol};background:${btnBg};
+            text-align:left;width:100%;cursor:pointer;transition:all 0.15s">
+            <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${btnCol};
+              background:${selected?btnCol:'none'};display:flex;align-items:center;justify-content:center;
+              flex-shrink:0;margin-top:1px;font-size:11px;color:${selected?'var(--primary-contrast)':btnCol}">
+              ${selected ? '✓' : '+'}
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:600;color:${btnCol};margin-bottom:3px">${ic.name}</div>
+              <div style="font-size:11px;color:var(--text-muted);line-height:1.4">${ic.description||'—'}</div>
+              ${ic.difficultyStage ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px">${ic.difficultyStage}</div>` : ''}
+            </div>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+
+  results.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="color:var(--purple);font-size:10px;font-weight:600">✦ IC suggestions · ${dlState.selectedSubject}</span>
+      <span style="font-size:11px;color:var(--text3);font-style:italic;flex:1">${reasoning}</span>
+    </div>
+    ${groupedHtml}
+    <div style="font-size:10px;color:var(--text3);margin-top:6px">Click any IC to add it to your session — selected ICs unlock the IC Outcomes step</div>`;
+
+  btn.textContent = 'Suggest ICs'; btn.disabled = false;
+}
+
+function dlAddAISuggestedIC(icId) {
+  const idx = dlState.selectedICs.indexOf(icId);
+  if (idx >= 0) dlState.selectedICs.splice(idx, 1);
+  else dlState.selectedICs.push(icId);
+
+  const selected = dlState.selectedICs.includes(icId);
+  const ic = state.instructionalComponents.find(x => x.id === icId);
+  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
+  const subjectCol = subjColours[dlState.selectedSubject] || 'var(--purple)';
+  const btnCol = selected ? 'var(--green)' : subjectCol;
+  const btnBg  = selected ? 'var(--green-dim)' : 'var(--surface-alt)';
+
+  const chip = document.getElementById('dl-ai-ic-chip-' + icId);
+  if (chip) {
+    chip.style.borderColor = btnCol;
+    chip.style.background  = btnBg;
+    const circle = chip.querySelector('div');
+    if (circle) {
+      circle.style.borderColor = btnCol;
+      circle.style.background  = selected ? btnCol : 'none';
+      circle.style.color       = selected ? 'var(--primary-contrast)' : btnCol;
+      circle.textContent       = selected ? '✓' : '+';
+    }
+    const nameSpan = chip.querySelector('div > div');
+    if (nameSpan) nameSpan.style.color = btnCol;
+  }
+
+  // Update the Next button label to reflect IC Outcomes step
+  const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
+  if (btn && dlState.step === 3) {
+    btn.textContent = dlState.selectedICs.length > 0
+      ? `Next → IC Outcomes (${dlState.selectedICs.length} ICs)`
+      : '✓ Save Session';
+  }
 }
 
 function dlAddAISuggested(code) {
@@ -5676,7 +5815,114 @@ function dlSetMastery(studentId, code, mastery) {
 
 function dlSkipMastery() {
   dlState.masteryMap = {};
+  if (dlState.selectedICs.length > 0) {
+    dlState.step = 4;
+    renderDlModal();
+  } else {
+    saveDailyLog();
+  }
+}
+
+function dlSkipICOutcomes() {
+  dlState.icOutcomeMap = {};
   saveDailyLog();
+}
+
+// ── STEP 4: IC OUTCOMES ──
+function buildDlStep4() {
+  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
+  const ics = dlState.selectedICs.map(id => state.instructionalComponents.find(ic => ic.id === id)).filter(Boolean);
+
+  if (!ics.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title">No ICs selected</div><div class="empty-sub">Go back and select ICs via the AI suggester</div></div>`;
+
+  const statusColours = {
+    'taught':   { col:'var(--blue)',  bg:'var(--blue-dim)',  label:'Taught' },
+    'mastered': { col:'var(--green)', bg:'var(--green-dim)', label:'Mastered' },
+    'not_yet':  { col:'var(--rust)',  bg:'var(--rust-dim)',  label:'Not yet' },
+  };
+
+  const icHeaders = ics.map(ic => {
+    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+    const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
+    const col = subjColours[cd?.Subject] || 'var(--blue)';
+    return `<th style="padding:0;text-align:left;border-bottom:1px solid var(--border);min-width:180px;max-width:240px;vertical-align:bottom;border-left:1px solid var(--border)">
+      <div style="display:flex;flex-direction:column;height:100%;padding:10px 12px;min-height:140px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:${col};margin-bottom:3px">${ic.homeDescriptorId}</div>
+        <div style="font-size:11px;font-weight:600;color:var(--text-muted);flex:1;line-height:1.4">${ic.name}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:8px">${ic.difficultyStage||''}</div>
+        <button onclick="dlMarkAllICTaught('${ic.id}')"
+          style="padding:4px 8px;border-radius:4px;border:1px solid var(--blue);background:var(--blue-dim);color:var(--blue);
+          font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif;font-weight:600">
+          <span>Mark all Taught</span>
+        </button>
+      </div>
+    </th>`;
+  }).join('');
+
+  const studentRows = presentStudents.map((s, si) => {
+    const cells = ics.map(ic => {
+      const key     = s.id + '|' + ic.id;
+      const current = dlState.icOutcomeMap[key] || null;
+      const statuses = ['taught','mastered','not_yet'];
+      const opts = statuses.map(st => {
+        const {col, bg, label} = statusColours[st];
+        const active = current === st;
+        return `<button onclick="dlSetICOutcome('${s.id}','${ic.id}','${st}')" title="${label}"
+          style="padding:3px 8px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-size:10px;cursor:pointer;transition:all 0.1s;font-family:'Instrument Sans',sans-serif">
+          ${label}
+        </button>`;
+      }).join('');
+      return `<td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border);border-left:1px solid var(--border)">
+        <div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">${opts}</div>
+        ${current ? '' : `<div style="font-size:9px;color:var(--text3);margin-top:2px;font-family:'DM Mono',monospace">—</div>`}
+      </td>`;
+    }).join('');
+
+    return `<tr style="background:${getStripedRowSurface(si)}">
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;left:0;background:${getStripedRowSurface(si)}">
+        <div style="display:flex;align-items:center;gap:7px">
+          <div class="sc-avatar ${getAvClass(si)}" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${getInitials(s)}</div>
+          <span style="font-size:12px;color:var(--text-muted)">${s.first_name} ${s.last_name}</span>
+        </div>
+      </td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  return `
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
+      Record IC outcomes for each present student. <span style="color:var(--blue)">Taught</span> = introduced today · <span style="color:var(--green)">Mastered</span> = secure understanding · <span style="color:var(--rust)">Not yet</span> = attempted but not achieved. Leave blank to skip.
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
+      <table style="width:100%;border-collapse:collapse;min-width:${200 + ics.length * 200}px">
+        <thead>
+          <tr style="background:var(--surface-alt)">
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">Student</th>
+            ${icHeaders}
+          </tr>
+        </thead>
+        <tbody>${studentRows}</tbody>
+      </table>
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:8px">
+      ${presentStudents.length} students · ${ics.length} ICs · ${Object.values(dlState.icOutcomeMap).filter(Boolean).length} outcomes recorded
+    </div>
+  `;
+}
+
+function dlSetICOutcome(studentId, icId, status) {
+  const key = studentId + '|' + icId;
+  if (dlState.icOutcomeMap[key] === status) delete dlState.icOutcomeMap[key];
+  else dlState.icOutcomeMap[key] = status;
+  const body = document.getElementById('dl-body');
+  if (body) body.innerHTML = buildDlStep4();
+}
+
+function dlMarkAllICTaught(icId) {
+  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
+  presentStudents.forEach(s => { dlState.icOutcomeMap[s.id + '|' + icId] = 'taught'; });
+  const body = document.getElementById('dl-body');
+  if (body) body.innerHTML = buildDlStep4();
 }
 
 // ── NAVIGATION ──
@@ -5692,6 +5938,13 @@ function dlNext() {
     if (!dlState.selectedCodes.length) { toast('Select at least one code taught today', 'error'); return; }
     dlState.step = 3;
     renderDlModal();
+  } else if (dlState.step === 3) {
+    if (dlState.selectedICs.length > 0) {
+      dlState.step = 4;
+      renderDlModal();
+    } else {
+      saveDailyLog();
+    }
   } else {
     saveDailyLog();
   }
@@ -5760,9 +6013,25 @@ async function saveDailyLog() {
     } catch(e) { console.warn('Could not save mastery for', key); }
   }
 
+  // Save IC outcome records
+  const icEntries = [];
+  Object.entries(dlState.icOutcomeMap || {}).forEach(([key, status]) => {
+    if (!status) return;
+    const [studentId, icId] = key.split('|');
+    icEntries.push({ date: dlState.date, student_id: studentId, ic_id: icId, status, notes: '' });
+  });
+  if (icEntries.length) {
+    try {
+      await saveTaughtICsBatch(icEntries);
+    } catch(e) {
+      console.warn('IC outcomes save failed:', e);
+    }
+  }
+
   setSyncing(false);
   checkDailyLogBadge();
-  toast(`✓ Session logged — ${saved} codes taught to ${presentStudents.length} students`, 'success');
+  const icNote = icEntries.length ? ` · ${icEntries.length} IC outcomes` : '';
+  toast(`✓ Session logged — ${saved} codes taught to ${presentStudents.length} students${icNote}`, 'success');
   if (state.currentView === 'dashboard') renderView();
 }
 
@@ -5784,6 +6053,23 @@ function getUntaughtCodes(studentId, yearLevel) {
   return state.curriculumCodes.filter(c =>
     (c['Year Level']||'').trim() === csvYear &&
     !wasCodeTaughtToStudent(studentId, c.Code)
+  );
+}
+
+function getTaughtICStatus(studentId, icId) {
+  const record = state.taughtICs.find(t => t.student_id === studentId && t.ic_id === icId);
+  return record ? record.status : null;
+}
+
+function getICsForDescriptorAndYears(descriptorId, yearLevels) {
+  return state.instructionalComponents.filter(ic =>
+    !ic.isArchived &&
+    !(ic.ownerTier === 'system_default' && ic.suppressedByTeacher) &&
+    (ic.homeDescriptorId === descriptorId || ic.linkedDescriptorIds.includes(descriptorId)) &&
+    (yearLevels.length === 0 || yearLevels.some(y => {
+      const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+      return cd && (cd['Year Level'] === y);
+    }))
   );
 }
 
@@ -7318,7 +7604,7 @@ async function init() {
       console.warn('getAll not available or failed, falling back to individual calls:', e);
       await Promise.allSettled([
         loadStudents(), loadProgress(), loadTaughtLog(),
-        loadStandardsJudgments(), loadProgressionPlacements()
+        loadStandardsJudgments(), loadProgressionPlacements(), loadTaughtICs()
       ]);
     }
   })();
