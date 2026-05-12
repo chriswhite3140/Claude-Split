@@ -46,7 +46,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.22';
+const APP_VERSION = '1.12.23';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -421,9 +421,12 @@ async function loadTaughtICs() {
 }
 
 async function saveTaughtICRecord(data) {
-  const existing = state.taughtICs.find(
+  const matches = state.taughtICs.filter(
     t => t.student_id === data.student_id && t.ic_id === data.ic_id
   );
+  const existing = matches.length
+    ? matches.sort((a, b) => new Date(b.date) - new Date(a.date))[0]
+    : null;
   if (existing) {
     const result = await apiCall('updateTaughtIC', { id: existing.id, status: data.status, notes: data.notes || '' });
     if (result.success) { existing.status = data.status; existing.notes = data.notes || ''; }
@@ -6057,8 +6060,12 @@ function getUntaughtCodes(studentId, yearLevel) {
 }
 
 function getTaughtICStatus(studentId, icId) {
-  const record = state.taughtICs.find(t => t.student_id === studentId && t.ic_id === icId);
-  return record ? record.status : null;
+  const records = state.taughtICs.filter(
+    t => t.student_id === studentId && t.ic_id === icId
+  );
+  if (!records.length) return null;
+  records.sort((a, b) => new Date(b.date) - new Date(a.date));
+  return records[0].status;
 }
 
 function getICsForDescriptorAndYears(descriptorId, yearLevels) {
