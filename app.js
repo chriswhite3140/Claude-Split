@@ -2,14 +2,16 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.25
- * Last updated: 2026-05-12
+ * THIS FILE IS VERSION: 1.12.27
+ * Last updated: 2026-05-13
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.27 - Bug fixes: dlMarkAllForCode now scoped to eligible students only; masteryMap cleared when 80% gate finds no students
+ * v1.12.26 - Daily Log Wizard: reordered steps (Attendance→Codes/ICs→IC Outcomes→Quick Mastery); step 4 conditional on 80% IC coverage gate
  * v1.12.25 - dlToggleCode ignores IC-derived codes; code list shows "via IC" badge for those rows
  * v1.12.24 - Daily Log: selecting an IC auto-adds its homeDescriptorId to selectedCodes; footer shows code+IC counts
  * v1.12.22 - IC tracking: taughtICs state + API, IC Outcomes step in Daily Log Wizard, IC status toggles in descriptor detail panel
@@ -48,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.23';
+const APP_VERSION = '1.12.27';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5004,7 +5006,7 @@ function resetAssessmentScale() {
 // ════════════════════════════════════════════════════
 
 let dlState = {
-  step: 1,           // 1=attendance, 2=codes, 3=mastery, 4=ic-outcomes
+  step: 1,           // 1=attendance, 2=codes/ICs, 3=ic-outcomes, 4=quick-mastery (conditional)
   date: '',
   absentIds: new Set(),
   manualCodes: [],    // codes explicitly selected by the teacher via the code list
@@ -5014,6 +5016,7 @@ let dlState = {
   icOutcomeMap: {},   // key: studentId+'|'+icId → 'taught'|'mastered'|'not_yet'|null
   selectedSubject: '',
   aiLoading: false,
+  readyForMastery: [], // populated after step 3; drives whether step 4 appears
 };
 
 function openDailyLogWizard() {
@@ -5029,6 +5032,7 @@ function openDailyLogWizard() {
     icOutcomeMap: {},
     selectedSubject: availSubjects[0] || '',
     aiLoading: false,
+    readyForMastery: [],
   };
   renderDlModal();
 }
@@ -5042,8 +5046,12 @@ function renderDlModal() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:150;animation:fadeIn 0.15s ease';
 
   const hasICStep = dlState.selectedICs.length > 0;
-  const totalSteps = hasICStep ? 4 : 3;
-  const steps = ['Attendance','Codes Taught','Quick Mastery', ...(hasICStep ? ['IC Outcomes'] : [])];
+  const hasMasteryStep = (dlState.readyForMastery || []).length > 0;
+  const steps = ['Attendance', 'Codes / ICs'];
+  if (hasICStep) steps.push('IC Outcomes');
+  if (hasMasteryStep) steps.push('Quick Mastery');
+  const totalSteps = steps.length;
+
   const stepBar = steps.map((s, i) => {
     const n = i + 1;
     const active  = dlState.step === n;
@@ -5063,11 +5071,16 @@ function renderDlModal() {
   else if (dlState.step === 3) bodyHtml = buildDlStep3();
   else bodyHtml = buildDlStep4();
 
-  const isLastStep = dlState.step === totalSteps;
-  const nextLabel  = dlState.step === 1 ? `Next → Codes (${state.students.length - dlState.absentIds.size} present)`
-    : dlState.step === 2 ? dlStep2NextLabel()
-    : dlState.step === 3 && hasICStep ? `Next → IC Outcomes (${dlState.selectedICs.length} ICs)`
-    : `✓ Save Session`;
+  let nextLabel;
+  if (dlState.step === 1) {
+    nextLabel = `Next → Codes / ICs (${state.students.length - dlState.absentIds.size} present)`;
+  } else if (dlState.step === 2) {
+    nextLabel = dlStep2NextLabel();
+  } else if (dlState.step === 3) {
+    nextLabel = `Next →`;
+  } else {
+    nextLabel = `✓ Save Session`;
+  }
 
   // Modal width: step 3 and 4 get much wider to fit the grids
   const modalWidth = (dlState.step === 3 || dlState.step === 4)
@@ -5099,8 +5112,8 @@ function renderDlModal() {
           ${dlState.step === 1 ? 'Dismiss' : '← Back'}
         </button>
         <div style="display:flex;gap:8px">
-          ${dlState.step === 3 ? `<button onclick="dlSkipMastery()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip mastery</button>` : ''}
-          ${dlState.step === 4 ? `<button onclick="dlSkipICOutcomes()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip IC outcomes</button>` : ''}
+          ${dlState.step === 3 ? `<button onclick="dlSkipICOutcomes()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip IC outcomes</button>` : ''}
+          ${dlState.step === 4 ? `<button onclick="dlSkipQuickMastery()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip — do this later</button>` : ''}
           <button onclick="dlNext()" style="padding:8px 20px;border-radius:6px;border:none;background:var(--blue);color:var(--primary-contrast);font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">
             ${nextLabel}
           </button>
@@ -5374,10 +5387,11 @@ function dlRecalcSelectedCodes() {
 function dlStep2NextLabel() {
   const codes = dlState.selectedCodes.length;
   const ics   = dlState.selectedICs.length;
-  const parts = [];
-  if (codes) parts.push(`${codes} code${codes !== 1 ? 's' : ''}`);
-  if (ics)   parts.push(`${ics} IC${ics !== 1 ? 's' : ''}`);
-  return `Next → Quick Mastery${parts.length ? ` (${parts.join(', ')})` : ''}`;
+  if (!codes && !ics) return `✓ Save Session`;
+  if (ics > 0) {
+    return `Next → IC Outcomes (${ics} IC${ics !== 1 ? 's' : ''})`;
+  }
+  return `✓ Save Session (${codes} code${codes !== 1 ? 's' : ''})`;
 }
 
 function dlToggleCode(code) {
@@ -5673,14 +5687,8 @@ function dlAddAISuggestedIC(icId) {
 
   // Update the Next button label
   const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
-  if (btn) {
-    if (dlState.step === 2) {
-      btn.textContent = dlStep2NextLabel();
-    } else if (dlState.step === 3) {
-      btn.textContent = dlState.selectedICs.length > 0
-        ? `Next → IC Outcomes (${dlState.selectedICs.length} ICs)`
-        : '✓ Save Session';
-    }
+  if (btn && dlState.step === 2) {
+    btn.textContent = dlStep2NextLabel();
   }
 }
 
@@ -5736,142 +5744,28 @@ function dlAddAISuggested(code) {
 }
 
 // ── STEP 3: QUICK MASTERY ──
-function buildDlStep3() {
-  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
-  const codes = dlState.selectedCodes;
-
-  if (!codes.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title">No codes selected</div><div class="empty-sub">Go back and select codes taught today</div></div>`;
-
-  const masteryColours = {
-    'Achieved':  { col:'var(--green)', bg:'var(--green-dim)', dot:'●' },
-    'Developing':{ col:'var(--gold)',  bg:'var(--gold-dim)',  dot:'◐' },
-    'Emerging':  { col:'var(--rust)',  bg:'var(--rust-dim)',  dot:'○' },
-  };
-
-  // Build header: one column per code
-  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-
-  const codeHeaders = codes.map(code => {
-    const cd = state.curriculumCodes.find(c => c.Code === code);
-    const col = subjColours[cd?.Subject] || 'var(--blue)';
-    const descriptor = cd ? (cd.Descriptor || cd.Aspect || '') : '';
-    return `<th style="padding:0;text-align:left;border-bottom:1px solid var(--border);min-width:180px;max-width:240px;vertical-align:bottom;border-left:1px solid var(--border)">
-      <div style="display:flex;flex-direction:column;height:100%;padding:10px 12px;min-height:140px">
-        <!-- Code + subject tag -->
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
-          <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:${col}">${code}</span>
-          ${cd?.Subject ? `<span style="font-size:8px;background:${col}22;color:${col};padding:1px 5px;border-radius:3px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:0.05em">${cd.Subject.slice(0,4)}</span>` : ''}
-          ${cd?.Strand ? `<span style="font-size:8px;color:var(--text3)">${cd.Strand}</span>` : ''}
-        </div>
-        <!-- Full descriptor — grows to fill space -->
-        <div style="font-size:10px;color:var(--text-muted);line-height:1.4;flex:1;font-weight:400;font-family:'Instrument Sans',sans-serif">${descriptor}</div>
-        <!-- Mark all buttons — always at bottom -->
-        <div style="display:flex;flex-direction:column;gap:3px;margin-top:8px">
-          ${[
-            {m:'Achieved',  dot:'●', label:'All Achieved'},
-            {m:'Developing',dot:'◐', label:'All Developing'},
-            {m:'Emerging',  dot:'○', label:'All Emerging'},
-          ].map(({m, dot, label}) => {
-            const {col: mc, bg} = masteryColours[m];
-            return `<button onclick="dlMarkAllForCode('${code}','${m}')"
-              style="padding:4px 8px;border-radius:4px;border:1px solid ${mc};background:${bg};color:${mc};
-              font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif;font-weight:600">
-              <span style="font-size:12px;flex-shrink:0">${dot}</span>
-              <span>${label}</span>
-            </button>`;
-          }).join('')}
-          <button onclick="dlMarkAllForCode('${code}',null)"
-            style="padding:4px 8px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);
-            font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif">
-            <span style="font-size:12px;flex-shrink:0">✕</span>
-            <span>Clear all</span>
-          </button>
-        </div>
-      </div>
-    </th>`;
-  }).join('');
-
-  // Build rows: one row per student
-  const studentRows = presentStudents.map((s, si) => {
-    const cells = codes.map(code => {
-      const key     = s.id + '|' + code;
-      const current = dlState.masteryMap[key] || null;
-      const opts    = ['Achieved','Developing','Emerging'].map(m => {
-        const {col, bg, dot} = masteryColours[m];
-        const active = current === m;
-        return `<button onclick="dlSetMastery('${s.id}','${code}','${m}')"
-          title="${m}"
-          style="width:28px;height:28px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-size:13px;cursor:pointer;transition:all 0.1s;display:flex;align-items:center;justify-content:center">
-          ${dot}
-        </button>`;
-      }).join('');
-      return `<td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">
-        <div style="display:flex;gap:3px;justify-content:center">${opts}</div>
-      </td>`;
-    }).join('');
-
-    return `<tr style="background:${getStripedRowSurface(si)}">
-      <td style="padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;left:0;background:${getStripedRowSurface(si)}">
-        <div style="display:flex;align-items:center;gap:7px">
-          <div class="sc-avatar ${getAvClass(si)}" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${getInitials(s)}</div>
-          <span style="font-size:12px;color:var(--text-muted)">${s.first_name} ${s.last_name}</span>
-        </div>
-      </td>
-      ${cells}
-    </tr>`;
-  }).join('');
-
-  return `
-    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
-      Optionally set mastery for each student × code. Tap a dot to select — <span style="color:var(--green)">●</span> Achieved &nbsp;<span style="color:var(--gold)">◐</span> Developing &nbsp;<span style="color:var(--rust)">○</span> Emerging. Leave blank to skip.
-    </div>
-    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
-      <table style="width:100%;border-collapse:collapse;min-width:${200 + codes.length * 200}px">
-        <thead>
-          <tr style="background:var(--surface-alt)">
-            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">Student</th>
-            ${codeHeaders}
-          </tr>
-        </thead>
-        <tbody>
-          ${studentRows}
-        </tbody>
-      </table>
-    </div>
-    <div style="font-size:10px;color:var(--text3);margin-top:8px">
-      ${presentStudents.length} students · ${codes.length} codes · ${Object.keys(dlState.masteryMap).length} mastery ratings set
-    </div>
-  `;
-}
-
 function dlMarkAllForCode(code, mastery) {
-  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
+  const eligible = (dlState.readyForMastery || [])
+    .filter(r => r.descriptorId === code)
+    .map(r => r.student.id);
+  const presentStudents = sortStudents(state.students.filter(s =>
+    !dlState.absentIds.has(s.id) && eligible.includes(s.id)
+  ));
   presentStudents.forEach(s => {
     const key = s.id + '|' + code;
     if (mastery === null) delete dlState.masteryMap[key];
     else dlState.masteryMap[key] = mastery;
   });
   const body = document.getElementById('dl-body');
-  if (body) body.innerHTML = buildDlStep3();
+  if (body) body.innerHTML = buildDlStep4();
 }
 
 function dlSetMastery(studentId, code, mastery) {
   const key = studentId + '|' + code;
   if (mastery === null) delete dlState.masteryMap[key];
   else dlState.masteryMap[key] = mastery;
-  // Re-render step 3 body only
   const body = document.getElementById('dl-body');
-  if (body) body.innerHTML = buildDlStep3();
-}
-
-function dlSkipMastery() {
-  dlState.masteryMap = {};
-  if (dlState.selectedICs.length > 0) {
-    dlState.step = 4;
-    renderDlModal();
-  } else {
-    saveDailyLog();
-  }
+  if (body) body.innerHTML = buildDlStep4();
 }
 
 function dlSkipICOutcomes() {
@@ -5879,8 +5773,13 @@ function dlSkipICOutcomes() {
   saveDailyLog();
 }
 
-// ── STEP 4: IC OUTCOMES ──
-function buildDlStep4() {
+function dlSkipQuickMastery() {
+  dlState.masteryMap = {};
+  saveDailyLog();
+}
+
+// ── STEP 3: IC OUTCOMES ──
+function buildDlStep3() {
   const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
   const ics = dlState.selectedICs.map(id => state.instructionalComponents.find(ic => ic.id === id)).filter(Boolean);
 
@@ -5966,14 +5865,166 @@ function dlSetICOutcome(studentId, icId, status) {
   if (dlState.icOutcomeMap[key] === status) delete dlState.icOutcomeMap[key];
   else dlState.icOutcomeMap[key] = status;
   const body = document.getElementById('dl-body');
-  if (body) body.innerHTML = buildDlStep4();
+  if (body) body.innerHTML = buildDlStep3();
 }
 
 function dlMarkAllICTaught(icId) {
   const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
   presentStudents.forEach(s => { dlState.icOutcomeMap[s.id + '|' + icId] = 'taught'; });
   const body = document.getElementById('dl-body');
-  if (body) body.innerHTML = buildDlStep4();
+  if (body) body.innerHTML = buildDlStep3();
+}
+
+// ── STEP 4: QUICK MASTERY (conditional — only students at ≥80% IC coverage) ──
+function buildDlStep4() {
+  const readyItems = dlState.readyForMastery || [];
+  if (!readyItems.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title">No students ready</div><div class="empty-sub">No students have reached 80% IC coverage yet</div></div>`;
+
+  // Unique students and descriptors from the ready list
+  const studentIds = [...new Set(readyItems.map(r => r.student.id))];
+  const descriptorIds = [...new Set(readyItems.map(r => r.descriptorId))];
+  const students = studentIds.map(id => readyItems.find(r => r.student.id === id).student);
+
+  const masteryColours = {
+    'Achieved':  { col:'var(--green)', bg:'var(--green-dim)', dot:'●' },
+    'Developing':{ col:'var(--gold)',  bg:'var(--gold-dim)',  dot:'◐' },
+    'Emerging':  { col:'var(--rust)',  bg:'var(--rust-dim)',  dot:'○' },
+  };
+  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
+
+  const codeHeaders = descriptorIds.map(code => {
+    const cd = state.curriculumCodes.find(c => c.Code === code);
+    const col = subjColours[cd?.Subject] || 'var(--blue)';
+    const descriptor = cd ? (cd.Descriptor || cd.Aspect || '') : '';
+    const entry = readyItems.find(r => r.descriptorId === code);
+    return `<th style="padding:0;text-align:left;border-bottom:1px solid var(--border);min-width:180px;max-width:240px;vertical-align:bottom;border-left:1px solid var(--border)">
+      <div style="display:flex;flex-direction:column;height:100%;padding:10px 12px;min-height:140px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+          <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:${col}">${code}</span>
+          ${cd?.Subject ? `<span style="font-size:8px;background:${col}22;color:${col};padding:1px 5px;border-radius:3px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:0.05em">${cd.Subject.slice(0,4)}</span>` : ''}
+          <span style="font-size:8px;background:var(--green-dim);color:var(--green);padding:1px 5px;border-radius:3px;font-family:'DM Mono',monospace">${entry ? Math.round(entry.taughtCount/entry.total*100) : 0}% ICs</span>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);line-height:1.4;flex:1;font-weight:400;font-family:'Instrument Sans',sans-serif">${descriptor}</div>
+        <div style="display:flex;flex-direction:column;gap:3px;margin-top:8px">
+          ${[
+            {m:'Achieved',  dot:'●', label:'All Achieved'},
+            {m:'Developing',dot:'◐', label:'All Developing'},
+            {m:'Emerging',  dot:'○', label:'All Emerging'},
+          ].map(({m, dot, label}) => {
+            const {col: mc, bg} = masteryColours[m];
+            return `<button onclick="dlMarkAllForCode('${code}','${m}')"
+              style="padding:4px 8px;border-radius:4px;border:1px solid ${mc};background:${bg};color:${mc};
+              font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif;font-weight:600">
+              <span style="font-size:12px;flex-shrink:0">${dot}</span>
+              <span>${label}</span>
+            </button>`;
+          }).join('')}
+          <button onclick="dlMarkAllForCode('${code}',null)"
+            style="padding:4px 8px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);
+            font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif">
+            <span style="font-size:12px;flex-shrink:0">✕</span>
+            <span>Clear all</span>
+          </button>
+        </div>
+      </div>
+    </th>`;
+  }).join('');
+
+  const studentRows = students.map((s, si) => {
+    const cells = descriptorIds.map(code => {
+      // Only render a cell if this student is in the ready list for this descriptor
+      const isReady = readyItems.some(r => r.student.id === s.id && r.descriptorId === code);
+      if (!isReady) {
+        return `<td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border);border-left:1px solid var(--border)">
+          <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">—</div>
+        </td>`;
+      }
+      const key     = s.id + '|' + code;
+      const current = dlState.masteryMap[key] || null;
+      const opts    = ['Achieved','Developing','Emerging'].map(m => {
+        const {col, bg, dot} = masteryColours[m];
+        const active = current === m;
+        return `<button onclick="dlSetMastery('${s.id}','${code}','${m}')"
+          title="${m}"
+          style="width:28px;height:28px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-size:13px;cursor:pointer;transition:all 0.1s;display:flex;align-items:center;justify-content:center">
+          ${dot}
+        </button>`;
+      }).join('');
+      return `<td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border);border-left:1px solid var(--border)">
+        <div style="display:flex;gap:3px;justify-content:center">${opts}</div>
+      </td>`;
+    }).join('');
+
+    return `<tr style="background:${getStripedRowSurface(si)}">
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;left:0;background:${getStripedRowSurface(si)}">
+        <div style="display:flex;align-items:center;gap:7px">
+          <div class="sc-avatar ${getAvClass(si)}" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${getInitials(s)}</div>
+          <span style="font-size:12px;color:var(--text-muted)">${s.first_name} ${s.last_name}</span>
+        </div>
+      </td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  return `
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px;padding:10px 12px;background:var(--green-dim);border:1px solid var(--green);border-radius:6px">
+      These students have been taught 80% or more of the ICs for the following descriptors. You can record a mastery judgment now or skip.
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
+      <table style="width:100%;border-collapse:collapse;min-width:${200 + descriptorIds.length * 200}px">
+        <thead>
+          <tr style="background:var(--surface-alt)">
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">Student</th>
+            ${codeHeaders}
+          </tr>
+        </thead>
+        <tbody>
+          ${studentRows}
+        </tbody>
+      </table>
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:8px">
+      ${students.length} students · ${descriptorIds.length} descriptors · ${Object.keys(dlState.masteryMap).length} mastery judgments set
+    </div>
+  `;
+}
+
+// ── 80% IC COVERAGE GATE ──
+function dlGetStudentsReadyForMastery() {
+  const presentStudents = state.students.filter(s => !dlState.absentIds.has(s.id));
+  const ready = [];
+
+  const descriptorIds = [...new Set(
+    (dlState.selectedICs || []).map(icId => {
+      const ic = state.instructionalComponents.find(x => x.id === icId);
+      return ic ? ic.homeDescriptorId : null;
+    }).filter(Boolean)
+  )];
+
+  descriptorIds.forEach(descriptorId => {
+    const systemDefaults = getSystemDefaultICsForDescriptor(descriptorId);
+    if (!systemDefaults.length) return;
+    const threshold = systemDefaults.length * 0.8;
+
+    presentStudents.forEach(student => {
+      const taughtCount = systemDefaults.filter(ic => {
+        const inSession = (dlState.icOutcomeMap[student.id + '|' + ic.id] === 'taught' ||
+                          dlState.icOutcomeMap[student.id + '|' + ic.id] === 'mastered');
+        const inRecords = state.taughtICs.some(t =>
+          t.student_id === student.id &&
+          t.ic_id === ic.id &&
+          (t.status === 'taught' || t.status === 'mastered')
+        );
+        return inSession || inRecords;
+      }).length;
+
+      if (taughtCount >= threshold) {
+        ready.push({ student, descriptorId, taughtCount, total: systemDefaults.length });
+      }
+    });
+  });
+
+  return ready;
 }
 
 // ── NAVIGATION ──
@@ -5987,14 +6038,22 @@ function dlNext() {
     renderDlModal();
   } else if (dlState.step === 2) {
     if (!dlState.selectedCodes.length) { toast('Select at least one code taught today', 'error'); return; }
-    dlState.step = 3;
-    renderDlModal();
-  } else if (dlState.step === 3) {
     if (dlState.selectedICs.length > 0) {
-      dlState.step = 4;
+      dlState.step = 3;
       renderDlModal();
     } else {
       saveDailyLog();
+    }
+  } else if (dlState.step === 3) {
+    const ready = dlGetStudentsReadyForMastery();
+    dlState.readyForMastery = ready;
+    if (ready.length > 0) {
+      dlState.step = 4;
+      renderDlModal();
+    } else {
+      dlState.masteryMap = {};
+      saveDailyLog();
+      toast('Session saved. No students have reached the 80% IC threshold for a mastery judgment yet.', 'success');
     }
   } else {
     saveDailyLog();
