@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.26
- * Last updated: 2026-05-12
+ * THIS FILE IS VERSION: 1.12.27
+ * Last updated: 2026-05-13
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.27 - Bug fixes: dlMarkAllForCode now scoped to eligible students only; masteryMap cleared when 80% gate finds no students
  * v1.12.26 - Daily Log Wizard: reordered steps (Attendance→Codes/ICs→IC Outcomes→Quick Mastery); step 4 conditional on 80% IC coverage gate
  * v1.12.25 - dlToggleCode ignores IC-derived codes; code list shows "via IC" badge for those rows
  * v1.12.24 - Daily Log: selecting an IC auto-adds its homeDescriptorId to selectedCodes; footer shows code+IC counts
@@ -49,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.26';
+const APP_VERSION = '1.12.27';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5744,7 +5745,12 @@ function dlAddAISuggested(code) {
 
 // ── STEP 3: QUICK MASTERY ──
 function dlMarkAllForCode(code, mastery) {
-  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
+  const eligible = (dlState.readyForMastery || [])
+    .filter(r => r.descriptorId === code)
+    .map(r => r.student.id);
+  const presentStudents = sortStudents(state.students.filter(s =>
+    !dlState.absentIds.has(s.id) && eligible.includes(s.id)
+  ));
   presentStudents.forEach(s => {
     const key = s.id + '|' + code;
     if (mastery === null) delete dlState.masteryMap[key];
@@ -6045,6 +6051,7 @@ function dlNext() {
       dlState.step = 4;
       renderDlModal();
     } else {
+      dlState.masteryMap = {};
       saveDailyLog();
       toast('Session saved. No students have reached the 80% IC threshold for a mastery judgment yet.', 'success');
     }
