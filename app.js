@@ -207,7 +207,7 @@ function truncateWithTooltip(text, maxChars = 80, extraClass = '', focusable = f
 }
 
 // ── CONFIG ──
-const API_URL = 'https://script.google.com/macros/s/AKfycbzbS0mCTPLmcTDECGSmGbdK6Wd75lpinKDLs7wtvlKg-xo00IpZqNiQGF6RoR9Xpy2I/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbxjuzVDv1FP2_YWRvs4MV2R3vXL3Az971mRIbuIvnrTYm2wr5AnZjw4YFgmS8jeSZCp/exec';
 const GITHUB_RAW = 'https://raw.githubusercontent.com/chriswhite3140/claude-split/main/data/';
 
 const CSV_FILES = {
