@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.30';
+const APP_VERSION = '1.12.31';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -235,6 +235,7 @@ let state = {
   componentProgress: loadComponentProgressState(), // [{ id, student_id, component_id, code, mastery, date, notes }]
   instructionalComponents: [],
   taughtICs: [],               // { id, date, student_id, ic_id, status, notes }
+  icCoverageOpen: {},          // { [subject]: bool, [subject+'|'+strand]: bool }
   curriculumCodes: [],
   standards: [],
   progressions: [],
@@ -1278,10 +1279,10 @@ function renderDashboard(main) {
 
 // ── CLASS OVERVIEW ──
 function renderClassOverview(main) {
-  const students = state.students;
   const yearLevelMap = { 'F':'Foundation','1':'Year 1','2':'Year 2','3':'Year 3','4':'Year 4','5':'Year 5','6':'Year 6' };
 
-  if (!state.overviewFilter) state.overviewFilter = { year: 'all', subject: 'English', strand: 'all' };
+  if (!state.overviewFilter) state.overviewFilter = { year: 'all', subject: 'English', strand: 'all', mode: 'mastery' };
+  if (!state.overviewFilter.mode) state.overviewFilter.mode = 'mastery';
   const ovf = state.overviewFilter;
 
   const availableSubjects = getEnabledSubjectsFromRows(state.curriculumCodes);
@@ -1388,11 +1389,171 @@ function renderClassOverview(main) {
     </div>`;
   }
 
+  function buildICCoverageTree() {
+    if (!state.icCoverageOpen) state.icCoverageOpen = {};
+
+    // Determine class year levels from active students
+    const classYearLevels = [...new Set(
+      state.students.map(s => yearLevelMap[normaliseYear(s.year_level)] || s.year_level).filter(Boolean)
+    )];
+
+    // Active students for counting
+    const activeStudents = state.students;
+    const totalStudents = activeStudents.length;
+
+    if (!totalStudents) {
+      return `<div class="empty-state" style="padding:60px"><div class="empty-icon">▦</div><div class="empty-title">No students in this class</div></div>`;
+    }
+
+    // Build set of descriptor IDs that have at least one system default IC
+    const descriptorsWithICs = new Set(
+      state.instructionalComponents
+        .filter(ic => ic.ownerTier === 'system_default' && !ic.isArchived)
+        .map(ic => ic.homeDescriptorId)
+        .filter(Boolean)
+    );
+
+    if (!descriptorsWithICs.size) {
+      return `<div class="empty-state" style="padding:60px"><div class="empty-icon">▦</div><div class="empty-title">No system default ICs loaded yet</div><div class="empty-sub">IC coverage will appear once default ICs have been loaded.</div></div>`;
+    }
+
+    // Collect enabled curriculum codes for this class's year levels that have ICs
+    const eligibleCodes = state.curriculumCodes.filter(c =>
+      isCurriculumCodeEnabled(c) &&
+      classYearLevels.includes((c['Year Level']||'').trim()) &&
+      descriptorsWithICs.has(c.Code)
+    );
+
+    if (!eligibleCodes.length) {
+      return `<div class="empty-state" style="padding:60px"><div class="empty-icon">▦</div><div class="empty-title">No descriptors with ICs for this class</div><div class="empty-sub">IC coverage will appear once default ICs are available for your class year levels.</div></div>`;
+    }
+
+    // Group by subject → strand
+    const subjectMap = {};
+    eligibleCodes.forEach(c => {
+      const subj = c.Subject || '(Unknown)';
+      const strand = c.Strand || '(Unknown)';
+      if (!subjectMap[subj]) subjectMap[subj] = {};
+      if (!subjectMap[subj][strand]) subjectMap[subj][strand] = [];
+      subjectMap[subj][strand].push(c);
+    });
+
+    // Compute per-student status for a descriptor
+    function getDescriptorStudentStatus(descriptorCode) {
+      // Get all ICs for this descriptor (home + linked)
+      const ics = state.instructionalComponents.filter(ic =>
+        ic.homeDescriptorId === descriptorCode || (ic.linkedDescriptorIds && ic.linkedDescriptorIds.includes(descriptorCode))
+      );
+      const icIds = new Set(ics.map(ic => ic.id));
+      let mastered = 0, taught = 0, notTaught = 0;
+      activeStudents.forEach(s => {
+        const records = state.taughtICs.filter(t => t.student_id === s.id && icIds.has(t.ic_id));
+        if (!records.length) {
+          notTaught++;
+        } else if (records.some(t => t.status === 'mastered')) {
+          mastered++;
+        } else {
+          taught++;
+        }
+      });
+      return { mastered, taught, notTaught };
+    }
+
+    // Render a descriptor row
+    function renderDescriptorRow(c) {
+      const { mastered, taught, notTaught } = getDescriptorStudentStatus(c.Code);
+      const total = totalStudents;
+      const masteredPct = total ? Math.round(mastered / total * 100) : 0;
+      const taughtPct   = total ? Math.round(taught   / total * 100) : 0;
+      const notPct      = 100 - masteredPct - taughtPct;
+      const desc = (c.Description || c['Content Description'] || '').trim();
+      return `<div style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px">
+        <div style="min-width:120px;flex-shrink:0">
+          <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(desc)}">${escapeHtml(desc.length > 80 ? desc.slice(0,80)+'…' : desc)}</div>
+        </div>
+        <div style="min-width:160px;flex-shrink:0">
+          <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--surface-alt)">
+            ${mastered > 0 ? `<div style="width:${masteredPct}%;background:var(--green);min-width:${mastered>0?'3px':'0'}" title="${mastered} mastered"></div>` : ''}
+            ${taught   > 0 ? `<div style="width:${taughtPct}%;background:var(--blue);min-width:${taught>0?'3px':'0'}" title="${taught} taught"></div>` : ''}
+            ${notTaught> 0 ? `<div style="width:${notPct}%;background:var(--border2);min-width:${notTaught>0?'3px':'0'}" title="${notTaught} not taught"></div>` : ''}
+          </div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px;white-space:nowrap">
+            ${notTaught} not taught · ${taught} taught · ${mastered} mastered
+          </div>
+        </div>
+      </div>`;
+    }
+
+    const subjects = Object.keys(subjectMap).sort();
+
+    const html = subjects.map(subj => {
+      const subjKey = subj;
+      const subjOpen = !!state.icCoverageOpen[subjKey];
+      const strands = Object.keys(subjectMap[subj]).sort();
+      const totalCodes = strands.reduce((n, st) => n + subjectMap[subj][st].length, 0);
+
+      const strandSections = subjOpen ? strands.map(strand => {
+        const strandKey = subj + '|' + strand;
+        const strandOpen = !!state.icCoverageOpen[strandKey];
+        const codes = subjectMap[subj][strand];
+        const descriptorRows = strandOpen ? codes.map(renderDescriptorRow).join('') : '';
+        return `<div style="border-bottom:1px solid var(--border)">
+          <div onclick="toggleICCoverageSection('${escapeHtml(strandKey)}')"
+            style="display:flex;align-items:center;gap:10px;padding:8px 16px 8px 24px;cursor:pointer;background:var(--surface);user-select:none"
+            tabindex="0" role="button" aria-expanded="${strandOpen}"
+            onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(strandKey)}')">
+            <span style="font-size:10px;color:var(--text3);width:12px">${strandOpen ? '▾' : '▸'}</span>
+            <span style="font-size:12px;font-weight:600;color:var(--text2);flex:1">${escapeHtml(strand)}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${codes.length} descriptor${codes.length !== 1 ? 's' : ''}</span>
+          </div>
+          ${strandOpen ? `<div>${descriptorRows}</div>` : ''}
+        </div>`;
+      }).join('') : '';
+
+      return `<div style="margin-bottom:8px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <div onclick="toggleICCoverageSection('${escapeHtml(subjKey)}')"
+          style="display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;background:var(--surface-alt);user-select:none"
+          tabindex="0" role="button" aria-expanded="${subjOpen}"
+          onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(subjKey)}')">
+          <span style="font-size:11px;color:var(--text3);width:14px">${subjOpen ? '▾' : '▸'}</span>
+          <span style="font-size:13px;font-weight:700;color:var(--text);flex:1">${escapeHtml(subjectShort(subj))}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${totalCodes} descriptor${totalCodes !== 1 ? 's' : ''} · ${strands.length} strand${strands.length !== 1 ? 's' : ''}</span>
+        </div>
+        ${subjOpen ? `<div>${strandSections}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div style="padding:16px">
+      ${html || `<div class="empty-state" style="padding:40px"><div class="empty-icon">▦</div><div class="empty-title">No IC data to display</div></div>`}
+      <div style="display:flex;gap:16px;padding:8px 0;flex-wrap:wrap">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);align-self:center">Legend</div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-size:11px;color:var(--text3)">Mastered</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--blue)"></div><span style="font-size:11px;color:var(--text3)">Taught</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--border2)"></div><span style="font-size:11px;color:var(--text3)">Not taught</span></div>
+      </div>
+    </div>`;
+  }
+
+  const isMastery = ovf.mode === 'mastery';
 
   main.innerHTML = `
     <div class="topbar" style="flex-wrap:wrap;gap:10px;padding:14px 24px">
       <div class="topbar-title">Class Overview <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);font-weight:400">· ${ovf.subject}</span></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:auto">
+        <div style="display:flex;border:1px solid var(--border2);border-radius:5px;overflow:hidden;margin-right:6px">
+          <button onclick="state.overviewFilter.mode='mastery';renderClassOverview(document.getElementById('main-content'))"
+            style="padding:5px 13px;border:none;background:${isMastery?'var(--gold-dim)':'none'};color:${isMastery?'var(--gold)':'var(--text3)'};font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;font-weight:${isMastery?'700':'400'}">
+            Mastery
+          </button>
+          <button onclick="state.overviewFilter.mode='ic-coverage';renderClassOverview(document.getElementById('main-content'))"
+            style="padding:5px 13px;border:none;border-left:1px solid var(--border2);background:${!isMastery?'var(--blue-dim)':'none'};color:${!isMastery?'var(--blue)':'var(--text3)'};font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;font-weight:${!isMastery?'700':'400'}">
+            IC Coverage
+          </button>
+        </div>
+        ${isMastery ? `
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">SUBJECT</span>
         ${availableSubjects.map(subj => {
           const active = ovf.subject === subj;
@@ -1410,6 +1571,7 @@ function renderClassOverview(main) {
             ${yr === 'all' ? 'All' : 'Yr '+yr}
           </button>`).join('')}
         ${ovf.strand !== 'all' ? `<button onclick="state.overviewFilter.strand='all';renderClassOverview(document.getElementById('main-content'))" style="padding:5px 11px;border-radius:4px;border:1px solid var(--teal);background:var(--teal-dim);color:var(--teal);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer" title="${escapeHtml(ovf.strand)}">✕ ${truncateWithTooltip(ovf.strand, 20)}</button>` : ''}
+        ` : ''}
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${APP_VERSION}</span>
       </div>
     </div>
@@ -1417,10 +1579,16 @@ function renderClassOverview(main) {
       <div class="card" style="border-radius:0;border-left:none;border-right:none;border-top:none">
         ${state.curriculumCodes.length === 0
           ? `<div class="empty-state" style="padding:60px"><div class="empty-icon">▦</div><div class="empty-title">Curriculum data not loaded yet</div><div class="empty-sub">The overview will appear once your CSV files have loaded</div></div>`
-          : buildStrandGrid()}
+          : isMastery ? buildStrandGrid() : buildICCoverageTree()}
       </div>
     </div>
   `;
+}
+
+function toggleICCoverageSection(key) {
+  if (!state.icCoverageOpen) state.icCoverageOpen = {};
+  state.icCoverageOpen[key] = !state.icCoverageOpen[key];
+  renderClassOverview(document.getElementById('main-content'));
 }
 
 // ── STUDENTS LIST ──
