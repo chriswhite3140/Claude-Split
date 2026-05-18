@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.27';
+const APP_VERSION = '1.12.28';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5238,6 +5238,10 @@ function buildDlStep2() {
 
     <!-- Filters -->
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+      <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep2()"
+        style="padding:3px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:11px;cursor:pointer">
+        ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
+      </button>
       <div style="position:relative;flex:1;min-width:160px">
         <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px">⌕</span>
         <input id="dl-code-search" placeholder="Search codes…"
@@ -5805,6 +5809,11 @@ function buildDlStep3() {
           font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif;font-weight:600">
           <span>Mark all Taught</span>
         </button>
+        <button onclick="dlMarkAllICMastered('${ic.id}')"
+          style="padding:4px 8px;border-radius:4px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);
+          font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif;font-weight:600;margin-top:4px">
+          <span>Mark all Mastered</span>
+        </button>
       </div>
     </th>`;
   }).join('');
@@ -5840,8 +5849,14 @@ function buildDlStep3() {
   }).join('');
 
   return `
-    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
-      Record IC outcomes for each present student. <span style="color:var(--blue)">Taught</span> = introduced today · <span style="color:var(--green)">Mastered</span> = secure understanding · <span style="color:var(--rust)">Not yet</span> = attempted but not achieved. Leave blank to skip.
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:12px;color:var(--text3)">
+        Record IC outcomes for each present student. <span style="color:var(--blue)">Taught</span> = introduced today · <span style="color:var(--green)">Mastered</span> = secure understanding · <span style="color:var(--rust)">Not yet</span> = attempted but not achieved. Leave blank to skip.
+      </div>
+      <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep3()"
+        style="padding:3px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:11px;cursor:pointer;white-space:nowrap;margin-left:12px;flex-shrink:0">
+        ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
+      </button>
     </div>
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
       <table style="width:100%;border-collapse:collapse;min-width:${200 + ics.length * 200}px">
@@ -5871,6 +5886,13 @@ function dlSetICOutcome(studentId, icId, status) {
 function dlMarkAllICTaught(icId) {
   const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
   presentStudents.forEach(s => { dlState.icOutcomeMap[s.id + '|' + icId] = 'taught'; });
+  const body = document.getElementById('dl-body');
+  if (body) body.innerHTML = buildDlStep3();
+}
+
+function dlMarkAllICMastered(icId) {
+  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
+  presentStudents.forEach(s => { dlState.icOutcomeMap[s.id + '|' + icId] = 'mastered'; });
   const body = document.getElementById('dl-body');
   if (body) body.innerHTML = buildDlStep3();
 }
@@ -5967,8 +5989,14 @@ function buildDlStep4() {
   }).join('');
 
   return `
-    <div style="font-size:12px;color:var(--text3);margin-bottom:12px;padding:10px 12px;background:var(--green-dim);border:1px solid var(--green);border-radius:6px">
-      These students have been taught 80% or more of the ICs for the following descriptors. You can record a mastery judgment now or skip.
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px">
+      <div style="font-size:12px;color:var(--text3);padding:10px 12px;background:var(--green-dim);border:1px solid var(--green);border-radius:6px;flex:1">
+        These students have been taught 80% or more of the ICs for the following descriptors. You can record a mastery judgment now or skip.
+      </div>
+      <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep4()"
+        style="padding:3px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-top:10px">
+        ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
+      </button>
     </div>
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
       <table style="width:100%;border-collapse:collapse;min-width:${200 + descriptorIds.length * 200}px">
