@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.38';
+const APP_VERSION = '1.12.39';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1500,7 +1500,7 @@ function renderClassOverview(main) {
       function studentChips(students) {
         return students.map((s, i) =>
           `<div style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;background:var(--surface);border:1px solid var(--border2)">
-            <div class="sc-avatar ${getAvClass(i)}" style="width:24px;height:24px;font-size:10px">${getInitials(s)}</div>
+            <div class="sc-avatar ${getAvClass(i)}" style="width:24px;height:24px;font-size:10px;font-family:'Instrument Sans',sans-serif;font-weight:600">${getInitials(s)}</div>
             <span style="font-family:'Instrument Sans',sans-serif;font-size:12px;font-weight:600;color:var(--text)">${escapeHtml(s.first_name)} ${escapeHtml(s.last_name)}</span>
           </div>`
         ).join('');
