@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.28';
+const APP_VERSION = '1.12.29';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5849,20 +5849,22 @@ function buildDlStep3() {
   }).join('');
 
   return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:12px;color:var(--text3)">
-        Record IC outcomes for each present student. <span style="color:var(--blue)">Taught</span> = introduced today · <span style="color:var(--green)">Mastered</span> = secure understanding · <span style="color:var(--rust)">Not yet</span> = attempted but not achieved. Leave blank to skip.
-      </div>
-      <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep3()"
-        style="padding:3px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:11px;cursor:pointer;white-space:nowrap;margin-left:12px;flex-shrink:0">
-        ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
-      </button>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
+      Record IC outcomes for each present student. <span style="color:var(--blue)">Taught</span> = introduced today · <span style="color:var(--green)">Mastered</span> = secure understanding · <span style="color:var(--rust)">Not yet</span> = attempted but not achieved. Leave blank to skip.
     </div>
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
       <table style="width:100%;border-collapse:collapse;min-width:${200 + ics.length * 200}px">
         <thead>
           <tr style="background:var(--surface-alt)">
-            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">Student</th>
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span>STUDENT</span>
+                <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep3()"
+                  style="padding:2px 7px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:10px;cursor:pointer;white-space:nowrap;font-family:'Instrument Sans',sans-serif;text-transform:none;letter-spacing:0">
+                  ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
+                </button>
+              </div>
+            </th>
             ${icHeaders}
           </tr>
         </thead>
@@ -5905,7 +5907,7 @@ function buildDlStep4() {
   // Unique students and descriptors from the ready list
   const studentIds = [...new Set(readyItems.map(r => r.student.id))];
   const descriptorIds = [...new Set(readyItems.map(r => r.descriptorId))];
-  const students = studentIds.map(id => readyItems.find(r => r.student.id === id).student);
+  const students = sortStudents(studentIds.map(id => readyItems.find(r => r.student.id === id).student));
 
   const masteryColours = {
     'Achieved':  { col:'var(--green)', bg:'var(--green-dim)', dot:'●' },
@@ -5989,20 +5991,22 @@ function buildDlStep4() {
   }).join('');
 
   return `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px">
-      <div style="font-size:12px;color:var(--text3);padding:10px 12px;background:var(--green-dim);border:1px solid var(--green);border-radius:6px;flex:1">
-        These students have been taught 80% or more of the ICs for the following descriptors. You can record a mastery judgment now or skip.
-      </div>
-      <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep4()"
-        style="padding:3px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-top:10px">
-        ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
-      </button>
+    <div style="font-size:12px;color:var(--text3);padding:10px 12px;background:var(--green-dim);border:1px solid var(--green);border-radius:6px;margin-bottom:12px">
+      These students have been taught 80% or more of the ICs for the following descriptors. You can record a mastery judgment now or skip.
     </div>
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
       <table style="width:100%;border-collapse:collapse;min-width:${200 + descriptorIds.length * 200}px">
         <thead>
           <tr style="background:var(--surface-alt)">
-            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">Student</th>
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span>STUDENT</span>
+                <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep4()"
+                  style="padding:2px 7px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:10px;cursor:pointer;white-space:nowrap;font-family:'Instrument Sans',sans-serif;text-transform:none;letter-spacing:0">
+                  ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
+                </button>
+              </div>
+            </th>
             ${codeHeaders}
           </tr>
         </thead>
