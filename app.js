@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.33';
+const APP_VERSION = '1.12.34';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1501,7 +1501,7 @@ function renderClassOverview(main) {
         return students.map((s, i) =>
           `<div style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;background:var(--surface);border:1px solid var(--border2)">
             <div class="sc-avatar ${getAvClass(i)}" style="width:20px;height:20px;font-size:9px;line-height:20px;min-width:20px">${getInitials(s)}</div>
-            <span style="font-size:11px;color:var(--text2)">${escapeHtml(s.first_name)} ${escapeHtml(s.last_name)}</span>
+            <span style="font-family:'Instrument Sans',sans-serif;font-size:11px;color:var(--text2)">${escapeHtml(s.first_name)} ${escapeHtml(s.last_name)}</span>
           </div>`
         ).join('');
       }
@@ -1518,7 +1518,7 @@ function renderClassOverview(main) {
       function countBtn(count, label, key, colour) {
         const isOpen = !!state.icCoverageOpen[key];
         return `<button onclick="event.stopPropagation();toggleICCoverageSection('${escapeHtml(key)}')"
-          style="font-family:'DM Mono',monospace;font-size:9px;color:${colour};background:none;border:none;cursor:pointer;padding:0;${isOpen ? 'font-weight:700;text-decoration:underline' : 'text-decoration:underline dotted'}"
+          style="font-family:'DM Mono',monospace;font-size:10px;color:${colour};background:none;border:none;cursor:pointer;padding:0;${isOpen ? 'font-weight:700;text-decoration:underline' : 'text-decoration:underline dotted'}"
           title="Click to ${isOpen ? 'hide' : 'show'} students">${count} ${label}</button>`;
       }
 
@@ -1527,7 +1527,7 @@ function renderClassOverview(main) {
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${ic.sequenceOrder}.</span>
-              <span style="font-size:12px;color:var(--text2)">${escapeHtml(ic.name)}</span>
+              <span style="font-family:'Instrument Sans',sans-serif;font-size:12px;color:var(--text-muted)">${escapeHtml(ic.name)}</span>
               <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;${stageColour}">${ic.difficultyStage}</span>
             </div>
           </div>
