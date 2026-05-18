@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.32';
+const APP_VERSION = '1.12.33';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1582,7 +1582,8 @@ function renderClassOverview(main) {
           onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(descKey)}')">
           <span style="font-size:10px;color:var(--text3);width:10px;flex-shrink:0">${descOpen ? '▾' : '▸'}</span>
           <div style="min-width:110px;flex-shrink:0">
-            <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--blue)">${escapeHtml(c.Code)}</span>
+            <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${truncateWithTooltip(c['Content Description']||c.Description||c.Descriptor||c.Aspect||'', 80, '', true)}</span>
           </div>
           <div style="flex:1;min-width:0">
             <div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(desc)}">${escapeHtml(desc.length > 80 ? desc.slice(0,80)+'…' : desc)}</div>
