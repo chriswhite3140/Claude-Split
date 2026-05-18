@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.29';
+const APP_VERSION = '1.12.30';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5748,6 +5748,12 @@ function dlAddAISuggested(code) {
 }
 
 // ── STEP 3: QUICK MASTERY ──
+function dlToggleStep4Sort() {
+  state.studentSortBy = state.studentSortBy === 'last_name' ? 'first_name' : 'last_name';
+  const body = document.getElementById('dl-body');
+  if (body) body.innerHTML = buildDlStep4();
+}
+
 function dlMarkAllForCode(code, mastery) {
   const eligible = (dlState.readyForMastery || [])
     .filter(r => r.descriptorId === code)
@@ -6001,7 +6007,7 @@ function buildDlStep4() {
             <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">
               <div style="display:flex;align-items:center;gap:6px">
                 <span>STUDENT</span>
-                <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep4()"
+                <button onclick="dlToggleStep4Sort()"
                   style="padding:2px 7px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:10px;cursor:pointer;white-space:nowrap;font-family:'Instrument Sans',sans-serif;text-transform:none;letter-spacing:0">
                   ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
                 </button>
