@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.42';
+const APP_VERSION = '1.12.43';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1511,7 +1511,8 @@ function renderClassOverview(main) {
       }).filter(Boolean).join('');
     }
 
-    // Render a descriptor row plus IC sub-rows (bar + student chips) for each system default IC
+    // Render a descriptor row (click to expand/collapse IC sub-rows).
+    // Key uses 'desc|{code}' prefix — distinct from subject keys, 'subj|strand' keys, and 'icchip|…' keys.
     function renderDescriptorRow(c) {
       const systemICs = state.instructionalComponents.filter(ic =>
         ic.ownerTier === 'system_default' && !ic.isArchived && ic.homeDescriptorId === c.Code
@@ -1520,7 +1521,10 @@ function renderClassOverview(main) {
       const descCounts = getICStudentCounts(allIcIds, activeStudents);
       const desc = (c.Description || c['Content Description'] || '').trim();
 
-      const icRows = systemICs.map(ic => {
+      const descKey = 'desc|' + c.Code;
+      const descOpen = !!state.icCoverageOpen[descKey];
+
+      const icRows = descOpen ? systemICs.map(ic => {
         const icCounts = getICStudentCounts([ic.id], activeStudents);
         const label = ic.name || ic.id;
         return `<div style="padding:6px 16px 6px 48px;border-bottom:1px solid var(--border);background:var(--surface)">
@@ -1535,11 +1539,15 @@ function renderClassOverview(main) {
             ${renderICStudentChips(ic.id)}
           </div>
         </div>`;
-      }).join('');
+      }).join('') : '';
 
       return `<div>
-        <div style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px">
-          <div style="min-width:120px;flex-shrink:0">
+        <div onclick="toggleICCoverageSection('${escapeHtml(descKey)}')"
+          style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px;cursor:pointer;user-select:none"
+          tabindex="0" role="button" aria-expanded="${descOpen}"
+          onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(descKey)}')">
+          <span style="font-size:10px;color:var(--text3);width:12px;flex-shrink:0">${descOpen ? '▾' : '▸'}</span>
+          <div style="min-width:108px;flex-shrink:0">
             <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
           </div>
           <div style="flex:1;min-width:0">
@@ -1551,6 +1559,18 @@ function renderClassOverview(main) {
       </div>`;
     }
 
+    // Compute taught % for a set of descriptor codes: (taught + mastered) / total IC-student combinations
+    function taughtPctForCodes(codes) {
+      const icIds = codes.flatMap(c =>
+        state.instructionalComponents
+          .filter(ic => ic.ownerTier === 'system_default' && !ic.isArchived && ic.homeDescriptorId === c.Code)
+          .map(ic => ic.id)
+      );
+      if (!icIds.length) return null;
+      const { taught, mastered, total } = getICStudentCounts(icIds, activeStudents);
+      return total ? Math.round((taught + mastered) / total * 100) : 0;
+    }
+
     const subjects = Object.keys(subjectMap).sort();
 
     const html = subjects.map(subj => {
@@ -1559,10 +1579,16 @@ function renderClassOverview(main) {
       const strands = Object.keys(subjectMap[subj]).sort();
       const totalCodes = strands.reduce((n, st) => n + subjectMap[subj][st].length, 0);
 
+      const subjAllCodes = strands.flatMap(st => subjectMap[subj][st]);
+      const subjPct = taughtPctForCodes(subjAllCodes);
+      const subjPctLabel = subjPct !== null ? ` · ${subjPct}% taught` : '';
+
       const strandSections = subjOpen ? strands.map(strand => {
         const strandKey = subj + '|' + strand;
         const strandOpen = !!state.icCoverageOpen[strandKey];
         const codes = subjectMap[subj][strand];
+        const strandPct = taughtPctForCodes(codes);
+        const strandPctLabel = strandPct !== null ? ` · ${strandPct}% taught` : '';
         const descriptorRows = strandOpen ? codes.map(renderDescriptorRow).join('') : '';
         return `<div style="border-bottom:1px solid var(--border)">
           <div onclick="toggleICCoverageSection('${escapeHtml(strandKey)}')"
@@ -1571,7 +1597,7 @@ function renderClassOverview(main) {
             onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(strandKey)}')">
             <span style="font-size:10px;color:var(--text3);width:12px">${strandOpen ? '▾' : '▸'}</span>
             <span style="font-size:12px;font-weight:600;color:var(--text2);flex:1">${escapeHtml(strand)}</span>
-            <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${codes.length} descriptor${codes.length !== 1 ? 's' : ''}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${codes.length} descriptor${codes.length !== 1 ? 's' : ''}${strandPctLabel}</span>
           </div>
           ${strandOpen ? `<div>${descriptorRows}</div>` : ''}
         </div>`;
@@ -1584,7 +1610,7 @@ function renderClassOverview(main) {
           onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(subjKey)}')">
           <span style="font-size:11px;color:var(--text3);width:14px">${subjOpen ? '▾' : '▸'}</span>
           <span style="font-size:13px;font-weight:700;color:var(--text);flex:1">${escapeHtml(subjectShort(subj))}</span>
-          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${totalCodes} descriptor${totalCodes !== 1 ? 's' : ''} · ${strands.length} strand${strands.length !== 1 ? 's' : ''}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${totalCodes} descriptor${totalCodes !== 1 ? 's' : ''} · ${strands.length} strand${strands.length !== 1 ? 's' : ''}${subjPctLabel}</span>
         </div>
         ${subjOpen ? `<div>${strandSections}</div>` : ''}
       </div>`;
