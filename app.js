@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.31';
+const APP_VERSION = '1.12.41';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1438,52 +1438,74 @@ function renderClassOverview(main) {
       subjectMap[subj][strand].push(c);
     });
 
-    // Compute per-student status for a descriptor
-    function getDescriptorStudentStatus(descriptorCode) {
-      // Get all ICs for this descriptor (home + linked)
-      const ics = state.instructionalComponents.filter(ic =>
-        ic.homeDescriptorId === descriptorCode || (ic.linkedDescriptorIds && ic.linkedDescriptorIds.includes(descriptorCode))
-      );
-      const icIds = new Set(ics.map(ic => ic.id));
-      let mastered = 0, taught = 0, notTaught = 0;
-      activeStudents.forEach(s => {
-        const records = state.taughtICs.filter(t => t.student_id === s.id && icIds.has(t.ic_id));
-        if (!records.length) {
-          notTaught++;
-        } else if (records.some(t => t.status === 'mastered')) {
-          mastered++;
-        } else {
-          taught++;
-        }
+    // Count IC-student combinations: total = icIds.length × students.length
+    // Each (ic, student) pair is independently counted as mastered, taught, or not taught.
+    function getICStudentCounts(icIds, students) {
+      const total = icIds.length * students.length;
+      let mastered = 0, taught = 0;
+      icIds.forEach(icId => {
+        students.forEach(s => {
+          const records = state.taughtICs.filter(t => t.student_id === s.id && t.ic_id === icId);
+          if (records.some(t => t.status === 'mastered')) {
+            mastered++;
+          } else if (records.length) {
+            taught++;
+          }
+        });
       });
-      return { mastered, taught, notTaught };
+      return { mastered, taught, notTaught: total - mastered - taught, total };
     }
 
-    // Render a descriptor row
-    function renderDescriptorRow(c) {
-      const { mastered, taught, notTaught } = getDescriptorStudentStatus(c.Code);
-      const total = totalStudents;
+    // Render a three-colour bar (grey=not taught, blue=taught, green=mastered) + count line
+    function renderCoverageBar(counts) {
+      const { mastered, taught, notTaught, total } = counts;
       const masteredPct = total ? Math.round(mastered / total * 100) : 0;
       const taughtPct   = total ? Math.round(taught   / total * 100) : 0;
       const notPct      = 100 - masteredPct - taughtPct;
+      return `<div style="min-width:160px;flex-shrink:0">
+        <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--surface-alt)">
+          ${notTaught > 0 ? `<div style="width:${notPct}%;background:var(--border2);min-width:3px" title="${notTaught} not taught"></div>` : ''}
+          ${taught    > 0 ? `<div style="width:${taughtPct}%;background:var(--blue);min-width:3px" title="${taught} taught"></div>` : ''}
+          ${mastered  > 0 ? `<div style="width:${masteredPct}%;background:var(--green);min-width:3px" title="${mastered} mastered"></div>` : ''}
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px;white-space:nowrap">
+          ${mastered} mastered · ${taught} taught · ${notTaught} not taught
+        </div>
+      </div>`;
+    }
+
+    // Render a descriptor row plus an IC sub-row for each system default IC
+    function renderDescriptorRow(c) {
+      const systemICs = state.instructionalComponents.filter(ic =>
+        ic.ownerTier === 'system_default' && !ic.isArchived && ic.homeDescriptorId === c.Code
+      );
+      const allIcIds = systemICs.map(ic => ic.id);
+      const descCounts = getICStudentCounts(allIcIds, activeStudents);
       const desc = (c.Description || c['Content Description'] || '').trim();
-      return `<div style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px">
-        <div style="min-width:120px;flex-shrink:0">
-          <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
-        </div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(desc)}">${escapeHtml(desc.length > 80 ? desc.slice(0,80)+'…' : desc)}</div>
-        </div>
-        <div style="min-width:160px;flex-shrink:0">
-          <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--surface-alt)">
-            ${mastered > 0 ? `<div style="width:${masteredPct}%;background:var(--green);min-width:${mastered>0?'3px':'0'}" title="${mastered} mastered"></div>` : ''}
-            ${taught   > 0 ? `<div style="width:${taughtPct}%;background:var(--blue);min-width:${taught>0?'3px':'0'}" title="${taught} taught"></div>` : ''}
-            ${notTaught> 0 ? `<div style="width:${notPct}%;background:var(--border2);min-width:${notTaught>0?'3px':'0'}" title="${notTaught} not taught"></div>` : ''}
+
+      const icRows = systemICs.map(ic => {
+        const icCounts = getICStudentCounts([ic.id], activeStudents);
+        const label = ic.name || ic.id;
+        return `<div style="display:flex;align-items:center;gap:12px;padding:6px 16px 6px 48px;border-bottom:1px solid var(--border);background:var(--surface)">
+          <div style="min-width:120px;flex-shrink:0">
+            <div style="font-size:10px;color:var(--text3);font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(label)}">${escapeHtml(label.length > 18 ? label.slice(0, 18) + '…' : label)}</div>
           </div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px;white-space:nowrap">
-            ${notTaught} not taught · ${taught} taught · ${mastered} mastered
+          <div style="flex:1;min-width:0"></div>
+          ${renderCoverageBar(icCounts)}
+        </div>`;
+      }).join('');
+
+      return `<div>
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px">
+          <div style="min-width:120px;flex-shrink:0">
+            <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
           </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(desc)}">${escapeHtml(desc.length > 80 ? desc.slice(0, 80) + '…' : desc)}</div>
+          </div>
+          ${renderCoverageBar(descCounts)}
         </div>
+        ${icRows}
       </div>`;
     }
 
