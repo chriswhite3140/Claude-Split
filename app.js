@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.43';
+const APP_VERSION = '1.12.44';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1519,7 +1519,9 @@ function renderClassOverview(main) {
       );
       const allIcIds = systemICs.map(ic => ic.id);
       const descCounts = getICStudentCounts(allIcIds, activeStudents);
-      const desc = (c.Description || c['Content Description'] || '').trim();
+      const descPct = descCounts.total
+        ? Math.round((descCounts.taught + descCounts.mastered) / descCounts.total * 100)
+        : null;
 
       const descKey = 'desc|' + c.Code;
       const descOpen = !!state.icCoverageOpen[descKey];
@@ -1551,8 +1553,9 @@ function renderClassOverview(main) {
             <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
           </div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(desc)}">${escapeHtml(desc.length > 80 ? desc.slice(0, 80) + '…' : desc)}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${truncateWithTooltip(c.Descriptor || c.Aspect || '', 80, '', true)}</div>
           </div>
+          ${descPct !== null ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);flex-shrink:0;white-space:nowrap">${descPct}% taught</div>` : ''}
           ${renderCoverageBar(descCounts)}
         </div>
         ${icRows}
