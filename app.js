@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.31';
+const APP_VERSION = '1.12.45';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1438,53 +1438,140 @@ function renderClassOverview(main) {
       subjectMap[subj][strand].push(c);
     });
 
-    // Compute per-student status for a descriptor
-    function getDescriptorStudentStatus(descriptorCode) {
-      // Get all ICs for this descriptor (home + linked)
-      const ics = state.instructionalComponents.filter(ic =>
-        ic.homeDescriptorId === descriptorCode || (ic.linkedDescriptorIds && ic.linkedDescriptorIds.includes(descriptorCode))
-      );
-      const icIds = new Set(ics.map(ic => ic.id));
-      let mastered = 0, taught = 0, notTaught = 0;
-      activeStudents.forEach(s => {
-        const records = state.taughtICs.filter(t => t.student_id === s.id && icIds.has(t.ic_id));
-        if (!records.length) {
-          notTaught++;
-        } else if (records.some(t => t.status === 'mastered')) {
-          mastered++;
-        } else {
-          taught++;
-        }
+    // Count IC-student combinations: total = icIds.length × students.length.
+    // Uses getTaughtICStatus (most-recent record) to classify each (ic, student) pair into
+    // four mutually exclusive buckets: mastered | taught | not_yet | notTaught (no record).
+    function getICStudentCounts(icIds, students) {
+      const total = icIds.length * students.length;
+      let mastered = 0, taught = 0, notYet = 0;
+      icIds.forEach(icId => {
+        students.forEach(s => {
+          const st = getTaughtICStatus(s.id, icId);
+          if (st === 'mastered')     mastered++;
+          else if (st === 'taught')  taught++;
+          else if (st === 'not_yet') notYet++;
+        });
       });
-      return { mastered, taught, notTaught };
+      return { mastered, taught, notYet, notTaught: total - mastered - taught - notYet, total };
     }
 
-    // Render a descriptor row
-    function renderDescriptorRow(c) {
-      const { mastered, taught, notTaught } = getDescriptorStudentStatus(c.Code);
-      const total = totalStudents;
+    // Render a four-colour bar (grey=notTaught, rust=notYet, blue=taught, green=mastered) + count line
+    function renderCoverageBar(counts) {
+      const { mastered, taught, notYet, notTaught, total } = counts;
       const masteredPct = total ? Math.round(mastered / total * 100) : 0;
       const taughtPct   = total ? Math.round(taught   / total * 100) : 0;
-      const notPct      = 100 - masteredPct - taughtPct;
-      const desc = (c.Description || c['Content Description'] || '').trim();
-      return `<div style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px">
-        <div style="min-width:120px;flex-shrink:0">
-          <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
+      const notYetPct   = total ? Math.round(notYet   / total * 100) : 0;
+      const notPct      = 100 - masteredPct - taughtPct - notYetPct;
+      return `<div style="min-width:160px;flex-shrink:0">
+        <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--surface-alt)">
+          ${notTaught > 0 ? `<div style="width:${notPct}%;background:var(--border2);min-width:3px" title="${notTaught} not taught"></div>` : ''}
+          ${notYet    > 0 ? `<div style="width:${notYetPct}%;background:var(--rust);min-width:3px" title="${notYet} not yet"></div>` : ''}
+          ${taught    > 0 ? `<div style="width:${taughtPct}%;background:var(--blue);min-width:3px" title="${taught} taught"></div>` : ''}
+          ${mastered  > 0 ? `<div style="width:${masteredPct}%;background:var(--green);min-width:3px" title="${mastered} mastered"></div>` : ''}
         </div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(desc)}">${escapeHtml(desc.length > 80 ? desc.slice(0,80)+'…' : desc)}</div>
-        </div>
-        <div style="min-width:160px;flex-shrink:0">
-          <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--surface-alt)">
-            ${mastered > 0 ? `<div style="width:${masteredPct}%;background:var(--green);min-width:${mastered>0?'3px':'0'}" title="${mastered} mastered"></div>` : ''}
-            ${taught   > 0 ? `<div style="width:${taughtPct}%;background:var(--blue);min-width:${taught>0?'3px':'0'}" title="${taught} taught"></div>` : ''}
-            ${notTaught> 0 ? `<div style="width:${notPct}%;background:var(--border2);min-width:${notTaught>0?'3px':'0'}" title="${notTaught} not taught"></div>` : ''}
-          </div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px;white-space:nowrap">
-            ${notTaught} not taught · ${taught} taught · ${mastered} mastered
-          </div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px;white-space:nowrap">
+          ${mastered} mastered · ${taught} taught · ${notYet} not yet · ${notTaught} not taught
         </div>
       </div>`;
+    }
+
+    // Render expandable student-chip groups for an IC's four status buckets.
+    // Uses state.icCoverageOpen with 'icchip|{icId}|{bucket}' keys — toggleICCoverageSection handles them.
+    function renderICStudentChips(icId) {
+      const byStatus = { mastered: [], taught: [], not_yet: [], notTaught: [] };
+      activeStudents.forEach(s => {
+        const st = getTaughtICStatus(s.id, icId);
+        if (st === 'mastered')     byStatus.mastered.push(s);
+        else if (st === 'taught')  byStatus.taught.push(s);
+        else if (st === 'not_yet') byStatus.not_yet.push(s);
+        else                       byStatus.notTaught.push(s);
+      });
+
+      const buckets = [
+        { key: 'mastered',   label: 'Mastered',    col: 'var(--green)', bg: 'var(--green-dim)',   list: byStatus.mastered },
+        { key: 'taught',     label: 'Taught',       col: 'var(--blue)',  bg: 'var(--blue-dim)',    list: byStatus.taught },
+        { key: 'not_yet',    label: 'Not yet',      col: 'var(--rust)',  bg: 'var(--rust-dim)',    list: byStatus.not_yet },
+        { key: 'notTaught',  label: 'Not taught',   col: 'var(--text3)', bg: 'var(--surface-alt)', list: byStatus.notTaught },
+      ];
+
+      return buckets.map(b => {
+        if (!b.list.length) return '';
+        const openKey = `icchip|${icId}|${b.key}`;
+        const isOpen = !!state.icCoverageOpen[openKey];
+        const chips = isOpen ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">${
+          b.list.map(s => `<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:${b.bg};color:${b.col};border:1px solid ${b.col};white-space:nowrap">${escapeHtml(s.first_name)} ${escapeHtml(s.last_name)}</span>`).join('')
+        }</div>` : '';
+        return `<span style="display:inline-flex;flex-direction:column;align-items:flex-start">
+          <button onclick="event.stopPropagation();toggleICCoverageSection('${escapeHtml(openKey)}')"
+            style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 7px;border-radius:10px;background:${b.bg};color:${b.col};border:1px solid ${b.col};cursor:pointer;white-space:nowrap">
+            ${b.list.length} ${b.label}${isOpen ? ' ▾' : ' ▸'}
+          </button>
+          ${chips}
+        </span>`;
+      }).filter(Boolean).join('');
+    }
+
+    // Render a descriptor row (click to expand/collapse IC sub-rows).
+    // Key uses 'desc|{code}' prefix — distinct from subject keys, 'subj|strand' keys, and 'icchip|…' keys.
+    function renderDescriptorRow(c) {
+      const systemICs = state.instructionalComponents.filter(ic =>
+        ic.ownerTier === 'system_default' && !ic.isArchived && ic.homeDescriptorId === c.Code
+      );
+      const allIcIds = systemICs.map(ic => ic.id);
+      const descCounts = getICStudentCounts(allIcIds, activeStudents);
+      const descPct = descCounts.total
+        ? Math.round((descCounts.taught + descCounts.mastered) / descCounts.total * 100)
+        : null;
+
+      const descKey = 'desc|' + c.Code;
+      const descOpen = !!state.icCoverageOpen[descKey];
+
+      const icRows = descOpen ? systemICs.map(ic => {
+        const icCounts = getICStudentCounts([ic.id], activeStudents);
+        const label = ic.name || ic.id;
+        return `<div style="padding:6px 16px 6px 48px;border-bottom:1px solid var(--border);background:var(--surface)">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="min-width:120px;flex-shrink:0">
+              <div style="font-family:'Instrument Sans',sans-serif;font-size:12px;color:var(--text-muted);line-height:1.4">${escapeHtml(label.length > 60 ? label.slice(0, 60) + '…' : label)}</div>
+            </div>
+            <div style="flex:1;min-width:0"></div>
+            ${renderCoverageBar(icCounts)}
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding:5px 0 2px 132px">
+            ${renderICStudentChips(ic.id)}
+          </div>
+        </div>`;
+      }).join('') : '';
+
+      return `<div>
+        <div onclick="toggleICCoverageSection('${escapeHtml(descKey)}')"
+          style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px;cursor:pointer;user-select:none"
+          tabindex="0" role="button" aria-expanded="${descOpen}"
+          onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(descKey)}')">
+          <span style="font-size:10px;color:var(--text3);width:12px;flex-shrink:0">${descOpen ? '▾' : '▸'}</span>
+          <div style="min-width:108px;flex-shrink:0">
+            <div style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--text2)">${escapeHtml(c.Code)}</div>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:var(--text-muted)">${truncateWithTooltip(c.Descriptor || c.Aspect || '', 80, '', true)}</div>
+          </div>
+          ${descPct !== null ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);flex-shrink:0;white-space:nowrap">${descPct}% taught</div>` : ''}
+          ${renderCoverageBar(descCounts)}
+        </div>
+        ${icRows}
+      </div>`;
+    }
+
+    // Compute taught % for a set of descriptor codes: (taught + mastered) / total IC-student combinations
+    function taughtPctForCodes(codes) {
+      const icIds = codes.flatMap(c =>
+        state.instructionalComponents
+          .filter(ic => ic.ownerTier === 'system_default' && !ic.isArchived && ic.homeDescriptorId === c.Code)
+          .map(ic => ic.id)
+      );
+      if (!icIds.length) return null;
+      const { taught, mastered, total } = getICStudentCounts(icIds, activeStudents);
+      return total ? Math.round((taught + mastered) / total * 100) : 0;
     }
 
     const subjects = Object.keys(subjectMap).sort();
@@ -1495,10 +1582,16 @@ function renderClassOverview(main) {
       const strands = Object.keys(subjectMap[subj]).sort();
       const totalCodes = strands.reduce((n, st) => n + subjectMap[subj][st].length, 0);
 
+      const subjAllCodes = strands.flatMap(st => subjectMap[subj][st]);
+      const subjPct = taughtPctForCodes(subjAllCodes);
+      const subjPctLabel = subjPct !== null ? ` · ${subjPct}% taught` : '';
+
       const strandSections = subjOpen ? strands.map(strand => {
         const strandKey = subj + '|' + strand;
         const strandOpen = !!state.icCoverageOpen[strandKey];
         const codes = subjectMap[subj][strand];
+        const strandPct = taughtPctForCodes(codes);
+        const strandPctLabel = strandPct !== null ? ` · ${strandPct}% taught` : '';
         const descriptorRows = strandOpen ? codes.map(renderDescriptorRow).join('') : '';
         return `<div style="border-bottom:1px solid var(--border)">
           <div onclick="toggleICCoverageSection('${escapeHtml(strandKey)}')"
@@ -1507,7 +1600,7 @@ function renderClassOverview(main) {
             onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(strandKey)}')">
             <span style="font-size:10px;color:var(--text3);width:12px">${strandOpen ? '▾' : '▸'}</span>
             <span style="font-size:12px;font-weight:600;color:var(--text2);flex:1">${escapeHtml(strand)}</span>
-            <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${codes.length} descriptor${codes.length !== 1 ? 's' : ''}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${codes.length} descriptor${codes.length !== 1 ? 's' : ''}${strandPctLabel}</span>
           </div>
           ${strandOpen ? `<div>${descriptorRows}</div>` : ''}
         </div>`;
@@ -1520,7 +1613,7 @@ function renderClassOverview(main) {
           onkeydown="if(event.key==='Enter'||event.key===' ')toggleICCoverageSection('${escapeHtml(subjKey)}')">
           <span style="font-size:11px;color:var(--text3);width:14px">${subjOpen ? '▾' : '▸'}</span>
           <span style="font-size:13px;font-weight:700;color:var(--text);flex:1">${escapeHtml(subjectShort(subj))}</span>
-          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${totalCodes} descriptor${totalCodes !== 1 ? 's' : ''} · ${strands.length} strand${strands.length !== 1 ? 's' : ''}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${totalCodes} descriptor${totalCodes !== 1 ? 's' : ''} · ${strands.length} strand${strands.length !== 1 ? 's' : ''}${subjPctLabel}</span>
         </div>
         ${subjOpen ? `<div>${strandSections}</div>` : ''}
       </div>`;
@@ -1532,6 +1625,7 @@ function renderClassOverview(main) {
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);align-self:center">Legend</div>
         <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-size:11px;color:var(--text3)">Mastered</span></div>
         <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--blue)"></div><span style="font-size:11px;color:var(--text3)">Taught</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--rust)"></div><span style="font-size:11px;color:var(--text3)">Not yet</span></div>
         <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--border2)"></div><span style="font-size:11px;color:var(--text3)">Not taught</span></div>
       </div>
     </div>`;
