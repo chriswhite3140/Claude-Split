@@ -50,7 +50,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.44';
+const APP_VERSION = '1.12.45';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1532,7 +1532,7 @@ function renderClassOverview(main) {
         return `<div style="padding:6px 16px 6px 48px;border-bottom:1px solid var(--border);background:var(--surface)">
           <div style="display:flex;align-items:center;gap:12px">
             <div style="min-width:120px;flex-shrink:0">
-              <div style="font-size:10px;color:var(--text3);font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(label)}">${escapeHtml(label.length > 18 ? label.slice(0, 18) + '…' : label)}</div>
+              <div style="font-family:'Instrument Sans',sans-serif;font-size:12px;color:var(--text-muted);line-height:1.4">${escapeHtml(label.length > 60 ? label.slice(0, 60) + '…' : label)}</div>
             </div>
             <div style="flex:1;min-width:0"></div>
             ${renderCoverageBar(icCounts)}
