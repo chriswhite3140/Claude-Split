@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.27
- * Last updated: 2026-05-13
+ * THIS FILE IS VERSION: 1.12.49
+ * Last updated: 2026-05-23
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.49 - Bug fix: ics_year2_maths_number.csv had empty id column — ICs got new random UUIDs each load so TaughtICs references never matched; added stable ac9m2nXX-icNN IDs
  * v1.12.48 - Bug fix: NaN% taught in IC Coverage — descPct and taughtPctForCodes still referenced .mastered after rename to .gotIt in getICStudentCounts
  * v1.12.47 - Bug fix: capture classScanMap before modal teardown; saveDailyLog re-renders current view; toast shows got_it/needs_review breakdown; Step 2 label updated to "Class Check"
  * v1.12.46 - Phase 2 Class Scan: replaced IC Outcomes grid with per-student scan (taught/got_it/needs_review); strand history dots; global bulk toggles; step not skippable
