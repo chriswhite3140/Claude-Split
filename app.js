@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.46 - Phase 2 Class Scan: replaced IC Outcomes grid with per-student scan (taught/got_it/needs_review); strand history dots; global bulk toggles; step not skippable
  * v1.12.27 - Bug fixes: dlMarkAllForCode now scoped to eligible students only; masteryMap cleared when 80% gate finds no students
  * v1.12.26 - Daily Log Wizard: reordered steps (Attendance→Codes/ICs→IC Outcomes→Quick Mastery); step 4 conditional on 80% IC coverage gate
  * v1.12.25 - dlToggleCode ignores IC-derived codes; code list shows "via IC" badge for those rows
@@ -50,7 +51,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.45';
+const APP_VERSION = '1.12.46';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1443,34 +1444,34 @@ function renderClassOverview(main) {
     // four mutually exclusive buckets: mastered | taught | not_yet | notTaught (no record).
     function getICStudentCounts(icIds, students) {
       const total = icIds.length * students.length;
-      let mastered = 0, taught = 0, notYet = 0;
+      let gotIt = 0, taught = 0, needsReview = 0;
       icIds.forEach(icId => {
         students.forEach(s => {
           const st = getTaughtICStatus(s.id, icId);
-          if (st === 'mastered')     mastered++;
-          else if (st === 'taught')  taught++;
-          else if (st === 'not_yet') notYet++;
+          if (st === 'got_it' || st === 'mastered')           gotIt++;
+          else if (st === 'taught')                            taught++;
+          else if (st === 'needs_review' || st === 'not_yet') needsReview++;
         });
       });
-      return { mastered, taught, notYet, notTaught: total - mastered - taught - notYet, total };
+      return { gotIt, taught, needsReview, notTaught: total - gotIt - taught - needsReview, total };
     }
 
-    // Render a four-colour bar (grey=notTaught, rust=notYet, blue=taught, green=mastered) + count line
+    // Render a four-colour bar (grey=notTaught, rust=needsReview, blue=taught, green=gotIt) + count line
     function renderCoverageBar(counts) {
-      const { mastered, taught, notYet, notTaught, total } = counts;
-      const masteredPct = total ? Math.round(mastered / total * 100) : 0;
-      const taughtPct   = total ? Math.round(taught   / total * 100) : 0;
-      const notYetPct   = total ? Math.round(notYet   / total * 100) : 0;
-      const notPct      = 100 - masteredPct - taughtPct - notYetPct;
+      const { gotIt, taught, needsReview, notTaught, total } = counts;
+      const gotItPct       = total ? Math.round(gotIt       / total * 100) : 0;
+      const taughtPct      = total ? Math.round(taught      / total * 100) : 0;
+      const needsReviewPct = total ? Math.round(needsReview / total * 100) : 0;
+      const notPct         = 100 - gotItPct - taughtPct - needsReviewPct;
       return `<div style="min-width:160px;flex-shrink:0">
         <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--surface-alt)">
-          ${notTaught > 0 ? `<div style="width:${notPct}%;background:var(--border2);min-width:3px" title="${notTaught} not taught"></div>` : ''}
-          ${notYet    > 0 ? `<div style="width:${notYetPct}%;background:var(--rust);min-width:3px" title="${notYet} not yet"></div>` : ''}
-          ${taught    > 0 ? `<div style="width:${taughtPct}%;background:var(--blue);min-width:3px" title="${taught} taught"></div>` : ''}
-          ${mastered  > 0 ? `<div style="width:${masteredPct}%;background:var(--green);min-width:3px" title="${mastered} mastered"></div>` : ''}
+          ${notTaught   > 0 ? `<div style="width:${notPct}%;background:var(--border2);min-width:3px" title="${notTaught} not taught"></div>` : ''}
+          ${needsReview > 0 ? `<div style="width:${needsReviewPct}%;background:var(--rust);min-width:3px" title="${needsReview} needs review"></div>` : ''}
+          ${taught      > 0 ? `<div style="width:${taughtPct}%;background:var(--blue);min-width:3px" title="${taught} taught"></div>` : ''}
+          ${gotIt       > 0 ? `<div style="width:${gotItPct}%;background:var(--green);min-width:3px" title="${gotIt} got it"></div>` : ''}
         </div>
         <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px;white-space:nowrap">
-          ${mastered} mastered · ${taught} taught · ${notYet} not yet · ${notTaught} not taught
+          ${gotIt} got it · ${taught} taught · ${needsReview} needs review · ${notTaught} not taught
         </div>
       </div>`;
     }
@@ -1478,20 +1479,20 @@ function renderClassOverview(main) {
     // Render expandable student-chip groups for an IC's four status buckets.
     // Uses state.icCoverageOpen with 'icchip|{icId}|{bucket}' keys — toggleICCoverageSection handles them.
     function renderICStudentChips(icId) {
-      const byStatus = { mastered: [], taught: [], not_yet: [], notTaught: [] };
+      const byStatus = { got_it: [], taught: [], needs_review: [], notTaught: [] };
       activeStudents.forEach(s => {
         const st = getTaughtICStatus(s.id, icId);
-        if (st === 'mastered')     byStatus.mastered.push(s);
-        else if (st === 'taught')  byStatus.taught.push(s);
-        else if (st === 'not_yet') byStatus.not_yet.push(s);
-        else                       byStatus.notTaught.push(s);
+        if (st === 'got_it' || st === 'mastered')           byStatus.got_it.push(s);
+        else if (st === 'taught')                            byStatus.taught.push(s);
+        else if (st === 'needs_review' || st === 'not_yet') byStatus.needs_review.push(s);
+        else                                                 byStatus.notTaught.push(s);
       });
 
       const buckets = [
-        { key: 'mastered',   label: 'Mastered',    col: 'var(--green)', bg: 'var(--green-dim)',   list: byStatus.mastered },
-        { key: 'taught',     label: 'Taught',       col: 'var(--blue)',  bg: 'var(--blue-dim)',    list: byStatus.taught },
-        { key: 'not_yet',    label: 'Not yet',      col: 'var(--rust)',  bg: 'var(--rust-dim)',    list: byStatus.not_yet },
-        { key: 'notTaught',  label: 'Not taught',   col: 'var(--text3)', bg: 'var(--surface-alt)', list: byStatus.notTaught },
+        { key: 'got_it',       label: 'Got it',       col: 'var(--green)', bg: 'var(--green-dim)',   list: byStatus.got_it },
+        { key: 'taught',       label: 'Taught',        col: 'var(--blue)',  bg: 'var(--blue-dim)',    list: byStatus.taught },
+        { key: 'needs_review', label: 'Needs review',  col: 'var(--rust)',  bg: 'var(--rust-dim)',    list: byStatus.needs_review },
+        { key: 'notTaught',    label: 'Not taught',    col: 'var(--text3)', bg: 'var(--surface-alt)', list: byStatus.notTaught },
       ];
 
       return buckets.map(b => {
@@ -2403,9 +2404,11 @@ function openCodeDetail(code, studentId) {
               const icStatus = studentId ? getTaughtICStatus(studentId, ic.id) : null;
               const statusPill = studentId ? (() => {
                 const statusMap = {
-                  'taught':   { col:'var(--blue)',  bg:'var(--blue-dim)',  label:'Taught' },
-                  'mastered': { col:'var(--green)', bg:'var(--green-dim)', label:'Mastered' },
-                  'not_yet':  { col:'var(--rust)',  bg:'var(--rust-dim)',  label:'Not yet' },
+                  'taught':       { col:'var(--blue)',  bg:'var(--blue-dim)',  label:'Taught' },
+                  'got_it':       { col:'var(--green)', bg:'var(--green-dim)', label:'Got it' },
+                  'needs_review': { col:'var(--rust)',  bg:'var(--rust-dim)',  label:'Needs review' },
+                  'mastered':     { col:'var(--green)', bg:'var(--green-dim)', label:'Got it' },
+                  'not_yet':      { col:'var(--rust)',  bg:'var(--rust-dim)',  label:'Needs review' },
                 };
                 const s = icStatus ? statusMap[icStatus] : null;
                 const pillStyle = s
@@ -2415,7 +2418,7 @@ function openCodeDetail(code, studentId) {
                 return `<span style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:10px;${pillStyle}">${pillLabel}</span>`;
               })() : '';
               const statusCycle = studentId ? (() => {
-                const next = { null: 'taught', 'taught': 'mastered', 'mastered': 'not_yet', 'not_yet': null };
+                const next = { null: 'taught', 'taught': 'got_it', 'got_it': 'needs_review', 'needs_review': null, 'mastered': 'needs_review', 'not_yet': null };
                 const nextStatus = next[icStatus] !== undefined ? next[icStatus] : 'taught';
                 const nextArg = nextStatus === null ? 'null' : `'${nextStatus}'`;
                 return `<button onclick="toggleICStatus('${studentId}','${ic.id}',${nextArg},'${code}')"
@@ -5268,14 +5271,14 @@ function resetAssessmentScale() {
 // ════════════════════════════════════════════════════
 
 let dlState = {
-  step: 1,           // 1=attendance, 2=codes/ICs, 3=ic-outcomes, 4=quick-mastery (conditional)
+  step: 1,           // 1=attendance, 2=codes/ICs, 3=class-scan, 4=quick-mastery (conditional)
   date: '',
   absentIds: new Set(),
   manualCodes: [],    // codes explicitly selected by the teacher via the code list
   selectedCodes: [],  // union of manualCodes + homeDescriptorId of every selected IC
   masteryMap: {},     // key: studentId+'|'+code → 'Achieved'|'Developing'|'Emerging'|null
   selectedICs: [],    // array of ic ids selected via AI IC suggester
-  icOutcomeMap: {},   // key: studentId+'|'+icId → 'taught'|'mastered'|'not_yet'|null
+  classScanMap: {},   // key: studentId → 'taught'|'got_it'|'needs_review' (session-wide per student)
   selectedSubject: '',
   aiLoading: false,
   readyForMastery: [], // populated after step 3; drives whether step 4 appears
@@ -5291,7 +5294,7 @@ function openDailyLogWizard() {
     selectedCodes: [],
     masteryMap: {},
     selectedICs: [],
-    icOutcomeMap: {},
+    classScanMap: {},
     selectedSubject: availSubjects[0] || '',
     aiLoading: false,
     readyForMastery: [],
@@ -5339,7 +5342,7 @@ function renderDlModal() {
   } else if (dlState.step === 2) {
     nextLabel = dlStep2NextLabel();
   } else if (dlState.step === 3) {
-    nextLabel = `Next →`;
+    nextLabel = `Confirm class check →`;
   } else {
     nextLabel = `✓ Save Session`;
   }
@@ -5374,7 +5377,7 @@ function renderDlModal() {
           ${dlState.step === 1 ? 'Dismiss' : '← Back'}
         </button>
         <div style="display:flex;gap:8px">
-          ${dlState.step === 3 ? `<button onclick="dlSkipICOutcomes()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip IC outcomes</button>` : ''}
+          ${''/* class scan (step 3) is not skippable — zero interaction writes all as taught */}
           ${dlState.step === 4 ? `<button onclick="dlSkipQuickMastery()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'Instrument Sans',sans-serif;font-size:13px;cursor:pointer">Skip — do this later</button>` : ''}
           <button onclick="dlNext()" style="padding:8px 20px;border-radius:6px;border:none;background:var(--blue);color:var(--primary-contrast);font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">
             ${nextLabel}
@@ -6040,129 +6043,126 @@ function dlSetMastery(studentId, code, mastery) {
   if (body) body.innerHTML = buildDlStep4();
 }
 
-function dlSkipICOutcomes() {
-  dlState.icOutcomeMap = {};
-  saveDailyLog();
-}
-
 function dlSkipQuickMastery() {
   dlState.masteryMap = {};
   saveDailyLog();
 }
 
-// ── STEP 3: IC OUTCOMES ──
+// ── STEP 3: CLASS SCAN ──
+// Returns the strand of the first selected IC for this session (used for strand history dots).
+function dlGetCurrentStrand() {
+  if (!dlState.selectedICs.length) return null;
+  const firstIC = state.instructionalComponents.find(ic => ic.id === dlState.selectedICs[0]);
+  if (!firstIC) return null;
+  const cd = state.curriculumCodes.find(c => c.Code === firstIC.homeDescriptorId);
+  return cd ? (cd.Strand || null) : null;
+}
+
+// Returns dot colour and tooltip for a student's recent IC outcome ratio in a strand.
+// Reads state.taughtICs for got_it / needs_review records in the current school year.
+function dlGetStrandDot(studentId, strand) {
+  if (!strand) return null;
+  const currentYear = new Date().getFullYear().toString();
+  const relevant = state.taughtICs.filter(t => {
+    if (t.student_id !== studentId) return false;
+    if (!t.date || !t.date.startsWith(currentYear)) return false;
+    if (t.status !== 'got_it' && t.status !== 'needs_review') return false;
+    const ic = state.instructionalComponents.find(x => x.id === t.ic_id);
+    if (!ic) return false;
+    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+    return cd && cd.Strand === strand;
+  });
+  if (!relevant.length) return null; // grey — no prior data
+  const gotIt = relevant.filter(t => t.status === 'got_it').length;
+  const ratio = gotIt / relevant.length;
+  if (ratio > 0.6) return { colour: 'var(--green)', title: 'Predominantly got it in this strand recently' };
+  if (ratio >= 0.4) return { colour: 'var(--gold)', title: 'Mixed signal in this strand recently' };
+  return { colour: 'var(--rust)', title: 'Predominantly needs review in this strand recently' };
+}
+
 function buildDlStep3() {
   const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
   const ics = dlState.selectedICs.map(id => state.instructionalComponents.find(ic => ic.id === id)).filter(Boolean);
 
   if (!ics.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title">No ICs selected</div><div class="empty-sub">Go back and select ICs via the AI suggester</div></div>`;
 
-  const statusColours = {
-    'taught':   { col:'var(--blue)',  bg:'var(--blue-dim)',  label:'Taught' },
-    'mastered': { col:'var(--green)', bg:'var(--green-dim)', label:'Mastered' },
-    'not_yet':  { col:'var(--rust)',  bg:'var(--rust-dim)',  label:'Not yet' },
-  };
-
-  const icHeaders = ics.map(ic => {
-    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
-    const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-    const col = subjColours[cd?.Subject] || 'var(--blue)';
-    return `<th style="padding:0;text-align:left;border-bottom:1px solid var(--border);min-width:180px;max-width:240px;vertical-align:bottom;border-left:1px solid var(--border)">
-      <div style="display:flex;flex-direction:column;height:100%;padding:10px 12px;min-height:140px">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:${col};margin-bottom:3px">${ic.homeDescriptorId}</div>
-        <div style="font-size:11px;font-weight:600;color:var(--text-muted);flex:1;line-height:1.4">${ic.name}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:8px">${ic.difficultyStage||''}</div>
-        <button onclick="dlMarkAllICTaught('${ic.id}')"
-          style="padding:4px 8px;border-radius:4px;border:1px solid var(--blue);background:var(--blue-dim);color:var(--blue);
-          font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif;font-weight:600">
-          <span>Mark all Taught</span>
-        </button>
-        <button onclick="dlMarkAllICMastered('${ic.id}')"
-          style="padding:4px 8px;border-radius:4px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);
-          font-size:10px;cursor:pointer;width:100%;display:flex;align-items:center;gap:6px;font-family:'Instrument Sans',sans-serif;font-weight:600;margin-top:4px">
-          <span>Mark all Mastered</span>
-        </button>
-      </div>
-    </th>`;
-  }).join('');
+  const strand = dlGetCurrentStrand();
+  const gotItCount = Object.values(dlState.classScanMap).filter(v => v === 'got_it').length;
+  const needsReviewCount = Object.values(dlState.classScanMap).filter(v => v === 'needs_review').length;
 
   const studentRows = presentStudents.map((s, si) => {
-    const cells = ics.map(ic => {
-      const key     = s.id + '|' + ic.id;
-      const current = dlState.icOutcomeMap[key] || null;
-      const statuses = ['taught','mastered','not_yet'];
-      const opts = statuses.map(st => {
-        const {col, bg, label} = statusColours[st];
-        const active = current === st;
-        return `<button onclick="dlSetICOutcome('${s.id}','${ic.id}','${st}')" title="${label}"
-          style="padding:3px 8px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-size:10px;cursor:pointer;transition:all 0.1s;font-family:'Instrument Sans',sans-serif">
-          ${label}
-        </button>`;
-      }).join('');
-      return `<td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border);border-left:1px solid var(--border)">
-        <div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">${opts}</div>
-        ${current ? '' : `<div style="font-size:9px;color:var(--text3);margin-top:2px;font-family:'DM Mono',monospace">—</div>`}
-      </td>`;
-    }).join('');
+    const status = dlState.classScanMap[s.id] || 'taught';
+    const dot = dlGetStrandDot(s.id, strand);
+    const dotHtml = dot
+      ? `<div title="${dot.title}" style="width:8px;height:8px;border-radius:50%;background:${dot.colour};flex-shrink:0"></div>`
+      : `<div style="width:8px;height:8px;border-radius:50%;background:var(--border2);flex-shrink:0" title="No prior outcome data for this strand"></div>`;
 
-    return `<tr style="background:${getStripedRowSurface(si)}">
-      <td style="padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;left:0;background:${getStripedRowSurface(si)}">
-        <div style="display:flex;align-items:center;gap:7px">
-          <div class="sc-avatar ${getAvClass(si)}" style="width:22px;height:22px;font-size:9px;flex-shrink:0">${getInitials(s)}</div>
-          <span style="font-size:12px;color:var(--text-muted)">${s.first_name} ${s.last_name}</span>
-        </div>
-      </td>
-      ${cells}
-    </tr>`;
+    let statusChip = '';
+    if (status === 'got_it') {
+      statusChip = `<span style="font-size:11px;font-weight:600;color:var(--green);background:var(--green-dim);padding:3px 10px;border-radius:4px;font-family:'Instrument Sans',sans-serif">Got it</span>`;
+    } else if (status === 'needs_review') {
+      statusChip = `<span style="font-size:11px;font-weight:600;color:var(--rust);background:var(--rust-dim);padding:3px 10px;border-radius:4px;font-family:'Instrument Sans',sans-serif">Needs review</span>`;
+    }
+
+    return `<div onclick="dlCycleStudentScan('${s.id}')" id="dl-scan-${s.id}"
+      style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:7px;border:1.5px solid ${status !== 'taught' ? (status === 'got_it' ? 'var(--green)' : 'var(--rust)') : 'var(--border)'};background:${status === 'got_it' ? 'var(--green-dim)' : status === 'needs_review' ? 'var(--rust-dim)' : getStripedRowSurface(si)};cursor:pointer;user-select:none;transition:all 0.1s;margin-bottom:4px">
+      ${dotHtml}
+      <div class="sc-avatar ${getAvClass(si)}" style="width:28px;height:28px;font-size:11px;flex-shrink:0">${getInitials(s)}</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text);flex:1">${s.first_name} <span style="font-weight:400;color:var(--text3)">${s.last_name}</span></div>
+      ${statusChip}
+    </div>`;
   }).join('');
 
+  const icSummary = ics.map(ic => {
+    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+    return `<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${ic.homeDescriptorId} · ${ic.name}</span>`;
+  }).join('<br>');
+
   return `
-    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
-      Record IC outcomes for each present student. <span style="color:var(--blue)">Taught</span> = introduced today · <span style="color:var(--green)">Mastered</span> = secure understanding · <span style="color:var(--rust)">Not yet</span> = attempted but not achieved. Leave blank to skip.
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">
+      Quick in-the-moment read of the class. Tap a student to cycle their outcome: no indicator = <strong>taught</strong> · <span style="color:var(--green)">Got it</span> · <span style="color:var(--rust)">Needs review</span>. Leaving everyone as-is is a valid response — all write as <em>taught</em>.
     </div>
-    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
-      <table style="width:100%;border-collapse:collapse;min-width:${200 + ics.length * 200}px">
-        <thead>
-          <tr style="background:var(--surface-alt)">
-            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface-alt);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;min-width:160px;vertical-align:bottom">
-              <div style="display:flex;align-items:center;gap:6px">
-                <span>STUDENT</span>
-                <button onclick="state.studentSortBy=state.studentSortBy==='last_name'?'first_name':'last_name';document.getElementById('dl-body').innerHTML=buildDlStep3()"
-                  style="padding:2px 7px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:10px;cursor:pointer;white-space:nowrap;font-family:'Instrument Sans',sans-serif;text-transform:none;letter-spacing:0">
-                  ${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}
-                </button>
-              </div>
-            </th>
-            ${icHeaders}
-          </tr>
-        </thead>
-        <tbody>${studentRows}</tbody>
-      </table>
+    <div style="font-size:10px;color:var(--text3);background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:12px;line-height:1.6">
+      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em">ICs in this session</span><br>
+      ${icSummary}
     </div>
-    <div style="font-size:10px;color:var(--text3);margin-top:8px">
-      ${presentStudents.length} students · ${ics.length} ICs · ${Object.values(dlState.icOutcomeMap).filter(Boolean).length} outcomes recorded
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-right:4px">Bulk set:</span>
+      <button onclick="dlSetAllScan('got_it')" style="padding:5px 14px;border-radius:5px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-size:12px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif">All got it</button>
+      <button onclick="dlSetAllScan('needs_review')" style="padding:5px 14px;border-radius:5px;border:1px solid var(--rust);background:var(--rust-dim);color:var(--rust);font-size:12px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif">All needs review</button>
+      <button onclick="dlSetAllScan('taught')" style="padding:5px 14px;border-radius:5px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif">Clear</button>
+    </div>
+    <div id="dl-scan-list" style="max-height:45vh;overflow-y:auto">
+      ${studentRows}
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-top:10px;display:flex;gap:16px">
+      <span>${presentStudents.length} students present</span>
+      ${gotItCount ? `<span style="color:var(--green)">● ${gotItCount} got it</span>` : ''}
+      ${needsReviewCount ? `<span style="color:var(--rust)">● ${needsReviewCount} needs review</span>` : ''}
+      ${strand ? `<span style="margin-left:auto;color:var(--text3)">Strand: ${strand}</span>` : ''}
     </div>
   `;
 }
 
-function dlSetICOutcome(studentId, icId, status) {
-  const key = studentId + '|' + icId;
-  if (dlState.icOutcomeMap[key] === status) delete dlState.icOutcomeMap[key];
-  else dlState.icOutcomeMap[key] = status;
+// Cycle a student's scan status: taught → got_it → needs_review → taught
+function dlCycleStudentScan(studentId) {
+  const current = dlState.classScanMap[studentId] || 'taught';
+  const cycle = { 'taught': 'got_it', 'got_it': 'needs_review', 'needs_review': 'taught' };
+  const next = cycle[current];
+  if (next === 'taught') delete dlState.classScanMap[studentId];
+  else dlState.classScanMap[studentId] = next;
   const body = document.getElementById('dl-body');
   if (body) body.innerHTML = buildDlStep3();
 }
 
-function dlMarkAllICTaught(icId) {
+// Set all present students to the given scan status
+function dlSetAllScan(status) {
   const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
-  presentStudents.forEach(s => { dlState.icOutcomeMap[s.id + '|' + icId] = 'taught'; });
-  const body = document.getElementById('dl-body');
-  if (body) body.innerHTML = buildDlStep3();
-}
-
-function dlMarkAllICMastered(icId) {
-  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
-  presentStudents.forEach(s => { dlState.icOutcomeMap[s.id + '|' + icId] = 'mastered'; });
+  if (status === 'taught') {
+    presentStudents.forEach(s => delete dlState.classScanMap[s.id]);
+  } else {
+    presentStudents.forEach(s => { dlState.classScanMap[s.id] = status; });
+  }
   const body = document.getElementById('dl-body');
   if (body) body.innerHTML = buildDlStep3();
 }
@@ -6308,12 +6308,14 @@ function dlGetStudentsReadyForMastery() {
 
     presentStudents.forEach(student => {
       const taughtCount = systemDefaults.filter(ic => {
-        const inSession = (dlState.icOutcomeMap[student.id + '|' + ic.id] === 'taught' ||
-                          dlState.icOutcomeMap[student.id + '|' + ic.id] === 'mastered');
+        // Any classScan status (taught/got_it/needs_review) means the IC was taught in session.
+        // If IC is in selectedICs, it was taught to all present students in this session.
+        const inSession = dlState.selectedICs.includes(ic.id);
         const inRecords = state.taughtICs.some(t =>
           t.student_id === student.id &&
           t.ic_id === ic.id &&
-          (t.status === 'taught' || t.status === 'mastered')
+          (t.status === 'taught' || t.status === 'got_it' || t.status === 'needs_review' ||
+           t.status === 'mastered') // legacy value kept for backward compat
         );
         return inSession || inRecords;
       }).length;
@@ -6423,24 +6425,29 @@ async function saveDailyLog() {
     } catch(e) { console.warn('Could not save mastery for', key); }
   }
 
-  // Save IC outcome records
+  // Save IC class scan records — one row per student per IC (batch write)
+  // All three statuses (taught / got_it / needs_review) mean the IC was taught;
+  // default is 'taught' for any student not explicitly flagged in classScanMap.
   const icEntries = [];
-  Object.entries(dlState.icOutcomeMap || {}).forEach(([key, status]) => {
-    if (!status) return;
-    const [studentId, icId] = key.split('|');
-    icEntries.push({ date: dlState.date, student_id: studentId, ic_id: icId, status, notes: '' });
-  });
+  if (dlState.selectedICs.length) {
+    presentStudents.forEach(student => {
+      const status = dlState.classScanMap[student.id] || 'taught';
+      dlState.selectedICs.forEach(icId => {
+        icEntries.push({ date: dlState.date, student_id: student.id, ic_id: icId, status, notes: '' });
+      });
+    });
+  }
   if (icEntries.length) {
     try {
       await saveTaughtICsBatch(icEntries);
     } catch(e) {
-      console.warn('IC outcomes save failed:', e);
+      console.warn('IC class scan save failed:', e);
     }
   }
 
   setSyncing(false);
   checkDailyLogBadge();
-  const icNote = icEntries.length ? ` · ${icEntries.length} IC outcomes` : '';
+  const icNote = icEntries.length ? ` · ${icEntries.length} IC records` : '';
   toast(`✓ Session logged — ${saved} codes taught to ${presentStudents.length} students${icNote}`, 'success');
   if (state.currentView === 'dashboard') renderView();
 }
