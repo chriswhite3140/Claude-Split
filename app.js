@@ -56,7 +56,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.48';
+const APP_VERSION = '1.12.51';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
