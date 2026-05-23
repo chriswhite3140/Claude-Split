@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.47 - Bug fix: capture classScanMap before modal teardown; saveDailyLog re-renders current view; toast shows got_it/needs_review breakdown; Step 2 label updated to "Class Check"
  * v1.12.46 - Phase 2 Class Scan: replaced IC Outcomes grid with per-student scan (taught/got_it/needs_review); strand history dots; global bulk toggles; step not skippable
  * v1.12.27 - Bug fixes: dlMarkAllForCode now scoped to eligible students only; masteryMap cleared when 80% gate finds no students
  * v1.12.26 - Daily Log Wizard: reordered steps (Attendance→Codes/ICs→IC Outcomes→Quick Mastery); step 4 conditional on 80% IC coverage gate
@@ -51,7 +52,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.46';
+const APP_VERSION = '1.12.47';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5658,7 +5659,7 @@ function dlStep2NextLabel() {
   const ics   = dlState.selectedICs.length;
   if (!codes && !ics) return `✓ Save Session`;
   if (ics > 0) {
-    return `Next → IC Outcomes (${ics} IC${ics !== 1 ? 's' : ''})`;
+    return `Next → Class Check (${ics} IC${ics !== 1 ? 's' : ''})`;
   }
   return `✓ Save Session (${codes} code${codes !== 1 ? 's' : ''})`;
 }
@@ -6364,6 +6365,12 @@ function dlNext() {
 
 // ── SAVE ──
 async function saveDailyLog() {
+  // Capture scan statuses immediately before any state changes or modal teardown.
+  // classScanMap keys are studentId → 'taught'|'got_it'|'needs_review'.
+  // Absent from the map means the teacher left that student as 'taught' (default).
+  const scanStatuses = Object.assign({}, dlState.classScanMap);
+  const sessionICs   = dlState.selectedICs.slice();  // freeze IC list too
+
   closeDlModal();
   const presentStudents = state.students.filter(s => !dlState.absentIds.has(s.id));
   const entries = [];
@@ -6427,12 +6434,14 @@ async function saveDailyLog() {
 
   // Save IC class scan records — one row per student per IC (batch write)
   // All three statuses (taught / got_it / needs_review) mean the IC was taught;
-  // default is 'taught' for any student not explicitly flagged in classScanMap.
+  // default is 'taught' for any student not explicitly flagged in the scan step.
+  // NOTE: Apps Script saveTaughtICs validation must accept 'got_it' and 'needs_review'
+  //       in addition to 'taught'. Without that update, new values silently write as 'taught'.
   const icEntries = [];
-  if (dlState.selectedICs.length) {
+  if (sessionICs.length) {
     presentStudents.forEach(student => {
-      const status = dlState.classScanMap[student.id] || 'taught';
-      dlState.selectedICs.forEach(icId => {
+      const status = scanStatuses[student.id] || 'taught';
+      sessionICs.forEach(icId => {
         icEntries.push({ date: dlState.date, student_id: student.id, ic_id: icId, status, notes: '' });
       });
     });
@@ -6447,9 +6456,19 @@ async function saveDailyLog() {
 
   setSyncing(false);
   checkDailyLogBadge();
-  const icNote = icEntries.length ? ` · ${icEntries.length} IC records` : '';
+  let icNote = '';
+  if (icEntries.length) {
+    const nGotIt       = icEntries.filter(e => e.status === 'got_it').length;
+    const nNeedsReview = icEntries.filter(e => e.status === 'needs_review').length;
+    const nTaught      = icEntries.filter(e => e.status === 'taught').length;
+    const parts = [];
+    if (nGotIt)       parts.push(`${nGotIt} got it`);
+    if (nNeedsReview) parts.push(`${nNeedsReview} needs review`);
+    if (nTaught)      parts.push(`${nTaught} taught`);
+    icNote = ` · IC scan: ${parts.join(', ')}`;
+  }
   toast(`✓ Session logged — ${saved} codes taught to ${presentStudents.length} students${icNote}`, 'success');
-  if (state.currentView === 'dashboard') renderView();
+  renderView();
 }
 
 // ── TAUGHT HELPERS ──
