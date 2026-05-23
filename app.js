@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.50
+ * THIS FILE IS VERSION: 1.12.51
  * Last updated: 2026-05-23
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.51 - IC Coverage legend updated: Mastered → Got it, Not yet → Needs review
  * v1.12.50 - Retire mastered from all IC Coverage comments — two inline comments still referenced mastered/not_yet; updated to gotIt/needsReview per Phase 2 spec
  * v1.12.49 - Bug fix: ics_year2_maths_number.csv had empty id column — ICs got new random UUIDs each load so TaughtICs references never matched; added stable ac9m2nXX-icNN IDs
  * v1.12.48 - Bug fix: NaN% taught in IC Coverage — descPct and taughtPctForCodes still referenced .mastered after rename to .gotIt in getICStudentCounts
@@ -1628,9 +1629,9 @@ function renderClassOverview(main) {
       ${html || `<div class="empty-state" style="padding:40px"><div class="empty-icon">▦</div><div class="empty-title">No IC data to display</div></div>`}
       <div style="display:flex;gap:16px;padding:8px 0;flex-wrap:wrap">
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);align-self:center">Legend</div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-size:11px;color:var(--text3)">Mastered</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-size:11px;color:var(--text3)">Got it</span></div>
         <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--blue)"></div><span style="font-size:11px;color:var(--text3)">Taught</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--rust)"></div><span style="font-size:11px;color:var(--text3)">Not yet</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--rust)"></div><span style="font-size:11px;color:var(--text3)">Needs review</span></div>
         <div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:8px;border-radius:2px;background:var(--border2)"></div><span style="font-size:11px;color:var(--text3)">Not taught</span></div>
       </div>
     </div>`;
