@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.49
+ * THIS FILE IS VERSION: 1.12.50
  * Last updated: 2026-05-23
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.50 - Retire mastered from all IC Coverage comments — two inline comments still referenced mastered/not_yet; updated to gotIt/needsReview per Phase 2 spec
  * v1.12.49 - Bug fix: ics_year2_maths_number.csv had empty id column — ICs got new random UUIDs each load so TaughtICs references never matched; added stable ac9m2nXX-icNN IDs
  * v1.12.48 - Bug fix: NaN% taught in IC Coverage — descPct and taughtPctForCodes still referenced .mastered after rename to .gotIt in getICStudentCounts
  * v1.12.47 - Bug fix: capture classScanMap before modal teardown; saveDailyLog re-renders current view; toast shows got_it/needs_review breakdown; Step 2 label updated to "Class Check"
@@ -1444,7 +1445,7 @@ function renderClassOverview(main) {
 
     // Count IC-student combinations: total = icIds.length × students.length.
     // Uses getTaughtICStatus (most-recent record) to classify each (ic, student) pair into
-    // four mutually exclusive buckets: mastered | taught | not_yet | notTaught (no record).
+    // four mutually exclusive buckets: gotIt | taught | needsReview | notTaught (no record).
     function getICStudentCounts(icIds, students) {
       const total = icIds.length * students.length;
       let gotIt = 0, taught = 0, needsReview = 0;
@@ -1566,7 +1567,7 @@ function renderClassOverview(main) {
       </div>`;
     }
 
-    // Compute taught % for a set of descriptor codes: (taught + mastered) / total IC-student combinations
+    // Compute taught % for a set of descriptor codes: (taught + gotIt) / total IC-student combinations
     function taughtPctForCodes(codes) {
       const icIds = codes.flatMap(c =>
         state.instructionalComponents
