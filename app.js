@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.48 - Bug fix: NaN% taught in IC Coverage — descPct and taughtPctForCodes still referenced .mastered after rename to .gotIt in getICStudentCounts
  * v1.12.47 - Bug fix: capture classScanMap before modal teardown; saveDailyLog re-renders current view; toast shows got_it/needs_review breakdown; Step 2 label updated to "Class Check"
  * v1.12.46 - Phase 2 Class Scan: replaced IC Outcomes grid with per-student scan (taught/got_it/needs_review); strand history dots; global bulk toggles; step not skippable
  * v1.12.27 - Bug fixes: dlMarkAllForCode now scoped to eligible students only; masteryMap cleared when 80% gate finds no students
@@ -52,7 +53,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.47';
+const APP_VERSION = '1.12.48';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1522,7 +1523,7 @@ function renderClassOverview(main) {
       const allIcIds = systemICs.map(ic => ic.id);
       const descCounts = getICStudentCounts(allIcIds, activeStudents);
       const descPct = descCounts.total
-        ? Math.round((descCounts.taught + descCounts.mastered) / descCounts.total * 100)
+        ? Math.round((descCounts.taught + descCounts.gotIt) / descCounts.total * 100)
         : null;
 
       const descKey = 'desc|' + c.Code;
@@ -1572,8 +1573,8 @@ function renderClassOverview(main) {
           .map(ic => ic.id)
       );
       if (!icIds.length) return null;
-      const { taught, mastered, total } = getICStudentCounts(icIds, activeStudents);
-      return total ? Math.round((taught + mastered) / total * 100) : 0;
+      const { taught, gotIt, total } = getICStudentCounts(icIds, activeStudents);
+      return total ? Math.round((taught + gotIt) / total * 100) : 0;
     }
 
     const subjects = Object.keys(subjectMap).sort();
