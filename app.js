@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.52 - Phase 3: mastery ready banner and picker modal in IC Coverage view
  * v1.12.51 - IC Coverage legend updated: Mastered → Got it, Not yet → Needs review
  * v1.12.50 - Retire mastered from all IC Coverage comments — two inline comments still referenced mastered/not_yet; updated to gotIt/needsReview per Phase 2 spec
  * v1.12.49 - Bug fix: ics_year2_maths_number.csv had empty id column — ICs got new random UUIDs each load so TaughtICs references never matched; added stable ac9m2nXX-icNN IDs
@@ -56,7 +57,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.51';
+const APP_VERSION = '1.12.52';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -567,6 +568,49 @@ async function saveProgress(data) {
   renderView();
 }
 
+async function saveProgressBatch(entries) {
+  invalidateReadinessCache();
+  const today = new Date().toISOString().split('T')[0];
+  let savedCount = 0;
+  for (const data of entries) {
+    try {
+      const existing = state.progress.find(
+        p => p.student_id === data.student_id && p.code === data.content_descriptor_code
+      );
+      if (existing) {
+        const result = await apiCall('updateProgress', {
+          progress_id: existing.id,
+          mastery_level: data.mastery_level,
+          date_assessed: data.date_assessed || today,
+          teacher_notes: data.teacher_notes || ''
+        });
+        if (result.success) {
+          existing.mastery = data.mastery_level;
+          existing.date = data.date_assessed || today;
+          existing.notes = data.teacher_notes || '';
+          savedCount++;
+        }
+      } else {
+        const result = await apiCall('saveProgress', data);
+        if (result.success) {
+          state.progress.push({
+            id: result.progress_id,
+            student_id: data.student_id,
+            code: data.content_descriptor_code,
+            mastery: data.mastery_level,
+            date: data.date_assessed || today,
+            notes: data.teacher_notes || ''
+          });
+          savedCount++;
+        }
+      }
+    } catch(e) {
+      console.error('saveProgressBatch entry error:', e);
+    }
+  }
+  return savedCount;
+}
+
 // ── SYNC STATE UI ──
 function setSyncing(v) {
   state.syncing = v;
@@ -745,6 +789,10 @@ function getPlacementForStudent(studentId, element, subElement) {
 // Memoised readiness cache — rebuilt when taughtLog or progress changes
 let _readinessCache = null;
 function invalidateReadinessCache() { _readinessCache = null; }
+
+// ── MASTERY BANNER SESSION STATE ──
+let masteryBannerDismissedSession = false;
+let masteryPickerState = { pairs: [], selections: {}, checked: new Set(), collapsedGroups: new Set() };
 
 function getStandardReadiness(studentId, standardId) {
   if (!_readinessCache) _readinessCache = {};
@@ -1549,6 +1597,26 @@ function renderClassOverview(main) {
         </div>`;
       }).join('') : '';
 
+      const progressForDesc = descOpen ? state.progress.filter(p => p.code === c.Code) : [];
+      const descMasteryColours = {
+        'Achieved':  ['var(--green)', 'var(--green-dim)'],
+        'Extended':  ['var(--teal)',  'var(--teal-dim)'],
+        'Developing':['var(--gold)',  'var(--gold-dim)'],
+        'Emerging':  ['var(--rust)',  'var(--rust-dim)'],
+      };
+      const masteryJudgementsHtml = progressForDesc.length ? `
+        <div style="padding:6px 16px 6px 48px;border-bottom:1px solid var(--border);background:var(--surface)">
+          <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);display:inline-block;margin-bottom:4px">Mastery Judgements</span>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            ${progressForDesc.map(p => {
+              const stu = state.students.find(s => s.id === p.student_id);
+              if (!stu) return '';
+              const [mc, bg] = descMasteryColours[p.mastery] || ['var(--text3)', 'var(--surface-alt)'];
+              return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px 2px 6px;border-radius:10px;background:${bg};border:1px solid ${mc};font-size:10px;color:${mc}">${escapeHtml(stu.first_name)} ${escapeHtml(stu.last_name[0])}. <span style="font-family:'DM Mono',monospace;font-size:8px">${escapeHtml(p.mastery)}</span><button onclick="event.stopPropagation();openEditProgressIndicator('${stu.id}','${c.Code}')" title="Edit mastery judgement" style="border:none;background:none;color:${mc};cursor:pointer;padding:0 1px;font-size:11px;line-height:1;margin-left:2px">✎</button></span>`;
+            }).filter(Boolean).join('')}
+          </div>
+        </div>` : '';
+
       return `<div>
         <div onclick="toggleICCoverageSection('${escapeHtml(descKey)}')"
           style="display:flex;align-items:center;gap:12px;padding:8px 16px 8px 32px;border-bottom:1px solid var(--border);min-height:44px;cursor:pointer;user-select:none"
@@ -1565,6 +1633,7 @@ function renderClassOverview(main) {
           ${renderCoverageBar(descCounts)}
         </div>
         ${icRows}
+        ${masteryJudgementsHtml}
       </div>`;
     }
 
@@ -1625,7 +1694,11 @@ function renderClassOverview(main) {
       </div>`;
     }).join('');
 
+    const readyPairs = getReadyForMasteryBanner();
+    const bannerHtml = renderMasteryBannerHtml(readyPairs);
+
     return `<div style="padding:16px">
+      ${bannerHtml}
       ${html || `<div class="empty-state" style="padding:40px"><div class="empty-icon">▦</div><div class="empty-title">No IC data to display</div></div>`}
       <div style="display:flex;gap:16px;padding:8px 0;flex-wrap:wrap">
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);align-self:center">Legend</div>
@@ -3861,6 +3934,304 @@ function showCoverageTooltip(event, code, descriptor, subject, strand) {
 function hideCoverageTooltip() {
   const tip = document.getElementById('cv-tooltip');
   if (tip) tip.remove();
+}
+
+// ════════════════════════════════════════════════════
+// ── MASTERY READY BANNER (Phase 3) ──
+// Surfaces when a student has ≥80% IC coverage for a descriptor
+// but no Progress record yet. Prompts the teacher to make a
+// formal descriptor-level mastery judgement.
+// ════════════════════════════════════════════════════
+
+function getReadyForMasteryBanner() {
+  const results = [];
+  const descriptorsWithDefaultICs = new Set(
+    state.instructionalComponents
+      .filter(ic => ic.ownerTier === 'system_default' && !ic.isArchived)
+      .map(ic => ic.homeDescriptorId)
+      .filter(Boolean)
+  );
+  state.students.forEach(student => {
+    descriptorsWithDefaultICs.forEach(descriptorId => {
+      if (state.progress.some(p => p.student_id === student.id && p.code === descriptorId)) return;
+      const systemICs = state.instructionalComponents.filter(
+        ic => ic.ownerTier === 'system_default' && !ic.isArchived && ic.homeDescriptorId === descriptorId
+      );
+      if (!systemICs.length) return;
+      const taughtCount = systemICs.filter(ic => {
+        const st = getTaughtICStatus(student.id, ic.id);
+        return st === 'taught' || st === 'got_it' || st === 'needs_review' || st === 'mastered' || st === 'not_yet';
+      }).length;
+      if (taughtCount / systemICs.length >= 0.8) {
+        const cd = state.curriculumCodes.find(c => c.Code === descriptorId);
+        results.push({
+          student,
+          descriptorId,
+          taughtCount,
+          total: systemICs.length,
+          strand: cd ? (cd.Strand || null) : null,
+          subject: cd ? (cd.Subject || null) : null,
+          descriptor: cd ? (cd.Descriptor || cd.Aspect || '') : ''
+        });
+      }
+    });
+  });
+  return results;
+}
+
+function renderMasteryBannerHtml(readyPairs) {
+  if (!readyPairs.length || masteryBannerDismissedSession) return '';
+  const count = readyPairs.length;
+  return `
+    <div id="mastery-ready-banner" style="border:1px solid var(--gold);background:var(--gold-dim);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px">Students ready for mastery review</div>
+        <div style="font-size:11px;color:var(--text3)">${count} student · descriptor ${count === 1 ? 'pair' : 'pairs'} ready for a formal mastery judgement</div>
+      </div>
+      <button onclick="openMasteryBannerModal()" style="padding:7px 16px;border-radius:5px;border:1px solid var(--gold);background:var(--gold-dim);color:var(--gold);font-size:12px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif;flex-shrink:0">Review now</button>
+      <button onclick="dismissMasteryBanner()" style="padding:7px 12px;border-radius:5px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;flex-shrink:0">Dismiss</button>
+    </div>`;
+}
+
+function dismissMasteryBanner() {
+  masteryBannerDismissedSession = true;
+  const banner = document.getElementById('mastery-ready-banner');
+  if (banner) banner.remove();
+}
+
+function openMasteryBannerModal(pairs) {
+  const readyPairs = pairs || getReadyForMasteryBanner();
+  if (!readyPairs.length) { toast('No students ready for review', 'info'); return; }
+
+  masteryPickerState = {
+    pairs: readyPairs,
+    selections: {},
+    checked: new Set(),
+    collapsedGroups: new Set(),
+  };
+
+  // Pre-populate with existing progress records (edit flow)
+  readyPairs.forEach(pair => {
+    const key = pair.student.id + '|' + pair.descriptorId;
+    const existing = state.progress.find(p => p.student_id === pair.student.id && p.code === pair.descriptorId);
+    if (existing) {
+      masteryPickerState.selections[key] = { mastery: existing.mastery, notReadyReason: null };
+    }
+  });
+
+  const existing = document.getElementById('mastery-banner-modal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'mastery-banner-modal';
+  overlay.className = 'modal-overlay';
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  _renderMasteryBannerModalContent();
+}
+
+function _renderMasteryBannerModalContent() {
+  const overlay = document.getElementById('mastery-banner-modal');
+  if (!overlay) return;
+
+  const { pairs, selections, checked, collapsedGroups } = masteryPickerState;
+
+  const groupMap = {};
+  pairs.forEach(pair => {
+    if (!groupMap[pair.descriptorId]) {
+      groupMap[pair.descriptorId] = { descriptor: pair.descriptor, strand: pair.strand, subject: pair.subject, pairs: [] };
+    }
+    groupMap[pair.descriptorId].pairs.push(pair);
+  });
+
+  const allKeys = pairs.map(p => p.student.id + '|' + p.descriptorId);
+  const allChecked = allKeys.length > 0 && allKeys.every(k => checked.has(k));
+  const anyChecked = allKeys.some(k => checked.has(k));
+  const judgedCount = Object.values(selections).filter(s => s && s.mastery && s.mastery !== 'not_ready').length;
+
+  const masteryConfig = {
+    'Achieved':   { col: 'var(--green)', bg: 'var(--green-dim)', label: 'Achieved'      },
+    'Extended':   { col: 'var(--teal)',  bg: 'var(--teal-dim)',  label: 'Extended'       },
+    'Developing': { col: 'var(--gold)',  bg: 'var(--gold-dim)',  label: 'Developing'     },
+    'not_ready':  { col: 'var(--text3)', bg: 'var(--surface-alt)', label: 'Not yet ready' },
+  };
+  const notReadyReasons = ['Needs more practice', 'Needs reteaching', 'Needs more evidence', '(no reason)'];
+
+  const groupsHtml = Object.entries(groupMap).map(([code, group]) => {
+    const isOpen = !collapsedGroups.has(code);
+    const col = subjectCol(group.subject || '');
+
+    const studentRows = isOpen ? group.pairs.map(pair => {
+      const key = pair.student.id + '|' + pair.descriptorId;
+      const sel = selections[key] || {};
+      const isChecked = checked.has(key);
+      const dot = dlGetStrandDot(pair.student.id, pair.strand);
+      const dotHtml = dot
+        ? `<div title="${escapeHtml(dot.title)}" style="width:8px;height:8px;border-radius:50%;background:${dot.colour};flex-shrink:0;margin-top:4px"></div>`
+        : `<div style="width:8px;height:8px;border-radius:50%;background:var(--border2);flex-shrink:0;margin-top:4px" title="No prior IC outcome data for this strand"></div>`;
+
+      const masteryButtons = Object.entries(masteryConfig).map(([level, cfg]) => {
+        const isActive = sel.mastery === level;
+        return `<button onclick="masteryBannerSelectMastery('${key}','${level}')" style="padding:4px 10px;border-radius:4px;border:1px solid ${isActive ? cfg.col : 'var(--border2)'};background:${isActive ? cfg.bg : 'none'};color:${isActive ? cfg.col : 'var(--text3)'};font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;white-space:nowrap">${cfg.label}</button>`;
+      }).join('');
+
+      const notReadyHtml = sel.mastery === 'not_ready' ? `
+        <div style="display:flex;flex-wrap:wrap;gap:4px;padding:5px 0 0 0">
+          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);align-self:center;margin-right:2px">Reason:</span>
+          ${notReadyReasons.map(r => {
+            const isActive = sel.notReadyReason === r;
+            return `<button onclick="masteryBannerSelectReason('${key}','${r.replace(/'/g, "\\'")}') " style="padding:2px 8px;border-radius:4px;border:1px solid ${isActive ? 'var(--text2)' : 'var(--border2)'};background:${isActive ? 'var(--surface-alt)' : 'none'};color:${isActive ? 'var(--text2)' : 'var(--text3)'};font-size:10px;cursor:pointer">${escapeHtml(r)}</button>`;
+          }).join('')}
+        </div>` : '';
+
+      return `<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)">
+        <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="masteryBannerToggleCheck('${key}')" style="margin-top:4px;flex-shrink:0;cursor:pointer;accent-color:var(--blue)">
+        ${dotHtml}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:5px">${escapeHtml(pair.student.first_name)} <span style="font-weight:400;color:var(--text3)">${escapeHtml(pair.student.last_name)}</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">${masteryButtons}</div>
+          ${notReadyHtml}
+        </div>
+      </div>`;
+    }).join('') : '';
+
+    return `<div style="border:1px solid var(--border);border-radius:6px;margin-bottom:8px;overflow:hidden">
+      <div onclick="masteryBannerToggleGroup('${code}')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--surface-alt);user-select:none">
+        <span style="font-size:10px;color:var(--text3);width:12px;flex-shrink:0">${isOpen ? '▾' : '▸'}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:${col};flex-shrink:0">${escapeHtml(code)}</span>
+        <span style="font-size:11px;color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(group.descriptor)}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);flex-shrink:0;white-space:nowrap">${group.pairs.length} student${group.pairs.length !== 1 ? 's' : ''}</span>
+      </div>
+      ${isOpen ? `<div>${studentRows}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div class="modal" style="width:min(95vw,680px);max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-head">
+        <div class="modal-title">Mastery Review</div>
+        <button class="modal-close" onclick="document.getElementById('mastery-banner-modal')?.remove()">✕</button>
+      </div>
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text3)">
+          <input type="checkbox" ${allChecked ? 'checked' : ''} onchange="masteryBannerToggleAll()" style="cursor:pointer;accent-color:var(--blue)">
+          ${allChecked ? 'Deselect all' : 'Select all'}
+        </label>
+        ${anyChecked ? `
+          <span style="width:1px;height:14px;background:var(--border2)"></span>
+          <button onclick="masteryBannerBulkSet('Achieved')" style="padding:4px 10px;border-radius:4px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-size:11px;cursor:pointer;white-space:nowrap">Mark Achieved</button>
+          <button onclick="masteryBannerBulkSet('Developing')" style="padding:4px 10px;border-radius:4px;border:1px solid var(--gold);background:var(--gold-dim);color:var(--gold);font-size:11px;cursor:pointer;white-space:nowrap">Mark Developing</button>
+        ` : ''}
+        <span style="margin-left:auto;font-size:11px;color:var(--text3)">${judgedCount} of ${pairs.length} judged</span>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding:12px 16px">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:12px;padding:8px 12px;background:var(--surface-alt);border-radius:5px;border:1px solid var(--border)">
+          Select a mastery level for each student. <strong>Not yet ready</strong> means no Progress record is written — the student stays on the banner until a formal call is made.
+        </div>
+        ${groupsHtml}
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="document.getElementById('mastery-banner-modal')?.remove()">Cancel</button>
+        <button class="btn btn-primary" ${judgedCount === 0 ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''} onclick="submitMasteryBanner()">Save ${judgedCount > 0 ? judgedCount + ' judgement' + (judgedCount !== 1 ? 's' : '') : 'judgements'}</button>
+      </div>
+    </div>
+  `;
+}
+
+function masteryBannerSelectMastery(key, level) {
+  if (!masteryPickerState.selections[key]) masteryPickerState.selections[key] = { mastery: null, notReadyReason: null };
+  masteryPickerState.selections[key].mastery = level;
+  if (level !== 'not_ready') masteryPickerState.selections[key].notReadyReason = null;
+  _renderMasteryBannerModalContent();
+}
+
+function masteryBannerToggleCheck(key) {
+  if (masteryPickerState.checked.has(key)) masteryPickerState.checked.delete(key);
+  else masteryPickerState.checked.add(key);
+  _renderMasteryBannerModalContent();
+}
+
+function masteryBannerToggleGroup(code) {
+  if (masteryPickerState.collapsedGroups.has(code)) masteryPickerState.collapsedGroups.delete(code);
+  else masteryPickerState.collapsedGroups.add(code);
+  _renderMasteryBannerModalContent();
+}
+
+function masteryBannerSelectReason(key, reason) {
+  if (!masteryPickerState.selections[key]) masteryPickerState.selections[key] = { mastery: 'not_ready', notReadyReason: null };
+  masteryPickerState.selections[key].notReadyReason = reason;
+  _renderMasteryBannerModalContent();
+}
+
+function masteryBannerBulkSet(mastery) {
+  masteryPickerState.checked.forEach(key => {
+    if (!masteryPickerState.selections[key]) masteryPickerState.selections[key] = { mastery: null, notReadyReason: null };
+    masteryPickerState.selections[key].mastery = mastery;
+    masteryPickerState.selections[key].notReadyReason = null;
+  });
+  _renderMasteryBannerModalContent();
+}
+
+function masteryBannerToggleAll() {
+  const allKeys = masteryPickerState.pairs.map(p => p.student.id + '|' + p.descriptorId);
+  const allChecked = allKeys.every(k => masteryPickerState.checked.has(k));
+  if (allChecked) allKeys.forEach(k => masteryPickerState.checked.delete(k));
+  else allKeys.forEach(k => masteryPickerState.checked.add(k));
+  _renderMasteryBannerModalContent();
+}
+
+async function submitMasteryBanner() {
+  const { pairs, selections } = masteryPickerState;
+  const today = new Date().toISOString().split('T')[0];
+
+  const toSave = pairs
+    .filter(pair => {
+      const key = pair.student.id + '|' + pair.descriptorId;
+      const sel = selections[key];
+      return sel && sel.mastery && sel.mastery !== 'not_ready';
+    })
+    .map(pair => {
+      const key = pair.student.id + '|' + pair.descriptorId;
+      return {
+        student_id: pair.student.id,
+        content_descriptor_code: pair.descriptorId,
+        mastery_level: selections[key].mastery,
+        date_assessed: today,
+        teacher_notes: ''
+      };
+    });
+
+  if (!toSave.length) { toast('No judgements to save', 'info'); return; }
+
+  const btn = document.querySelector('#mastery-banner-modal .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    const savedCount = await saveProgressBatch(toSave);
+    document.getElementById('mastery-banner-modal')?.remove();
+    toast(`${savedCount} mastery judgement${savedCount !== 1 ? 's' : ''} saved`, 'success');
+    renderView();
+  } catch(e) {
+    console.error('submitMasteryBanner error:', e);
+    toast('Could not save judgements', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save judgements'; }
+  }
+}
+
+function openEditProgressIndicator(studentId, descriptorId) {
+  const student = state.students.find(s => s.id === studentId);
+  if (!student) return;
+  const cd = state.curriculumCodes.find(c => c.Code === descriptorId);
+  openMasteryBannerModal([{
+    student,
+    descriptorId,
+    taughtCount: 0,
+    total: 0,
+    strand: cd ? (cd.Strand || null) : null,
+    subject: cd ? (cd.Subject || null) : null,
+    descriptor: cd ? (cd.Descriptor || cd.Aspect || '') : ''
+  }]);
 }
 
 // ════════════════════════════════════════════════════
