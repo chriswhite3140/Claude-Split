@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.55 - Stub link always visible in per-descriptor IC picker (text link, not conditional button); removed from AI suggester panel
  * v1.12.54 - Stub IC creation: teacher_stub ownerTier, per-descriptor IC search in wizard step 2, stub modal, 80% gate exclusion, Draft pill, stub banner, nav badge
  * v1.12.52 - Phase 3: mastery ready banner and picker modal in IC Coverage view
  * v1.12.51 - IC Coverage legend updated: Mastered → Got it, Not yet → Needs review
@@ -58,7 +59,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.54';
+const APP_VERSION = '1.12.55';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -6059,26 +6060,17 @@ function buildDlCodeListHtml(codes) {
   }).join('');
 }
 
-function buildDlICPanel(code) {
+function buildDlICChipsHtml(code, q) {
   const allICs = getICsForDescriptor(code);
-  const q = dlStep2ICSearch.toLowerCase().trim();
   const filtered = q
     ? allICs.filter(ic => ic.name.toLowerCase().includes(q) || (ic.description||'').toLowerCase().includes(q))
     : allICs;
-  const showStubButton = q.length > 0 && filtered.length === 0;
 
-  let chipsHtml;
-  if (allICs.length === 0 && !q) {
-    chipsHtml = `<div style="font-size:11px;color:var(--text3);text-align:center;padding:8px 0">No ICs loaded for this descriptor yet</div>`;
-  } else if (showStubButton) {
-    chipsHtml = `
-      <div style="font-size:11px;color:var(--text3);text-align:center;padding:6px 0 2px">No ICs match your search</div>
-      <button onclick="openStubICModal('${escapeHtml(code)}')"
-        style="width:100%;margin-top:6px;padding:7px 12px;border-radius:5px;border:1px dashed var(--rust);background:var(--rust-dim);color:var(--rust);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;text-align:center">
-        Can't find the IC? Create a draft.
-      </button>`;
+  let listHtml;
+  if (filtered.length === 0) {
+    listHtml = `<div style="font-size:11px;color:var(--text3);text-align:center;padding:6px 0">${q ? 'No ICs match your search' : 'No ICs loaded for this descriptor yet'}</div>`;
   } else {
-    chipsHtml = filtered.map(ic => {
+    listHtml = filtered.map(ic => {
       const sel = (dlState.selectedICs || []).includes(ic.id);
       const isDraft = ic.ownerTier === 'teacher_stub';
       const col = sel ? 'var(--green)' : 'var(--blue)';
@@ -6098,6 +6090,17 @@ function buildDlICPanel(code) {
     }).join('');
   }
 
+  const stubLink = `<div style="text-align:center;padding-top:6px;${filtered.length > 0 ? 'margin-top:2px;border-top:1px solid var(--border);' : ''}">
+    <button onclick="openStubICModal('${escapeHtml(code)}')"
+      style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;text-decoration:underline;padding:3px 0;opacity:0.8">
+      Can't find the IC? Create a draft.
+    </button>
+  </div>`;
+
+  return listHtml + stubLink;
+}
+
+function buildDlICPanel(code) {
   return `
     <div id="dl-ic-panel-${code}" style="padding:8px 12px 10px;background:var(--surface-alt);border-top:1px solid var(--border)">
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:7px">ICs for ${code}</div>
@@ -6107,7 +6110,7 @@ function buildDlICPanel(code) {
           oninput="dlUpdateICSearch(this.value,'${escapeHtml(code)}')"
           style="width:100%;padding:5px 8px 5px 26px;background:var(--surface);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:11px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif">
       </div>
-      <div id="dl-ic-chips-${code}">${chipsHtml}</div>
+      <div id="dl-ic-chips-${code}">${buildDlICChipsHtml(code, dlStep2ICSearch.toLowerCase().trim())}</div>
     </div>`;
 }
 
@@ -6125,44 +6128,7 @@ function dlUpdateICSearch(val, code) {
   dlStep2ICSearch = val;
   const container = document.getElementById('dl-ic-chips-' + code);
   if (!container) return;
-  const allICs = getICsForDescriptor(code);
-  const q = val.toLowerCase().trim();
-  const filtered = q
-    ? allICs.filter(ic => ic.name.toLowerCase().includes(q) || (ic.description||'').toLowerCase().includes(q))
-    : allICs;
-  const showStubButton = q.length > 0 && filtered.length === 0;
-
-  let chipsHtml;
-  if (allICs.length === 0 && !q) {
-    chipsHtml = `<div style="font-size:11px;color:var(--text3);text-align:center;padding:8px 0">No ICs loaded for this descriptor yet</div>`;
-  } else if (showStubButton) {
-    chipsHtml = `
-      <div style="font-size:11px;color:var(--text3);text-align:center;padding:6px 0 2px">No ICs match your search</div>
-      <button onclick="openStubICModal('${escapeHtml(code)}')"
-        style="width:100%;margin-top:6px;padding:7px 12px;border-radius:5px;border:1px dashed var(--rust);background:var(--rust-dim);color:var(--rust);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;text-align:center">
-        Can't find the IC? Create a draft.
-      </button>`;
-  } else {
-    chipsHtml = filtered.map(ic => {
-      const sel = (dlState.selectedICs || []).includes(ic.id);
-      const isDraft = ic.ownerTier === 'teacher_stub';
-      const col = sel ? 'var(--green)' : 'var(--blue)';
-      return `<button onclick="dlAddAISuggestedIC('${ic.id}')"
-        style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:5px;border:1.5px solid ${sel?'var(--green)':'var(--border2)'};background:${sel?'var(--green-dim)':'var(--surface)'};text-align:left;width:100%;cursor:pointer;margin-bottom:4px;transition:all 0.12s">
-        <div style="width:16px;height:16px;border-radius:50%;border:2px solid ${col};background:${sel?col:'none'};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;color:${sel?'var(--primary-contrast)':col}">
-          ${sel ? '✓' : '+'}
-        </div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:11px;font-weight:600;color:${sel?'var(--green)':'var(--text-muted)'};line-height:1.3">
-            ${escapeHtml(ic.name)}
-            ${isDraft ? `<span style="font-family:'DM Mono',monospace;font-size:8px;padding:1px 5px;border-radius:8px;background:var(--rust-dim);color:var(--rust);border:1px solid var(--rust);margin-left:4px;vertical-align:middle">Draft</span>` : ''}
-          </div>
-          ${ic.difficultyStage ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${ic.difficultyStage}</div>` : ''}
-        </div>
-      </button>`;
-    }).join('');
-  }
-  container.innerHTML = chipsHtml;
+  container.innerHTML = buildDlICChipsHtml(code, val.toLowerCase().trim());
 }
 
 function openStubICModal(descriptorId) {
