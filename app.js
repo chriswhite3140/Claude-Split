@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.56 - Stub modal: optional descriptorCode param, descriptor selector first field (searchable datalist), name auto-fills from descriptor, locked when pre-filled; AI suggester adds stub link below results
  * v1.12.55 - Stub link always visible in per-descriptor IC picker (text link, not conditional button); removed from AI suggester panel
  * v1.12.54 - Stub IC creation: teacher_stub ownerTier, per-descriptor IC search in wizard step 2, stub modal, 80% gate exclusion, Draft pill, stub banner, nav badge
  * v1.12.52 - Phase 3: mastery ready banner and picker modal in IC Coverage view
@@ -59,7 +60,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.55';
+const APP_VERSION = '1.12.56';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -6131,12 +6132,18 @@ function dlUpdateICSearch(val, code) {
   container.innerHTML = buildDlICChipsHtml(code, val.toLowerCase().trim());
 }
 
-function openStubICModal(descriptorId) {
-  const cd = state.curriculumCodes.find(c => c.Code === descriptorId);
-  const defaultName = cd ? (cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80) : descriptorId;
+function openStubICModal(descriptorCode) {
+  const locked = !!descriptorCode;
+  const cd = locked ? state.curriculumCodes.find(c => c.Code === descriptorCode) : null;
+  const defaultName = cd ? (cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80) : '';
+  const descriptorDisplayValue = cd ? `${cd.Code} - ${(cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80)}` : '';
 
   const existing = document.getElementById('stub-ic-overlay');
   if (existing) existing.remove();
+
+  const datalistOptions = state.curriculumCodes
+    .map(c => `<option value="${escapeHtml(c.Code + ' - ' + (c.Descriptor || c.Aspect || c.Code).slice(0, 80))}">`)
+    .join('');
 
   const overlay = document.createElement('div');
   overlay.id = 'stub-ic-overlay';
@@ -6146,14 +6153,27 @@ function openStubICModal(descriptorId) {
       <div style="padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between">
         <div>
           <div style="font-family:'Fraunces',serif;font-size:15px;margin-bottom:4px">Create Draft IC</div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${escapeHtml(descriptorId)}</div>
+          ${locked ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${escapeHtml(descriptorCode)}</div>` : ''}
         </div>
         <button onclick="document.getElementById('stub-ic-overlay').remove()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px;line-height:1">✕</button>
       </div>
       <div style="padding:18px 20px">
         <div style="margin-bottom:14px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Descriptor <span style="color:var(--rust)">*</span></label>
+          <input id="stub-ic-descriptor" list="stub-descriptor-list"
+            value="${escapeHtml(descriptorDisplayValue)}"
+            placeholder="Search descriptors…"
+            ${locked ? 'readonly' : ''}
+            oninput="stubDescriptorChanged()"
+            onchange="stubDescriptorChanged()"
+            style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid ${locked ? 'var(--border)' : 'var(--border2)'};border-radius:6px;color:${locked ? 'var(--text3)' : 'var(--text)'};font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif;${locked ? 'cursor:default;' : ''}">
+          <datalist id="stub-descriptor-list">${datalistOptions}</datalist>
+        </div>
+        <div style="margin-bottom:14px">
           <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Name <span style="color:var(--rust)">*</span></label>
           <input id="stub-ic-name" value="${escapeHtml(defaultName)}"
+            data-auto="${defaultName ? '1' : '0'}"
+            oninput="this.dataset.auto='0'"
             style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif">
         </div>
         <div style="margin-bottom:18px">
@@ -6166,7 +6186,7 @@ function openStubICModal(descriptorId) {
             style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:13px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
             Cancel
           </button>
-          <button onclick="saveStubIC('${escapeHtml(descriptorId)}')"
+          <button onclick="saveStubIC()"
             style="padding:8px 18px;border-radius:6px;border:none;background:var(--blue);color:var(--primary-contrast);font-size:13px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif">
             Save and add to lesson
           </button>
@@ -6174,18 +6194,42 @@ function openStubICModal(descriptorId) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  setTimeout(() => document.getElementById('stub-ic-name')?.select(), 60);
+  setTimeout(() => {
+    if (locked) {
+      document.getElementById('stub-ic-name')?.select();
+    } else {
+      document.getElementById('stub-ic-descriptor')?.focus();
+    }
+  }, 60);
 }
 
-function saveStubIC(descriptorId) {
+function stubDescriptorChanged() {
+  const descriptorInput = document.getElementById('stub-ic-descriptor');
+  const nameInput = document.getElementById('stub-ic-name');
+  if (!descriptorInput || !nameInput) return;
+  const code = descriptorInput.value.split(' - ')[0].trim();
+  const cd = state.curriculumCodes.find(c => c.Code === code);
+  if (cd && nameInput.dataset.auto !== '0') {
+    nameInput.value = (cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80);
+    nameInput.dataset.auto = '1';
+  }
+}
+
+function saveStubIC() {
+  const descriptorInput = document.getElementById('stub-ic-descriptor');
   const nameEl = document.getElementById('stub-ic-name');
   const noteEl = document.getElementById('stub-ic-note');
+
+  const code = (descriptorInput ? descriptorInput.value.trim() : '').split(' - ')[0].trim();
+  const cd = state.curriculumCodes.find(c => c.Code === code);
+  if (!cd) { toast('Please select a descriptor', 'error'); descriptorInput?.focus(); return; }
+
   const name = nameEl ? nameEl.value.trim() : '';
   if (!name) { toast('Name is required', 'error'); nameEl?.focus(); return; }
   const note = noteEl ? noteEl.value.trim() : '';
 
   const newIC = createIC({
-    homeDescriptorId: descriptorId,
+    homeDescriptorId: code,
     name,
     description: note,
     note,
@@ -6205,7 +6249,6 @@ function saveStubIC(descriptorId) {
   const overlay = document.getElementById('stub-ic-overlay');
   if (overlay) overlay.remove();
 
-  // Collapse the IC panel and refresh the code list
   dlStep2ICSearch = '';
   dlFilterCodes();
   const chips = document.getElementById('dl-selected-chips');
@@ -6484,7 +6527,13 @@ Return up to 10 ICs that best match the lesson description.`;
       <span style="font-size:11px;color:var(--text3);font-style:italic;flex:1">${reasoning}</span>
     </div>
     ${groupedHtml}
-    <div style="font-size:10px;color:var(--text3);margin-top:6px">Click any IC to add it to your session — selected ICs unlock the IC Outcomes step</div>`;
+    <div style="font-size:10px;color:var(--text3);margin-top:6px">Click any IC to add it to your session — selected ICs unlock the IC Outcomes step</div>
+    <div style="text-align:center;padding-top:8px;margin-top:4px;border-top:1px solid var(--border)">
+      <button onclick="openStubICModal()"
+        style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;text-decoration:underline;padding:3px 0;opacity:0.8">
+        Can't find the IC? Create a draft.
+      </button>
+    </div>`;
 
   btn.textContent = 'Suggest ICs'; btn.disabled = false;
 }
