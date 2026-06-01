@@ -57,7 +57,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.52';
+const APP_VERSION = '1.12.53';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -4048,7 +4048,8 @@ function _renderMasteryBannerModalContent() {
   const allKeys = pairs.map(p => p.student.id + '|' + p.descriptorId);
   const allChecked = allKeys.length > 0 && allKeys.every(k => checked.has(k));
   const anyChecked = allKeys.some(k => checked.has(k));
-  const judgedCount = Object.values(selections).filter(s => s && s.mastery && s.mastery !== 'not_ready').length;
+  const judgedCount = Object.values(selections).filter(s => s && s.mastery).length;
+  const toWriteCount = Object.values(selections).filter(s => s && s.mastery && s.mastery !== 'not_ready').length;
 
   const masteryConfig = {
     'Achieved':   { col: 'var(--green)', bg: 'var(--green-dim)', label: 'Achieved'      },
@@ -4133,7 +4134,7 @@ function _renderMasteryBannerModalContent() {
       </div>
       <div class="modal-foot">
         <button class="btn" onclick="document.getElementById('mastery-banner-modal')?.remove()">Cancel</button>
-        <button class="btn btn-primary" ${judgedCount === 0 ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''} onclick="submitMasteryBanner()">Save ${judgedCount > 0 ? judgedCount + ' judgement' + (judgedCount !== 1 ? 's' : '') : 'judgements'}</button>
+        <button class="btn btn-primary" ${judgedCount === 0 ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''} onclick="submitMasteryBanner()">${toWriteCount > 0 ? 'Save ' + toWriteCount + ' judgement' + (toWriteCount !== 1 ? 's' : '') : 'Confirm'}</button>
       </div>
     </div>
   `;
@@ -4202,7 +4203,11 @@ async function submitMasteryBanner() {
       };
     });
 
-  if (!toSave.length) { toast('No judgements to save', 'info'); return; }
+  if (!toSave.length) {
+    document.getElementById('mastery-banner-modal')?.remove();
+    renderView();
+    return;
+  }
 
   const btn = document.querySelector('#mastery-banner-modal .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
