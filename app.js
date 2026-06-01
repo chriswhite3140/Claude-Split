@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.57 - Stub modal: subject + year level selectors before descriptor, descriptor datalist filtered by subject+year, defaults from wizard context, locked state when descriptor pre-filled
  * v1.12.56 - Stub modal: optional descriptorCode param, descriptor selector first field (searchable datalist), name auto-fills from descriptor, locked when pre-filled; AI suggester adds stub link below results
  * v1.12.55 - Stub link always visible in per-descriptor IC picker (text link, not conditional button); removed from AI suggester panel
  * v1.12.54 - Stub IC creation: teacher_stub ownerTier, per-descriptor IC search in wizard step 2, stub modal, 80% gate exclusion, Draft pill, stub banner, nav badge
@@ -60,7 +61,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.56';
+const APP_VERSION = '1.12.57';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -6132,24 +6133,56 @@ function dlUpdateICSearch(val, code) {
   container.innerHTML = buildDlICChipsHtml(code, val.toLowerCase().trim());
 }
 
+function getStubDefaultYear() {
+  const presentStudents = state.students.filter(s => !dlState.absentIds?.has(s.id));
+  const target = presentStudents.length ? presentStudents : state.students;
+  if (!target.length) return '';
+  const freq = {};
+  target.forEach(s => {
+    const y = YLM[normaliseYear(s.year_level)] || s.year_level || '';
+    if (y) freq[y] = (freq[y] || 0) + 1;
+  });
+  return Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+}
+
+function getStubYearLevels(subject) {
+  return [...new Set(
+    state.curriculumCodes.filter(c => c.Subject === subject).map(c => c['Year Level']).filter(Boolean)
+  )].sort();
+}
+
+function getStubDescriptorOptions(subject, year) {
+  return state.curriculumCodes
+    .filter(c => c.Subject === subject && c['Year Level'] === year)
+    .map(c => `<option value="${escapeHtml(c.Code + ' - ' + (c.Descriptor || c.Aspect || c.Code).slice(0, 80))}">`)
+    .join('');
+}
+
 function openStubICModal(descriptorCode) {
   const locked = !!descriptorCode;
   const cd = locked ? state.curriculumCodes.find(c => c.Code === descriptorCode) : null;
+
+  const allSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
+  const defaultSubject = locked ? (cd?.Subject || '') : (dlState.selectedSubject || allSubjects[0] || '');
+  const subjectDisabled = locked || allSubjects.length <= 1;
+
+  const defaultYear = locked ? (cd?.['Year Level'] || '') : getStubDefaultYear();
+  const yearLevels = defaultSubject ? getStubYearLevels(defaultSubject) : [];
+
   const defaultName = cd ? (cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80) : '';
-  const descriptorDisplayValue = cd ? `${cd.Code} - ${(cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80)}` : '';
+  const descriptorDisplayValue = cd ? `${cd.Code} - ${defaultName}` : '';
+  const initialDescriptorOptions = (defaultSubject && defaultYear) ? getStubDescriptorOptions(defaultSubject, defaultYear) : '';
 
   const existing = document.getElementById('stub-ic-overlay');
   if (existing) existing.remove();
 
-  const datalistOptions = state.curriculumCodes
-    .map(c => `<option value="${escapeHtml(c.Code + ' - ' + (c.Descriptor || c.Aspect || c.Code).slice(0, 80))}">`)
-    .join('');
+  const selStyle = `width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif`;
 
   const overlay = document.createElement('div');
   overlay.id = 'stub-ic-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:200;animation:fadeIn 0.15s ease';
   overlay.innerHTML = `
-    <div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;width:min(95vw,480px);box-shadow:0 20px 50px rgba(0,0,0,0.5);animation:slideUp 0.2s ease">
+    <div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;width:min(95vw,480px);max-height:90vh;overflow-y:auto;box-shadow:0 20px 50px rgba(0,0,0,0.5);animation:slideUp 0.2s ease">
       <div style="padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between">
         <div>
           <div style="font-family:'Fraunces',serif;font-size:15px;margin-bottom:4px">Create Draft IC</div>
@@ -6159,6 +6192,22 @@ function openStubICModal(descriptorCode) {
       </div>
       <div style="padding:18px 20px">
         <div style="margin-bottom:14px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Subject <span style="color:var(--rust)">*</span></label>
+          <select id="stub-ic-subject" onchange="stubSubjectChanged()" ${subjectDisabled ? 'disabled' : ''}
+            style="${selStyle}${subjectDisabled ? ';opacity:0.65;cursor:default' : ''}">
+            <option value="">— Select subject —</option>
+            ${allSubjects.map(s => `<option value="${escapeHtml(s)}"${s === defaultSubject ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Year Level <span style="color:var(--rust)">*</span></label>
+          <select id="stub-ic-year" onchange="stubYearChanged()" ${locked ? 'disabled' : ''}
+            style="${selStyle}${locked ? ';opacity:0.65;cursor:default' : ''}">
+            <option value="">— Select year level —</option>
+            ${yearLevels.map(y => `<option value="${escapeHtml(y)}"${y === defaultYear ? ' selected' : ''}>${escapeHtml(y)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-bottom:14px">
           <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Descriptor <span style="color:var(--rust)">*</span></label>
           <input id="stub-ic-descriptor" list="stub-descriptor-list"
             value="${escapeHtml(descriptorDisplayValue)}"
@@ -6167,7 +6216,7 @@ function openStubICModal(descriptorCode) {
             oninput="stubDescriptorChanged()"
             onchange="stubDescriptorChanged()"
             style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid ${locked ? 'var(--border)' : 'var(--border2)'};border-radius:6px;color:${locked ? 'var(--text3)' : 'var(--text)'};font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif;${locked ? 'cursor:default;' : ''}">
-          <datalist id="stub-descriptor-list">${datalistOptions}</datalist>
+          <datalist id="stub-descriptor-list">${initialDescriptorOptions}</datalist>
         </div>
         <div style="margin-bottom:14px">
           <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Name <span style="color:var(--rust)">*</span></label>
@@ -6197,10 +6246,38 @@ function openStubICModal(descriptorCode) {
   setTimeout(() => {
     if (locked) {
       document.getElementById('stub-ic-name')?.select();
+    } else if (!defaultSubject) {
+      document.getElementById('stub-ic-subject')?.focus();
+    } else if (!defaultYear) {
+      document.getElementById('stub-ic-year')?.focus();
     } else {
       document.getElementById('stub-ic-descriptor')?.focus();
     }
   }, 60);
+}
+
+function stubSubjectChanged() {
+  const subjectEl = document.getElementById('stub-ic-subject');
+  const yearEl = document.getElementById('stub-ic-year');
+  const descriptorEl = document.getElementById('stub-ic-descriptor');
+  const datalist = document.getElementById('stub-descriptor-list');
+  const subject = subjectEl?.value || '';
+  const yearLevels = subject ? getStubYearLevels(subject) : [];
+  if (yearEl) yearEl.innerHTML = `<option value="">— Select year level —</option>` +
+    yearLevels.map(y => `<option value="${escapeHtml(y)}">${escapeHtml(y)}</option>`).join('');
+  if (descriptorEl) descriptorEl.value = '';
+  if (datalist) datalist.innerHTML = '';
+}
+
+function stubYearChanged() {
+  const subjectEl = document.getElementById('stub-ic-subject');
+  const yearEl = document.getElementById('stub-ic-year');
+  const descriptorEl = document.getElementById('stub-ic-descriptor');
+  const datalist = document.getElementById('stub-descriptor-list');
+  const subject = subjectEl?.value || '';
+  const year = yearEl?.value || '';
+  if (descriptorEl) descriptorEl.value = '';
+  if (datalist) datalist.innerHTML = (subject && year) ? getStubDescriptorOptions(subject, year) : '';
 }
 
 function stubDescriptorChanged() {
@@ -6216,9 +6293,14 @@ function stubDescriptorChanged() {
 }
 
 function saveStubIC() {
+  const subjectEl = document.getElementById('stub-ic-subject');
+  const yearEl = document.getElementById('stub-ic-year');
   const descriptorInput = document.getElementById('stub-ic-descriptor');
   const nameEl = document.getElementById('stub-ic-name');
   const noteEl = document.getElementById('stub-ic-note');
+
+  if (!subjectEl?.value) { toast('Please select a subject', 'error'); subjectEl?.focus(); return; }
+  if (!yearEl?.value) { toast('Please select a year level', 'error'); yearEl?.focus(); return; }
 
   const code = (descriptorInput ? descriptorInput.value.trim() : '').split(' - ')[0].trim();
   const cd = state.curriculumCodes.find(c => c.Code === code);
