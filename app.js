@@ -10,6 +10,11 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.58 - Stub IC Sheets persistence: loadStubICsFromSheets() at init merges persisted stubs (stub wins on ID collision); saveStubIC fire-and-forget POSTs to Apps Script after push
+ * v1.12.57 - Stub modal: subject + year level selectors before descriptor, descriptor datalist filtered by subject+year, defaults from wizard context, locked state when descriptor pre-filled
+ * v1.12.56 - Stub modal: optional descriptorCode param, descriptor selector first field (searchable datalist), name auto-fills from descriptor, locked when pre-filled; AI suggester adds stub link below results
+ * v1.12.55 - Stub link always visible in per-descriptor IC picker (text link, not conditional button); removed from AI suggester panel
+ * v1.12.54 - Stub IC creation: teacher_stub ownerTier, per-descriptor IC search in wizard step 2, stub modal, 80% gate exclusion, Draft pill, stub banner, nav badge
  * v1.12.52 - Phase 3: mastery ready banner and picker modal in IC Coverage view
  * v1.12.51 - IC Coverage legend updated: Mastered → Got it, Not yet → Needs review
  * v1.12.50 - Retire mastered from all IC Coverage comments — two inline comments still referenced mastered/not_yet; updated to gotIt/needsReview per Phase 2 spec
@@ -57,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.53';
+const APP_VERSION = '1.12.58';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -392,6 +397,34 @@ async function loadTaughtLog() {
       })).filter(t => t.id);
     }
   } catch(e) { console.warn('TaughtLog not loaded:', e); }
+}
+
+async function loadStubICsFromSheets() {
+  const resp = await fetch(API_URL + '?action=loadStubICs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ action: 'loadStubICs' })
+  });
+  const result = await resp.json();
+  if (!result || !Array.isArray(result.stubs) || !result.stubs.length) return;
+  result.stubs.forEach(stub => {
+    if (!stub.icId || !stub.name || !stub.homeDescriptorId) return;
+    const ic = createIC({
+      id: stub.icId,
+      ownerTier: stub.ownerTier || 'teacher_stub',
+      icReadinessStatus: stub.icReadinessStatus || 'draft',
+      homeDescriptorId: stub.homeDescriptorId,
+      name: stub.name,
+      description: stub.note || '',
+      note: stub.note || '',
+      sequenceOrder: 999,
+      createdAt: stub.createdAt || new Date().toISOString(),
+    });
+    const idx = state.instructionalComponents.findIndex(x => x.id === stub.icId);
+    if (idx >= 0) state.instructionalComponents[idx] = ic;
+    else state.instructionalComponents.push(ic);
+  });
+  console.log(`[StubIC] Loaded ${result.stubs.length} stub(s) from Sheets`);
 }
 
 async function loadStandardsJudgments() {
@@ -2387,6 +2420,9 @@ function openCodeDetail(code, studentId) {
   const ics = getICsForDescriptor(code);
   const descriptorType = cd.descriptorType || 'knowledge';
   const icCountRange = descriptorType === 'skill' ? '3–6' : '6–10';
+  const stubsForDescriptor = state.instructionalComponents.filter(ic =>
+    ic.ownerTier === 'teacher_stub' && ic.icReadinessStatus === 'draft' && ic.homeDescriptorId === code
+  ).length;
 
   const existing = document.getElementById('code-detail-panel');
   if (existing) existing.remove();
@@ -2460,6 +2496,7 @@ function openCodeDetail(code, studentId) {
           <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3)">Instructional Components</span>
           <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;background:var(--surface-alt);color:var(--text3)">${ics.length} ICs</span>
           <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;background:${descriptorType === 'skill' ? 'var(--teal-dim)' : 'var(--blue-dim)'};color:${descriptorType === 'skill' ? 'var(--teal)' : 'var(--blue)'}">${descriptorType}</span>
+          ${stubsForDescriptor > 0 ? `<span style="font-family:'DM Mono',monospace;font-size:8px;padding:1px 6px;border-radius:8px;background:var(--rust-dim);color:var(--rust);border:1px solid var(--rust)">${stubsForDescriptor} draft${stubsForDescriptor !== 1 ? 's' : ''}</span>` : ''}
         </div>
         <div style="font-size:11px;color:var(--text3);margin-bottom:12px">${icCountRange} ICs for ${descriptorType}</div>
         ${ics.length === 0
@@ -2474,11 +2511,13 @@ function openCodeDetail(code, studentId) {
                 : ic.difficultyStage === 'late'
                   ? 'background:var(--rust-dim);color:var(--rust)'
                   : 'background:var(--gold-dim);color:var(--gold)';
-              const tierLabel = ic.ownerTier === 'teacher_copy'
-                ? 'teacher copy'
-                : ic.ownerTier === 'teacher_original'
-                  ? 'teacher original'
-                  : 'system default';
+              const tierLabel = ic.ownerTier === 'teacher_stub'
+                ? 'draft stub'
+                : ic.ownerTier === 'teacher_copy'
+                  ? 'teacher copy'
+                  : ic.ownerTier === 'teacher_original'
+                    ? 'teacher original'
+                    : 'system default';
               const icStatus = studentId ? getTaughtICStatus(studentId, ic.id) : null;
               const statusPill = studentId ? (() => {
                 const statusMap = {
@@ -2508,6 +2547,7 @@ function openCodeDetail(code, studentId) {
                 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">
                   <div style="font-size:12px;font-weight:600;color:var(--text-muted);line-height:1.4">
                     <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-right:5px">${ic.sequenceOrder}.</span>${ic.name}
+                    ${ic.ownerTier === 'teacher_stub' ? `<span style="font-family:'DM Mono',monospace;font-size:8px;padding:1px 5px;border-radius:8px;background:var(--rust-dim);color:var(--rust);border:1px solid var(--rust);margin-left:5px;vertical-align:middle">Draft</span>` : ''}
                   </div>
                   <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;flex-shrink:0;${stageColour}">${ic.difficultyStage}</span>
                 </div>
@@ -3871,6 +3911,8 @@ function createIC(fields = {}) {
     icReadinessStatus: fields.icReadinessStatus ?? 'active',
     aiQualityFlags: fields.aiQualityFlags ?? null,
     reviewNotes: fields.reviewNotes ?? '',
+    note: fields.note ?? '',
+    createdAt: fields.createdAt ?? new Date().toISOString(),
   };
 }
 
@@ -3906,6 +3948,12 @@ function getICCoverageRatio(descriptorId, taughtICIds = []) {
     taughtICIds.includes(ic.id)
   );
   return (taughtDefaults.length + equivalentTaught.length) / activeDefaults.length;
+}
+
+function getUnresolvedStubCount() {
+  return state.instructionalComponents.filter(ic =>
+    ic.ownerTier === 'teacher_stub' && ic.icReadinessStatus === 'draft'
+  ).length;
 }
 
 // ── COVERAGE TOOLTIP ──
@@ -5665,7 +5713,13 @@ let dlState = {
   readyForMastery: [], // populated after step 3; drives whether step 4 appears
 };
 
+// Step 2 expand/IC-search state (reset on each wizard open)
+let dlStep2ExpandedCode = null;
+let dlStep2ICSearch = '';
+
 function openDailyLogWizard() {
+  dlStep2ExpandedCode = null;
+  dlStep2ICSearch = '';
   const availSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
   dlState = {
     step: 1,
@@ -5998,6 +6052,7 @@ function buildDlCodeListHtml(codes) {
     const icDerived = icDerivedSet.has(c.Code);
     const manualSel = (dlState.manualCodes || []).includes(c.Code);
     const selected  = manualSel || icDerived;
+    const isExpanded = dlStep2ExpandedCode === c.Code;
 
     const rowBg     = icDerived ? 'background:var(--purple-dim);' : selected ? 'background:var(--blue-dim);' : '';
     const cursor    = icDerived ? 'default' : 'pointer';
@@ -6011,20 +6066,331 @@ function buildDlCodeListHtml(codes) {
           ${selected ? '<span style="color:var(--primary-contrast);font-size:10px;font-weight:700">✓</span>' : ''}
         </div>`;
 
-    return `<div ${clickAttr} data-dl-code="${c.Code}"
-      style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);cursor:${cursor};transition:background 0.1s;${rowBg}"
-      ${hoverAttr}>
-      ${indicator}
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span style="font-family:'DM Mono',monospace;font-size:10px;color:${codeColor}">${c.Code}</span>
-          <span style="font-size:9px;background:var(--surface-alt);padding:1px 5px;border-radius:3px;color:var(--text3)">${c.Subject||''}</span>
-          <span style="font-size:9px;color:var(--text3)">${c.Strand||''}</span>
+    const icPanel = isExpanded ? buildDlICPanel(c.Code) : '';
+
+    return `<div style="border-bottom:1px solid var(--border)">
+      <div ${clickAttr} data-dl-code="${c.Code}"
+        style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;cursor:${cursor};transition:background 0.1s;${rowBg}"
+        ${hoverAttr}>
+        ${indicator}
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:${codeColor}">${c.Code}</span>
+            <span style="font-size:9px;background:var(--surface-alt);padding:1px 5px;border-radius:3px;color:var(--text3)">${c.Subject||''}</span>
+            <span style="font-size:9px;color:var(--text3)">${c.Strand||''}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);line-height:1.4;margin-top:2px">${c.Descriptor||c.Aspect||'—'}</div>
         </div>
-        <div style="font-size:11px;color:var(--text-muted);line-height:1.4;margin-top:2px">${c.Descriptor||c.Aspect||'—'}</div>
+        <button onclick="event.stopPropagation();dlExpandDescriptor('${c.Code}')"
+          style="padding:2px 7px;background:${isExpanded?'var(--blue-dim)':'none'};border:1px solid ${isExpanded?'var(--blue)':'var(--border2)'};border-radius:3px;color:${isExpanded?'var(--blue)':'var(--text3)'};font-size:10px;cursor:pointer;flex-shrink:0;margin-top:2px;font-family:'DM Mono',monospace;white-space:nowrap">
+          ICs ${isExpanded ? '▲' : '▼'}
+        </button>
       </div>
+      ${icPanel}
     </div>`;
   }).join('');
+}
+
+function buildDlICChipsHtml(code, q) {
+  const allICs = getICsForDescriptor(code);
+  const filtered = q
+    ? allICs.filter(ic => ic.name.toLowerCase().includes(q) || (ic.description||'').toLowerCase().includes(q))
+    : allICs;
+
+  let listHtml;
+  if (filtered.length === 0) {
+    listHtml = `<div style="font-size:11px;color:var(--text3);text-align:center;padding:6px 0">${q ? 'No ICs match your search' : 'No ICs loaded for this descriptor yet'}</div>`;
+  } else {
+    listHtml = filtered.map(ic => {
+      const sel = (dlState.selectedICs || []).includes(ic.id);
+      const isDraft = ic.ownerTier === 'teacher_stub';
+      const col = sel ? 'var(--green)' : 'var(--blue)';
+      return `<button onclick="dlAddAISuggestedIC('${ic.id}')"
+        style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:5px;border:1.5px solid ${sel?'var(--green)':'var(--border2)'};background:${sel?'var(--green-dim)':'var(--surface)'};text-align:left;width:100%;cursor:pointer;margin-bottom:4px;transition:all 0.12s">
+        <div style="width:16px;height:16px;border-radius:50%;border:2px solid ${col};background:${sel?col:'none'};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;color:${sel?'var(--primary-contrast)':col}">
+          ${sel ? '✓' : '+'}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:11px;font-weight:600;color:${sel?'var(--green)':'var(--text-muted)'};line-height:1.3">
+            ${escapeHtml(ic.name)}
+            ${isDraft ? `<span style="font-family:'DM Mono',monospace;font-size:8px;padding:1px 5px;border-radius:8px;background:var(--rust-dim);color:var(--rust);border:1px solid var(--rust);margin-left:4px;vertical-align:middle">Draft</span>` : ''}
+          </div>
+          ${ic.difficultyStage ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${ic.difficultyStage}</div>` : ''}
+        </div>
+      </button>`;
+    }).join('');
+  }
+
+  const stubLink = `<div style="text-align:center;padding-top:6px;${filtered.length > 0 ? 'margin-top:2px;border-top:1px solid var(--border);' : ''}">
+    <button onclick="openStubICModal('${escapeHtml(code)}')"
+      style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;text-decoration:underline;padding:3px 0;opacity:0.8">
+      Can't find the IC? Create a draft.
+    </button>
+  </div>`;
+
+  return listHtml + stubLink;
+}
+
+function buildDlICPanel(code) {
+  return `
+    <div id="dl-ic-panel-${code}" style="padding:8px 12px 10px;background:var(--surface-alt);border-top:1px solid var(--border)">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:7px">ICs for ${code}</div>
+      <div style="position:relative;margin-bottom:8px">
+        <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:12px">⌕</span>
+        <input placeholder="Search ICs…" value="${escapeHtml(dlStep2ICSearch)}"
+          oninput="dlUpdateICSearch(this.value,'${escapeHtml(code)}')"
+          style="width:100%;padding:5px 8px 5px 26px;background:var(--surface);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:11px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif">
+      </div>
+      <div id="dl-ic-chips-${code}">${buildDlICChipsHtml(code, dlStep2ICSearch.toLowerCase().trim())}</div>
+    </div>`;
+}
+
+function dlExpandDescriptor(code) {
+  if (dlStep2ExpandedCode === code) {
+    dlStep2ExpandedCode = null;
+  } else {
+    dlStep2ExpandedCode = code;
+    dlStep2ICSearch = '';
+  }
+  dlFilterCodes();
+}
+
+function dlUpdateICSearch(val, code) {
+  dlStep2ICSearch = val;
+  const container = document.getElementById('dl-ic-chips-' + code);
+  if (!container) return;
+  container.innerHTML = buildDlICChipsHtml(code, val.toLowerCase().trim());
+}
+
+function getStubDefaultYear() {
+  const presentStudents = state.students.filter(s => !dlState.absentIds?.has(s.id));
+  const target = presentStudents.length ? presentStudents : state.students;
+  if (!target.length) return '';
+  const freq = {};
+  target.forEach(s => {
+    const y = YLM[normaliseYear(s.year_level)] || s.year_level || '';
+    if (y) freq[y] = (freq[y] || 0) + 1;
+  });
+  return Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+}
+
+function getStubYearLevels(subject) {
+  return [...new Set(
+    state.curriculumCodes.filter(c => c.Subject === subject).map(c => c['Year Level']).filter(Boolean)
+  )].sort();
+}
+
+function getStubDescriptorOptions(subject, year) {
+  return state.curriculumCodes
+    .filter(c => c.Subject === subject && c['Year Level'] === year)
+    .map(c => `<option value="${escapeHtml(c.Code + ' - ' + (c.Descriptor || c.Aspect || c.Code).slice(0, 80))}">`)
+    .join('');
+}
+
+function openStubICModal(descriptorCode) {
+  const locked = !!descriptorCode;
+  const cd = locked ? state.curriculumCodes.find(c => c.Code === descriptorCode) : null;
+
+  const allSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
+  const defaultSubject = locked ? (cd?.Subject || '') : (dlState.selectedSubject || allSubjects[0] || '');
+  const subjectDisabled = locked || allSubjects.length <= 1;
+
+  const defaultYear = locked ? (cd?.['Year Level'] || '') : getStubDefaultYear();
+  const yearLevels = defaultSubject ? getStubYearLevels(defaultSubject) : [];
+
+  const defaultName = cd ? (cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80) : '';
+  const descriptorDisplayValue = cd ? `${cd.Code} - ${defaultName}` : '';
+  const initialDescriptorOptions = (defaultSubject && defaultYear) ? getStubDescriptorOptions(defaultSubject, defaultYear) : '';
+
+  const existing = document.getElementById('stub-ic-overlay');
+  if (existing) existing.remove();
+
+  const selStyle = `width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'stub-ic-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:200;animation:fadeIn 0.15s ease';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;width:min(95vw,480px);max-height:90vh;overflow-y:auto;box-shadow:0 20px 50px rgba(0,0,0,0.5);animation:slideUp 0.2s ease">
+      <div style="padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between">
+        <div>
+          <div style="font-family:'Fraunces',serif;font-size:15px;margin-bottom:4px">Create Draft IC</div>
+          ${locked ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${escapeHtml(descriptorCode)}</div>` : ''}
+        </div>
+        <button onclick="document.getElementById('stub-ic-overlay').remove()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px;line-height:1">✕</button>
+      </div>
+      <div style="padding:18px 20px">
+        <div style="margin-bottom:14px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Subject <span style="color:var(--rust)">*</span></label>
+          <select id="stub-ic-subject" onchange="stubSubjectChanged()" ${subjectDisabled ? 'disabled' : ''}
+            style="${selStyle}${subjectDisabled ? ';opacity:0.65;cursor:default' : ''}">
+            <option value="">— Select subject —</option>
+            ${allSubjects.map(s => `<option value="${escapeHtml(s)}"${s === defaultSubject ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Year Level <span style="color:var(--rust)">*</span></label>
+          <select id="stub-ic-year" onchange="stubYearChanged()" ${locked ? 'disabled' : ''}
+            style="${selStyle}${locked ? ';opacity:0.65;cursor:default' : ''}">
+            <option value="">— Select year level —</option>
+            ${yearLevels.map(y => `<option value="${escapeHtml(y)}"${y === defaultYear ? ' selected' : ''}>${escapeHtml(y)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Descriptor <span style="color:var(--rust)">*</span></label>
+          <input id="stub-ic-descriptor" list="stub-descriptor-list"
+            value="${escapeHtml(descriptorDisplayValue)}"
+            placeholder="Search descriptors…"
+            ${locked ? 'readonly' : ''}
+            oninput="stubDescriptorChanged()"
+            onchange="stubDescriptorChanged()"
+            style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid ${locked ? 'var(--border)' : 'var(--border2)'};border-radius:6px;color:${locked ? 'var(--text3)' : 'var(--text)'};font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif;${locked ? 'cursor:default;' : ''}">
+          <datalist id="stub-descriptor-list">${initialDescriptorOptions}</datalist>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Name <span style="color:var(--rust)">*</span></label>
+          <input id="stub-ic-name" value="${escapeHtml(defaultName)}"
+            data-auto="${defaultName ? '1' : '0'}"
+            oninput="this.dataset.auto='0'"
+            style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif">
+        </div>
+        <div style="margin-bottom:18px">
+          <label style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--text3);display:block;margin-bottom:6px">Note <span style="font-weight:400">(optional)</span></label>
+          <input id="stub-ic-note" placeholder="e.g. Represented numbers using MAB blocks"
+            style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif">
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+          <button onclick="document.getElementById('stub-ic-overlay').remove()"
+            style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:13px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
+            Cancel
+          </button>
+          <button onclick="saveStubIC()"
+            style="padding:8px 18px;border-radius:6px;border:none;background:var(--blue);color:var(--primary-contrast);font-size:13px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif">
+            Save and add to lesson
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => {
+    if (locked) {
+      document.getElementById('stub-ic-name')?.select();
+    } else if (!defaultSubject) {
+      document.getElementById('stub-ic-subject')?.focus();
+    } else if (!defaultYear) {
+      document.getElementById('stub-ic-year')?.focus();
+    } else {
+      document.getElementById('stub-ic-descriptor')?.focus();
+    }
+  }, 60);
+}
+
+function stubSubjectChanged() {
+  const subjectEl = document.getElementById('stub-ic-subject');
+  const yearEl = document.getElementById('stub-ic-year');
+  const descriptorEl = document.getElementById('stub-ic-descriptor');
+  const datalist = document.getElementById('stub-descriptor-list');
+  const subject = subjectEl?.value || '';
+  const yearLevels = subject ? getStubYearLevels(subject) : [];
+  if (yearEl) yearEl.innerHTML = `<option value="">— Select year level —</option>` +
+    yearLevels.map(y => `<option value="${escapeHtml(y)}">${escapeHtml(y)}</option>`).join('');
+  if (descriptorEl) descriptorEl.value = '';
+  if (datalist) datalist.innerHTML = '';
+}
+
+function stubYearChanged() {
+  const subjectEl = document.getElementById('stub-ic-subject');
+  const yearEl = document.getElementById('stub-ic-year');
+  const descriptorEl = document.getElementById('stub-ic-descriptor');
+  const datalist = document.getElementById('stub-descriptor-list');
+  const subject = subjectEl?.value || '';
+  const year = yearEl?.value || '';
+  if (descriptorEl) descriptorEl.value = '';
+  if (datalist) datalist.innerHTML = (subject && year) ? getStubDescriptorOptions(subject, year) : '';
+}
+
+function stubDescriptorChanged() {
+  const descriptorInput = document.getElementById('stub-ic-descriptor');
+  const nameInput = document.getElementById('stub-ic-name');
+  if (!descriptorInput || !nameInput) return;
+  const code = descriptorInput.value.split(' - ')[0].trim();
+  const cd = state.curriculumCodes.find(c => c.Code === code);
+  if (cd && nameInput.dataset.auto !== '0') {
+    nameInput.value = (cd.Descriptor || cd.Aspect || cd.Code).slice(0, 80);
+    nameInput.dataset.auto = '1';
+  }
+}
+
+function saveStubIC() {
+  const subjectEl = document.getElementById('stub-ic-subject');
+  const yearEl = document.getElementById('stub-ic-year');
+  const descriptorInput = document.getElementById('stub-ic-descriptor');
+  const nameEl = document.getElementById('stub-ic-name');
+  const noteEl = document.getElementById('stub-ic-note');
+
+  if (!subjectEl?.value) { toast('Please select a subject', 'error'); subjectEl?.focus(); return; }
+  if (!yearEl?.value) { toast('Please select a year level', 'error'); yearEl?.focus(); return; }
+
+  const code = (descriptorInput ? descriptorInput.value.trim() : '').split(' - ')[0].trim();
+  const cd = state.curriculumCodes.find(c => c.Code === code);
+  if (!cd) { toast('Please select a descriptor', 'error'); descriptorInput?.focus(); return; }
+
+  const name = nameEl ? nameEl.value.trim() : '';
+  if (!name) { toast('Name is required', 'error'); nameEl?.focus(); return; }
+  const note = noteEl ? noteEl.value.trim() : '';
+
+  const newIC = createIC({
+    homeDescriptorId: code,
+    name,
+    description: note,
+    note,
+    ownerTier: 'teacher_stub',
+    icReadinessStatus: 'draft',
+    sequenceOrder: 999,
+    createdAt: new Date().toISOString(),
+  });
+  state.instructionalComponents.push(newIC);
+
+  // Fire-and-forget persist — do not block wizard UI
+  (async () => {
+    try {
+      const resp = await fetch(API_URL + '?action=saveStubIC', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({
+          action: 'saveStubIC',
+          icId: newIC.id,
+          ownerTier: newIC.ownerTier,
+          icReadinessStatus: newIC.icReadinessStatus,
+          homeDescriptorId: newIC.homeDescriptorId,
+          name: newIC.name,
+          note: newIC.note || '',
+          createdAt: newIC.createdAt,
+        })
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    } catch(err) {
+      console.error('[StubIC] Failed to persist to Sheets:', err);
+    }
+  })();
+
+  if (!dlState.selectedICs.includes(newIC.id)) {
+    dlState.selectedICs.push(newIC.id);
+  }
+  dlRecalcSelectedCodes();
+  updateStubBadge();
+
+  const overlay = document.getElementById('stub-ic-overlay');
+  if (overlay) overlay.remove();
+
+  dlStep2ICSearch = '';
+  dlFilterCodes();
+  const chips = document.getElementById('dl-selected-chips');
+  if (chips) chips.innerHTML = buildDlSelectedChips();
+  const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
+  if (btn) btn.textContent = dlStep2NextLabel();
+
+  toast(`Draft IC "${name}" created and added to lesson`, 'success');
 }
 
 function dlRecalcSelectedCodes() {
@@ -6295,7 +6661,13 @@ Return up to 10 ICs that best match the lesson description.`;
       <span style="font-size:11px;color:var(--text3);font-style:italic;flex:1">${reasoning}</span>
     </div>
     ${groupedHtml}
-    <div style="font-size:10px;color:var(--text3);margin-top:6px">Click any IC to add it to your session — selected ICs unlock the IC Outcomes step</div>`;
+    <div style="font-size:10px;color:var(--text3);margin-top:6px">Click any IC to add it to your session — selected ICs unlock the IC Outcomes step</div>
+    <div style="text-align:center;padding-top:8px;margin-top:4px;border-top:1px solid var(--border)">
+      <button onclick="openStubICModal()"
+        style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;text-decoration:underline;padding:3px 0;opacity:0.8">
+        Can't find the IC? Create a draft.
+      </button>
+    </div>`;
 
   btn.textContent = 'Suggest ICs'; btn.disabled = false;
 }
@@ -8438,11 +8810,19 @@ async function init() {
   if (csvResult.status   === 'rejected') console.warn('CSV load failed:',    csvResult.reason);
 
   buildDescriptorIndex();
+  // Load persisted stubs after CSVs — stub wins on any ID collision
+  try {
+    await loadStubICsFromSheets();
+  } catch(e) {
+    console.warn('[StubIC] Failed to load stubs from Sheets:', e);
+  }
   console.log('[IC] state.instructionalComponents ready. Count:', state.instructionalComponents.length);
   console.log('[IC] createIC test:', createIC({ homeDescriptorId: 'test-id', name: 'Test IC' }));
   state.loading = false;
   renderView();
   checkDailyLogBadge();
+  updateStubBadge();
+  checkStubBanner();
 
   const today = new Date().toISOString().split('T')[0];
   const loggedToday = state.taughtLog.some(t => t.date === today);
@@ -8468,6 +8848,51 @@ function checkDailyLogBadge() {
   const loggedToday = state.taughtLog.some(t => t.date === today);
   const badge = document.getElementById('daily-log-badge');
   if (badge) badge.style.display = loggedToday ? 'none' : 'inline';
+}
+
+function updateStubBadge() {
+  const count = getUnresolvedStubCount();
+  let badge = document.getElementById('stub-nav-badge');
+  const btn = document.getElementById('nav-curriculum');
+  if (!btn) return;
+  if (count === 0) {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'stub-nav-badge';
+    badge.style.cssText = "margin-left:auto;background:var(--rust);color:#fff;font-family:'DM Mono',monospace;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px";
+    btn.appendChild(badge);
+  }
+  badge.textContent = count;
+}
+
+function checkStubBanner() {
+  if (document.getElementById('stub-nudge-banner')) return;
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const oldStubs = state.instructionalComponents.filter(ic =>
+    ic.ownerTier === 'teacher_stub' &&
+    ic.icReadinessStatus === 'draft' &&
+    ic.createdAt &&
+    ic.createdAt < threeDaysAgo
+  );
+  if (!oldStubs.length) return;
+  const n = oldStubs.length;
+  const banner = document.createElement('div');
+  banner.id = 'stub-nudge-banner';
+  banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:180;background:var(--gold);color:#0f1117;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.3)";
+  banner.innerHTML = `
+    <span>You have ${n} draft IC${n !== 1 ? 's' : ''} that need review.</span>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button onclick="showView('curriculum');document.getElementById('stub-nudge-banner').remove()"
+        style="padding:4px 12px;border-radius:4px;border:1px solid rgba(0,0,0,0.2);background:rgba(0,0,0,0.1);color:#0f1117;font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
+        Review now
+      </button>
+      <button onclick="document.getElementById('stub-nudge-banner').remove()"
+        style="background:none;border:none;color:#0f1117;font-size:18px;cursor:pointer;padding:0;line-height:1;opacity:0.7">✕</button>
+    </div>`;
+  document.body.appendChild(banner);
 }
 
 init();
