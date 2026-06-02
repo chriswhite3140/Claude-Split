@@ -400,12 +400,15 @@ async function loadTaughtLog() {
 }
 
 async function loadStubICsFromSheets() {
+  console.log('[StubIC] loadStubICsFromSheets() called');
   const resp = await fetch(API_URL + '?action=loadStubICs', {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ action: 'loadStubICs' })
   });
+  console.log('[StubIC] fetch response status:', resp.status);
   const result = await resp.json();
+  console.log('[StubIC] fetch result:', JSON.stringify(result));
   if (!result || !Array.isArray(result.stubs) || !result.stubs.length) return;
   result.stubs.forEach(stub => {
     if (!stub.icId || !stub.name || !stub.homeDescriptorId) return;
@@ -8816,8 +8819,6 @@ async function init() {
   } catch(e) {
     console.warn('[StubIC] Failed to load stubs from Sheets:', e);
   }
-  console.log('[IC] state.instructionalComponents ready. Count:', state.instructionalComponents.length);
-  console.log('[IC] createIC test:', createIC({ homeDescriptorId: 'test-id', name: 'Test IC' }));
   state.loading = false;
   renderView();
   checkDailyLogBadge();
