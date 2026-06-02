@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.58';
+const APP_VERSION = '1.12.59';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -400,15 +400,12 @@ async function loadTaughtLog() {
 }
 
 async function loadStubICsFromSheets() {
-  console.log('[StubIC] loadStubICsFromSheets() called');
   const resp = await fetch(API_URL + '?action=loadStubICs', {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ action: 'loadStubICs' })
   });
-  console.log('[StubIC] fetch response status:', resp.status);
   const result = await resp.json();
-  console.log('[StubIC] fetch result:', JSON.stringify(result));
   if (!result || !Array.isArray(result.stubs) || !result.stubs.length) return;
   result.stubs.forEach(stub => {
     if (!stub.icId || !stub.name || !stub.homeDescriptorId) return;
