@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.12.58 - Stub IC Sheets persistence: loadStubICsFromSheets() at init merges persisted stubs (stub wins on ID collision); saveStubIC fire-and-forget POSTs to Apps Script after push
  * v1.12.57 - Stub modal: subject + year level selectors before descriptor, descriptor datalist filtered by subject+year, defaults from wizard context, locked state when descriptor pre-filled
  * v1.12.56 - Stub modal: optional descriptorCode param, descriptor selector first field (searchable datalist), name auto-fills from descriptor, locked when pre-filled; AI suggester adds stub link below results
  * v1.12.55 - Stub link always visible in per-descriptor IC picker (text link, not conditional button); removed from AI suggester panel
@@ -61,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.57';
+const APP_VERSION = '1.12.58';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -396,6 +397,34 @@ async function loadTaughtLog() {
       })).filter(t => t.id);
     }
   } catch(e) { console.warn('TaughtLog not loaded:', e); }
+}
+
+async function loadStubICsFromSheets() {
+  const resp = await fetch(API_URL + '?action=loadStubICs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ action: 'loadStubICs' })
+  });
+  const result = await resp.json();
+  if (!result || !Array.isArray(result.stubs) || !result.stubs.length) return;
+  result.stubs.forEach(stub => {
+    if (!stub.icId || !stub.name || !stub.homeDescriptorId) return;
+    const ic = createIC({
+      id: stub.icId,
+      ownerTier: stub.ownerTier || 'teacher_stub',
+      icReadinessStatus: stub.icReadinessStatus || 'draft',
+      homeDescriptorId: stub.homeDescriptorId,
+      name: stub.name,
+      description: stub.note || '',
+      note: stub.note || '',
+      sequenceOrder: 999,
+      createdAt: stub.createdAt || new Date().toISOString(),
+    });
+    const idx = state.instructionalComponents.findIndex(x => x.id === stub.icId);
+    if (idx >= 0) state.instructionalComponents[idx] = ic;
+    else state.instructionalComponents.push(ic);
+  });
+  console.log(`[StubIC] Loaded ${result.stubs.length} stub(s) from Sheets`);
 }
 
 async function loadStandardsJudgments() {
@@ -6322,6 +6351,29 @@ function saveStubIC() {
   });
   state.instructionalComponents.push(newIC);
 
+  // Fire-and-forget persist — do not block wizard UI
+  (async () => {
+    try {
+      const resp = await fetch(API_URL + '?action=saveStubIC', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({
+          action: 'saveStubIC',
+          icId: newIC.id,
+          ownerTier: newIC.ownerTier,
+          icReadinessStatus: newIC.icReadinessStatus,
+          homeDescriptorId: newIC.homeDescriptorId,
+          name: newIC.name,
+          note: newIC.note || '',
+          createdAt: newIC.createdAt,
+        })
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    } catch(err) {
+      console.error('[StubIC] Failed to persist to Sheets:', err);
+    }
+  })();
+
   if (!dlState.selectedICs.includes(newIC.id)) {
     dlState.selectedICs.push(newIC.id);
   }
@@ -8758,6 +8810,12 @@ async function init() {
   if (csvResult.status   === 'rejected') console.warn('CSV load failed:',    csvResult.reason);
 
   buildDescriptorIndex();
+  // Load persisted stubs after CSVs — stub wins on any ID collision
+  try {
+    await loadStubICsFromSheets();
+  } catch(e) {
+    console.warn('[StubIC] Failed to load stubs from Sheets:', e);
+  }
   console.log('[IC] state.instructionalComponents ready. Count:', state.instructionalComponents.length);
   console.log('[IC] createIC test:', createIC({ homeDescriptorId: 'test-id', name: 'Test IC' }));
   state.loading = false;
