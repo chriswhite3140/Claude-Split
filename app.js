@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.61';
+const APP_VERSION = '1.12.62';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -3808,11 +3808,7 @@ async function fetchCSVFromGitHub(key) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const text = await resp.text();
     const parsed = parseCSV(text);
-    if (key === 'curriculumCodesEnglish') {
-      state.curriculumCodes = [...state.curriculumCodes, ...parsed];
-    } else {
-      state[key] = parsed;
-    }
+    state[key] = parsed;
     markLoaded(iconId, navId);
     return parsed.length;
   } catch(e) {
@@ -3861,9 +3857,30 @@ async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
 }
 
 async function fetchAllCSVs() {
-  const results = await Promise.all([
-    fetchCSVFromGitHub('curriculumCodes'),
-    fetchCSVFromGitHub('curriculumCodesEnglish'),
+  const fetchText = async (file) => {
+    try {
+      const url = GITHUB_RAW + file.split(' ').join('%20');
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return await resp.text();
+    } catch(e) {
+      console.warn('Could not fetch ' + file + ':', e);
+      return '';
+    }
+  };
+
+  // Fetch both curriculum code files concurrently but merge after both complete
+  const [mathsText, englishText] = await Promise.all([
+    fetchText(CSV_FILES.curriculumCodes.file),
+    fetchText(CSV_FILES.curriculumCodesEnglish.file),
+  ]);
+
+  if (mathsText) state.curriculumCodes = parseCSV(mathsText);
+  if (englishText) state.curriculumCodes = [...state.curriculumCodes, ...parseCSV(englishText)];
+  if (mathsText || englishText) markLoaded('icon-cd', 'nav-load-cd');
+
+  // All other CSVs load independently as before
+  const results = await Promise.allSettled([
     fetchCSVFromGitHub('standards'),
     fetchCSVFromGitHub('progressions'),
     fetchCSVFromGitHub('numeracyProgressions'),
@@ -3878,7 +3895,8 @@ async function fetchAllCSVs() {
     fetchICsCSVFromGitHub('ics_year2_english_literature'),
     fetchICsCSVFromGitHub('ics_year2_english_literacy'),
   ]);
-  const total = results.reduce((a,b) => a+b, 0);
+
+  const total = state.curriculumCodes.length + results.reduce((a, r) => a + (r.status === 'fulfilled' ? (r.value || 0) : 0), 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
 }
 
