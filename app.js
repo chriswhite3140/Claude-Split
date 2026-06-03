@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.60';
+const APP_VERSION = '1.12.61';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -224,6 +224,7 @@ const GITHUB_RAW = 'https://raw.githubusercontent.com/chriswhite3140/claude-spli
 
 const CSV_FILES = {
   curriculumCodes: { file: 'MASTER_Content_Descriptors_Maths_AC9_v1.csv',      iconId: 'icon-cd', navId: 'nav-load-cd' },
+  curriculumCodesEnglish: { file: 'MASTER_Content_Descriptors_English_AC9_v1.csv', iconId: 'icon-cd-en', navId: 'nav-load-cd-en' },
   standards:       { file: 'MASTER_Achievement_Standards_Maths_AC9_v1.csv',    iconId: 'icon-st', navId: 'nav-load-st' },
   progressions:    { file: 'literacy progressions.csv',                         iconId: 'icon-pr', navId: 'nav-load-pr' },
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
@@ -3807,7 +3808,11 @@ async function fetchCSVFromGitHub(key) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const text = await resp.text();
     const parsed = parseCSV(text);
-    state[key] = parsed;
+    if (key === 'curriculumCodesEnglish') {
+      state.curriculumCodes = [...state.curriculumCodes, ...parsed];
+    } else {
+      state[key] = parsed;
+    }
     markLoaded(iconId, navId);
     return parsed.length;
   } catch(e) {
@@ -3858,6 +3863,7 @@ async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
 async function fetchAllCSVs() {
   const results = await Promise.all([
     fetchCSVFromGitHub('curriculumCodes'),
+    fetchCSVFromGitHub('curriculumCodesEnglish'),
     fetchCSVFromGitHub('standards'),
     fetchCSVFromGitHub('progressions'),
     fetchCSVFromGitHub('numeracyProgressions'),
