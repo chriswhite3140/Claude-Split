@@ -3862,9 +3862,9 @@ async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
 async function fetchAllCSVs() {
   // ── Descriptor CSVs: sequential to avoid race condition ──
   // Maths first — sets state.curriculumCodes
-  await fetchCSVFromGitHub('curriculumCodes');
+  const count1 = await fetchCSVFromGitHub('curriculumCodes');
   // English second — appends to state.curriculumCodes
-  await fetchCSVFromGitHub('curriculumCodesEnglish');
+  const count2 = await fetchCSVFromGitHub('curriculumCodesEnglish');
 
   // ── Everything else in parallel ──
   const results = await Promise.all([
@@ -3882,7 +3882,7 @@ async function fetchAllCSVs() {
     fetchICsCSVFromGitHub('ics_year2_english_literacy'),
   ]);
 
-  const total = results.reduce((a, b) => a + b, 0);
+  const total = count1 + count2 + results.reduce((a, b) => a + b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
 }
 
