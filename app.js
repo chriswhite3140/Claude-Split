@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.61';
+const APP_VERSION = '1.12.63';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -228,7 +228,6 @@ const CSV_FILES = {
   standards:       { file: 'MASTER_Achievement_Standards_Maths_AC9_v1.csv',    iconId: 'icon-st', navId: 'nav-load-st' },
   progressions:    { file: 'literacy progressions.csv',                         iconId: 'icon-pr', navId: 'nav-load-pr' },
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
-  aspectLinks:     { file: 'english_aspect_to_cd_links.csv',                   iconId: 'icon-lk', navId: 'nav-load-lk' },
   elaborations:    { file: 'acara_maths_f6_elaborations_v3.csv',               iconId: 'icon-el', navId: 'nav-load-el' },
   ics_year2_maths_number:      { file: 'ics_year2_maths_number.csv' },
   ics_year2_maths_algebra:     { file: 'ics_year2_maths_algebra.csv' },
@@ -3861,13 +3860,17 @@ async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
 }
 
 async function fetchAllCSVs() {
+  // ── Descriptor CSVs: sequential to avoid race condition ──
+  // Maths first — sets state.curriculumCodes
+  const count1 = await fetchCSVFromGitHub('curriculumCodes');
+  // English second — appends to state.curriculumCodes
+  const count2 = await fetchCSVFromGitHub('curriculumCodesEnglish');
+
+  // ── Everything else in parallel ──
   const results = await Promise.all([
-    fetchCSVFromGitHub('curriculumCodes'),
-    fetchCSVFromGitHub('curriculumCodesEnglish'),
     fetchCSVFromGitHub('standards'),
     fetchCSVFromGitHub('progressions'),
     fetchCSVFromGitHub('numeracyProgressions'),
-    fetchCSVFromGitHub('aspectLinks'),
     fetchCSVFromGitHub('elaborations'),
     fetchICsCSVFromGitHub('ics_year2_maths_number'),
     fetchICsCSVFromGitHub('ics_year2_maths_algebra'),
@@ -3878,7 +3881,8 @@ async function fetchAllCSVs() {
     fetchICsCSVFromGitHub('ics_year2_english_literature'),
     fetchICsCSVFromGitHub('ics_year2_english_literacy'),
   ]);
-  const total = results.reduce((a,b) => a+b, 0);
+
+  const total = count1 + count2 + results.reduce((a, b) => a + b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
 }
 
@@ -5474,14 +5478,12 @@ function renderAdmin(main) {
     ['Achievement Standards', 'icon-st', 'nav-load-st', "loadStandardsCSV(this)"],
     ['Literacy Progressions', 'icon-pr', 'nav-load-pr', "loadProgressionsCSV(this,'literacy')"],
     ['Numeracy Progressions', 'icon-np', 'nav-load-np', "loadProgressionsCSV(this,'numeracy')"],
-    ['English Aspect Links', 'icon-lk', 'nav-load-lk', "loadLinksCSV(this)"],
   ];
   const loadedByNavId = {
     'nav-load-cd': state.curriculumCodes.length > 0,
     'nav-load-st': state.standards.length > 0,
     'nav-load-pr': state.progressions.length > 0,
     'nav-load-np': state.numeracyProgressions.length > 0,
-    'nav-load-lk': state.aspectLinks.length > 0,
     'nav-load-el': state.elaborations.length > 0,
   };
 
