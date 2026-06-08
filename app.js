@@ -8889,13 +8889,17 @@ function openStubReview() {
     }
   }
 
-  const stubs = state.instructionalComponents.filter(ic =>
-    ic.ownerTier === 'teacher_stub' && ic.icReadinessStatus === 'draft'
-  );
-  if (!stubs.length) return;
-
   const banner = document.getElementById('stub-nudge-banner');
   if (banner) banner.remove();
+
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const stubs = state.instructionalComponents.filter(ic =>
+    ic.ownerTier === 'teacher_stub' &&
+    ic.icReadinessStatus === 'draft' &&
+    ic.createdAt &&
+    ic.createdAt < threeDaysAgo
+  ).sort((a, b) => a.createdAt < b.createdAt ? -1 : 1);
+  if (!stubs.length) return;
 
   const firstStub = stubs[0];
   const cd = state.curriculumCodes.find(c => c.Code === firstStub.homeDescriptorId);
