@@ -8881,6 +8881,14 @@ function updateStubBadge() {
 }
 
 function openStubReview() {
+  if (state.currentView === 'bulk-assess' && state.bulkAssess) {
+    const pending = Object.keys(state.bulkAssess.pendingChanges || {}).length;
+    if (pending > 0) {
+      if (!confirm(`You have ${pending} unsaved change${pending > 1 ? 's' : ''} in Bulk Assess. Leave without saving?`)) return;
+      state.bulkAssess.pendingChanges = {};
+    }
+  }
+
   const stubs = state.instructionalComponents.filter(ic =>
     ic.ownerTier === 'teacher_stub' && ic.icReadinessStatus === 'draft'
   );
