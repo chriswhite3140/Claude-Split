@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.63';
+const APP_VERSION = '1.12.64';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -8880,6 +8880,33 @@ function updateStubBadge() {
   badge.textContent = count;
 }
 
+function openStubReview() {
+  const stubs = state.instructionalComponents.filter(ic =>
+    ic.ownerTier === 'teacher_stub' && ic.icReadinessStatus === 'draft'
+  );
+  if (!stubs.length) return;
+
+  const banner = document.getElementById('stub-nudge-banner');
+  if (banner) banner.remove();
+
+  const firstStub = stubs[0];
+  const cd = state.curriculumCodes.find(c => c.Code === firstStub.homeDescriptorId);
+  if (cd) {
+    cdFilters.subject = cd.Subject || 'all';
+    cdFilters.year = cd['Year Level'] || 'all';
+    cdFilters.strand = 'all';
+    cdFilters.search = '';
+    cdFilters.sort = 'code';
+  }
+
+  setCurrentView('curriculum', { persist: true });
+  renderView();
+
+  setTimeout(() => {
+    openCodeDetail(firstStub.homeDescriptorId, null);
+  }, 80);
+}
+
 function checkStubBanner() {
   if (document.getElementById('stub-nudge-banner')) return;
   const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
@@ -8895,9 +8922,9 @@ function checkStubBanner() {
   banner.id = 'stub-nudge-banner';
   banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:180;background:var(--gold);color:#0f1117;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.3)";
   banner.innerHTML = `
-    <span>You have ${n} draft IC${n !== 1 ? 's' : ''} that need review.</span>
+    <span>You have ${n} draft IC${n !== 1 ? 's' : ''} that need review — click to open the descriptor.</span>
     <div style="display:flex;align-items:center;gap:12px">
-      <button onclick="showView('curriculum');document.getElementById('stub-nudge-banner').remove()"
+      <button onclick="openStubReview()"
         style="padding:4px 12px;border-radius:4px;border:1px solid rgba(0,0,0,0.2);background:rgba(0,0,0,0.1);color:#0f1117;font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
         Review now
       </button>
