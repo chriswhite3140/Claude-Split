@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.64';
+const APP_VERSION = '1.12.65';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -2558,6 +2558,41 @@ function openCodeDetail(code, studentId) {
                 <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:${(ic.exampleOfSuccess || ic.commonError) ? '8px' : '0'}">${tierLabel}</div>
                 ${ic.exampleOfSuccess ? `<div style="margin-top:6px"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green);margin-bottom:2px">Example of success</div><div style="font-size:11px;color:var(--text-muted);line-height:1.4">${ic.exampleOfSuccess}</div></div>` : ''}
                 ${ic.commonError ? `<div style="margin-top:6px"><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--rust);margin-bottom:2px">Common error</div><div style="font-size:11px;color:var(--text-muted);line-height:1.4">${ic.commonError}</div></div>` : ''}
+                ${ic.ownerTier === 'teacher_stub' && ic.icReadinessStatus === 'draft' ? `
+                  <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+                    <div id="stub-promote-form-${ic.id}" style="display:none">
+                      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:5px;text-transform:uppercase;letter-spacing:0.1em">Name this IC to promote it</div>
+                      <input id="stub-promote-name-${ic.id}"
+                        maxlength="60"
+                        placeholder="e.g. Count forwards to 20 using objects"
+                        value="${escapeHtml(ic.name || '')}"
+                        oninput="document.getElementById('stub-promote-char-${ic.id}').textContent=(60-this.value.length)+' left'"
+                        style="width:100%;box-sizing:border-box;padding:6px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:12px;outline:none;font-family:'Instrument Sans',sans-serif;margin-bottom:4px">
+                      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                        <span id="stub-promote-char-${ic.id}" style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${60 - (ic.name || '').length} left</span>
+                      </div>
+                      <div style="display:flex;gap:6px">
+                        <button onclick="promoteStubIC('${ic.id}')"
+                          style="flex:1;padding:6px 12px;border-radius:5px;border:none;background:var(--green);color:var(--primary-contrast);font-size:12px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif">
+                          Promote IC
+                        </button>
+                        <button onclick="document.getElementById('stub-promote-form-${ic.id}').style.display='none'"
+                          style="padding:6px 10px;border-radius:5px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:12px;cursor:pointer">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                    <div id="stub-promote-actions-${ic.id}" style="display:flex;gap:6px">
+                      <button onclick="document.getElementById('stub-promote-form-${ic.id}').style.display='block';document.getElementById('stub-promote-actions-${ic.id}').style.display='none';document.getElementById('stub-promote-name-${ic.id}')?.focus()"
+                        style="flex:1;padding:5px 10px;border-radius:5px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
+                        Promote draft IC
+                      </button>
+                      <button onclick="deleteStubIC('${ic.id}')"
+                        style="padding:5px 10px;border-radius:5px;border:1px solid var(--rust);background:var(--rust-dim);color:var(--rust);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
+                        Delete
+                      </button>
+                    </div>
+                  </div>` : ''}
                 ${studentId ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
                   ${statusPill}
                   ${statusCycle}
@@ -6405,6 +6440,32 @@ function saveStubIC() {
   if (btn) btn.textContent = dlStep2NextLabel();
 
   toast(`Draft IC "${name}" created and added to lesson`, 'success');
+}
+
+function promoteStubIC(icId) {
+  const nameInput = document.getElementById(`stub-promote-name-${icId}`);
+  const name = (nameInput?.value || '').trim();
+  if (!name) { nameInput?.focus(); toast('A name is required to promote this IC', 'error'); return; }
+  if (name.length > 60) { toast('Name must be 60 characters or fewer', 'error'); return; }
+  const ic = state.instructionalComponents.find(x => x.id === icId);
+  if (!ic) return;
+  ic.name = name;
+  ic.icReadinessStatus = 'active';
+  ic.ownerTier = 'teacher_original';
+  // TODO: persist promotion to Sheets (stub record needs updating)
+  updateStubBadge();
+  toast(`IC promoted: "${name}"`, 'success');
+  openCodeDetail(ic.homeDescriptorId, null);
+}
+
+function deleteStubIC(icId) {
+  const ic = state.instructionalComponents.find(x => x.id === icId);
+  if (!ic) return;
+  const descriptorId = ic.homeDescriptorId;
+  state.instructionalComponents = state.instructionalComponents.filter(x => x.id !== icId);
+  updateStubBadge();
+  toast('Draft IC deleted', 'success');
+  openCodeDetail(descriptorId, null);
 }
 
 function dlRecalcSelectedCodes() {
