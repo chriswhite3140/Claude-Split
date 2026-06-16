@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.66';
+const APP_VERSION = '1.12.67';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -6459,7 +6459,10 @@ function promoteStubIC(icId) {
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ action: 'promoteStubIC', icId, name: ic.name })
       });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const result = await resp.json();
+      if (!resp.ok || result.error || result.success === false) {
+        console.error('[StubIC] promoteStubIC failed:', result?.error || resp.status);
+      }
     } catch(err) {
       console.error('[StubIC] Failed to persist promotion to Sheets:', err);
     }
@@ -6481,7 +6484,10 @@ function deleteStubIC(icId) {
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ action: 'deleteStubIC', icId })
       });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const result = await resp.json();
+      if (!resp.ok || result.error || result.success === false) {
+        console.error('[StubIC] deleteStubIC failed:', result?.error || resp.status);
+      }
     } catch(err) {
       console.error('[StubIC] Failed to delete stub from Sheets:', err);
     }
