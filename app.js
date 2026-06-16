@@ -7003,7 +7003,7 @@ function buildDlStep3() {
         title="${title}"
         style="padding:6px;text-align:center;border-bottom:1px solid var(--border);
         border-left:1px solid var(--border);cursor:pointer;
-        background:${selected ? 'var(--blue-dim)22' : 'transparent'}">
+        background:${selected ? 'var(--blue-dim)' : 'transparent'}">
         <div style="width:28px;height:28px;border-radius:50%;background:${bg};
           margin:auto;display:flex;align-items:center;justify-content:center;
           font-size:14px;color:${status !== 'taught' ? 'var(--primary-contrast)' : 'var(--text3)'}">
