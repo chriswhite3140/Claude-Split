@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.65';
+const APP_VERSION = '1.12.66';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -6452,7 +6452,18 @@ function promoteStubIC(icId) {
   ic.name = name;
   ic.icReadinessStatus = 'active';
   ic.ownerTier = 'teacher_original';
-  // TODO: persist promotion to Sheets (stub record needs updating)
+  (async () => {
+    try {
+      const resp = await fetch(API_URL + '?action=promoteStubIC', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'promoteStubIC', icId, name: ic.name })
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    } catch(err) {
+      console.error('[StubIC] Failed to persist promotion to Sheets:', err);
+    }
+  })();
   updateStubBadge();
   toast(`IC promoted: "${name}"`, 'success');
   openCodeDetail(ic.homeDescriptorId, null);
@@ -6463,6 +6474,18 @@ function deleteStubIC(icId) {
   if (!ic) return;
   const descriptorId = ic.homeDescriptorId;
   state.instructionalComponents = state.instructionalComponents.filter(x => x.id !== icId);
+  (async () => {
+    try {
+      const resp = await fetch(API_URL + '?action=deleteStubIC', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'deleteStubIC', icId })
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    } catch(err) {
+      console.error('[StubIC] Failed to delete stub from Sheets:', err);
+    }
+  })();
   updateStubBadge();
   toast('Draft IC deleted', 'success');
   openCodeDetail(descriptorId, null);
