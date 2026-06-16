@@ -6967,7 +6967,7 @@ function buildDlStep3() {
   const subjectTabs = subjects.map(subj => {
     const active = subj === dlState.scanSubjectFilter;
     const col = subjectCol(subj);
-    return `<button onclick="dlScanSetSubject('${subj}')"
+    return `<button onclick="dlScanSetSubject('${subj.replace(/'/g, "\\'")}')"
       style="padding:4px 12px;border-radius:4px;border:1px solid ${active ? col : 'var(--border2)'};
       background:${active ? col + '22' : 'none'};color:${active ? col : 'var(--text3)'};
       font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:${active ? '600' : '400'}">
