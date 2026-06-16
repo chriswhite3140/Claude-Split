@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.67';
+const APP_VERSION = '1.12.68';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5756,7 +5756,9 @@ let dlState = {
   selectedCodes: [],  // union of manualCodes + homeDescriptorId of every selected IC
   masteryMap: {},     // key: studentId+'|'+code → 'Achieved'|'Developing'|'Emerging'|null
   selectedICs: [],    // array of ic ids selected via AI IC suggester
-  classScanMap: {},   // key: studentId → 'taught'|'got_it'|'needs_review' (session-wide per student)
+  icScanMap: {},        // key: studentId+'|'+icId → 'got_it'|'needs_review' (absent = 'taught')
+  selectedScanIC: null, // icId currently selected for bulk actions
+  scanSubjectFilter: '',
   selectedSubject: '',
   aiLoading: false,
   readyForMastery: [], // populated after step 3; drives whether step 4 appears
@@ -5778,7 +5780,9 @@ function openDailyLogWizard() {
     selectedCodes: [],
     masteryMap: {},
     selectedICs: [],
-    classScanMap: {},
+    icScanMap: {},
+    selectedScanIC: null,
+    scanSubjectFilter: '',
     selectedSubject: availSubjects[0] || '',
     aiLoading: false,
     readyForMastery: [],
@@ -6939,87 +6943,156 @@ function dlGetStrandDot(studentId, strand) {
 
 function buildDlStep3() {
   const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
-  const ics = dlState.selectedICs.map(id => state.instructionalComponents.find(ic => ic.id === id)).filter(Boolean);
+  const ics = dlState.selectedICs
+    .map(id => state.instructionalComponents.find(ic => ic.id === id))
+    .filter(Boolean);
 
-  if (!ics.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title">No ICs selected</div><div class="empty-sub">Go back and select ICs via the AI suggester</div></div>`;
+  if (!ics.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title">No ICs selected</div></div>`;
 
-  const strand = dlGetCurrentStrand();
-  const gotItCount = Object.values(dlState.classScanMap).filter(v => v === 'got_it').length;
-  const needsReviewCount = Object.values(dlState.classScanMap).filter(v => v === 'needs_review').length;
+  const subjectOfIC = (ic) => {
+    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+    return cd ? (cd.Subject || '') : '';
+  };
+  const subjects = [...new Set(ics.map(subjectOfIC).filter(Boolean))];
+  if (!dlState.scanSubjectFilter || !subjects.includes(dlState.scanSubjectFilter)) {
+    dlState.scanSubjectFilter = subjects[0] || '';
+  }
+  const visibleICs = ics.filter(ic => subjectOfIC(ic) === dlState.scanSubjectFilter);
 
-  const studentRows = presentStudents.map((s, si) => {
-    const status = dlState.classScanMap[s.id] || 'taught';
-    const dot = dlGetStrandDot(s.id, strand);
-    const dotHtml = dot
-      ? `<div title="${dot.title}" style="width:8px;height:8px;border-radius:50%;background:${dot.colour};flex-shrink:0"></div>`
-      : `<div style="width:8px;height:8px;border-radius:50%;background:var(--border2);flex-shrink:0" title="No prior outcome data for this strand"></div>`;
+  const nGotIt = Object.entries(dlState.icScanMap)
+    .filter(([k, v]) => v === 'got_it' && visibleICs.some(ic => k.endsWith('|' + ic.id))).length;
+  const nNeedsReview = Object.entries(dlState.icScanMap)
+    .filter(([k, v]) => v === 'needs_review' && visibleICs.some(ic => k.endsWith('|' + ic.id))).length;
 
-    let statusChip = '';
-    if (status === 'got_it') {
-      statusChip = `<span style="font-size:11px;font-weight:600;color:var(--green);background:var(--green-dim);padding:3px 10px;border-radius:4px;font-family:'Instrument Sans',sans-serif">Got it</span>`;
-    } else if (status === 'needs_review') {
-      statusChip = `<span style="font-size:11px;font-weight:600;color:var(--rust);background:var(--rust-dim);padding:3px 10px;border-radius:4px;font-family:'Instrument Sans',sans-serif">Needs review</span>`;
-    }
-
-    return `<div onclick="dlCycleStudentScan('${s.id}')" id="dl-scan-${s.id}"
-      style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:7px;border:1.5px solid ${status !== 'taught' ? (status === 'got_it' ? 'var(--green)' : 'var(--rust)') : 'var(--border)'};background:${status === 'got_it' ? 'var(--green-dim)' : status === 'needs_review' ? 'var(--rust-dim)' : getStripedRowSurface(si)};cursor:pointer;user-select:none;transition:all 0.1s;margin-bottom:4px">
-      ${dotHtml}
-      <div class="sc-avatar ${getAvClass(si)}" style="width:28px;height:28px;font-size:11px;flex-shrink:0">${getInitials(s)}</div>
-      <div style="font-size:13px;font-weight:600;color:var(--text);flex:1">${s.first_name} <span style="font-weight:400;color:var(--text3)">${s.last_name}</span></div>
-      ${statusChip}
-    </div>`;
+  const subjectTabs = subjects.map(subj => {
+    const active = subj === dlState.scanSubjectFilter;
+    const col = subjectCol(subj);
+    return `<button onclick="dlScanSetSubject('${subj}')"
+      style="padding:4px 12px;border-radius:4px;border:1px solid ${active ? col : 'var(--border2)'};
+      background:${active ? col + '22' : 'none'};color:${active ? col : 'var(--text3)'};
+      font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:${active ? '600' : '400'}">
+      ${subj}
+    </button>`;
   }).join('');
 
-  const icSummary = ics.map(ic => {
-    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
-    return `<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${ic.homeDescriptorId} · ${ic.name}</span>`;
-  }).join('<br>');
+  const colHeaders = visibleICs.map(ic => {
+    const selected = dlState.selectedScanIC === ic.id;
+    const fullName = ic.name || ic.id;
+    const shortName = fullName.length > 28 ? fullName.slice(0, 28) + '…' : fullName;
+    return `<th onclick="dlScanSelectIC('${ic.id}')"
+      title="${escapeHtml(fullName)}"
+      style="padding:8px 10px;min-width:120px;max-width:160px;text-align:center;
+      border-bottom:2px solid ${selected ? 'var(--blue)' : 'var(--border)'};
+      background:${selected ? 'var(--blue-dim)' : 'var(--surface-alt)'};
+      cursor:pointer;font-size:11px;font-weight:600;color:${selected ? 'var(--blue)' : 'var(--text-muted)'};
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none">
+      ${escapeHtml(shortName)}
+    </th>`;
+  }).join('');
+
+  const studentRows = presentStudents.map((s, si) => {
+    const cells = visibleICs.map(ic => {
+      const key = s.id + '|' + ic.id;
+      const status = dlState.icScanMap[key] || 'taught';
+      const selected = dlState.selectedScanIC === ic.id;
+      let bg, dot, title;
+      if (status === 'got_it') { bg = 'var(--green)'; dot = '●'; title = 'Got it'; }
+      else if (status === 'needs_review') { bg = 'var(--rust)'; dot = '○'; title = 'Needs review'; }
+      else { bg = 'transparent'; dot = '·'; title = 'Taught'; }
+      return `<td onclick="dlScanCycleCell('${s.id}','${ic.id}')"
+        title="${title}"
+        style="padding:6px;text-align:center;border-bottom:1px solid var(--border);
+        border-left:1px solid var(--border);cursor:pointer;
+        background:${selected ? 'var(--blue-dim)22' : 'transparent'}">
+        <div style="width:28px;height:28px;border-radius:50%;background:${bg};
+          margin:auto;display:flex;align-items:center;justify-content:center;
+          font-size:14px;color:${status !== 'taught' ? 'var(--primary-contrast)' : 'var(--text3)'}">
+          ${dot}
+        </div>
+      </td>`;
+    }).join('');
+    return `<tr style="background:${getStripedRowSurface(si)}">
+      <td style="padding:8px 12px;border-bottom:1px solid var(--border);
+        white-space:nowrap;position:sticky;left:0;background:${getStripedRowSurface(si)};z-index:1">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="sc-avatar ${getAvClass(si)}" style="width:24px;height:24px;font-size:10px;flex-shrink:0">${getInitials(s)}</div>
+          <span style="font-size:12px;font-weight:600;color:var(--text)">${s.first_name} <span style="font-weight:400;color:var(--text3)">${s.last_name}</span></span>
+        </div>
+      </td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  const bulkButtons = dlState.selectedScanIC ? `
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em">Selected column:</span>
+      <button onclick="dlScanBulkSet('got_it')" style="padding:4px 12px;border-radius:4px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-size:11px;font-weight:600;cursor:pointer">All got it</button>
+      <button onclick="dlScanBulkSet('needs_review')" style="padding:4px 12px;border-radius:4px;border:1px solid var(--rust);background:var(--rust-dim);color:var(--rust);font-size:11px;font-weight:600;cursor:pointer">All needs review</button>
+      <button onclick="dlScanBulkSet('taught')" style="padding:4px 12px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:11px;cursor:pointer">Clear column</button>
+    </div>` : `<div style="font-size:11px;color:var(--text3)">Click a column header to select it for bulk actions — or tap individual cells to cycle outcomes.</div>`;
 
   return `
     <div style="font-size:12px;color:var(--text3);margin-bottom:12px">
-      Quick in-the-moment read of the class. Tap a student to cycle their outcome: no indicator = <strong>taught</strong> · <span style="color:var(--green)">Got it</span> · <span style="color:var(--rust)">Needs review</span>. Leaving everyone as-is is a valid response — all write as <em>taught</em>.
+      Tap a cell to cycle: <strong style="color:var(--text)">taught</strong> (default) → <strong style="color:var(--green)">got it</strong> → <strong style="color:var(--rust)">needs review</strong> → taught. Click a column header to select it for bulk actions.
     </div>
-    <div style="font-size:10px;color:var(--text3);background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:12px;line-height:1.6">
-      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em">ICs in this session</span><br>
-      ${icSummary}
+    ${subjects.length > 1 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${subjectTabs}</div>` : ''}
+    <div style="margin-bottom:10px">${bulkButtons}</div>
+    <div id="dl-scan-table-wrap" style="overflow-x:auto;overflow-y:auto;max-height:50vh;border:1px solid var(--border);border-radius:6px">
+      <table style="border-collapse:collapse;min-width:${180 + visibleICs.length * 130}px;width:100%">
+        <thead style="position:sticky;top:0;z-index:2;background:var(--surface-alt)">
+          <tr>
+            <th style="padding:8px 12px;text-align:left;border-bottom:2px solid var(--border);position:sticky;left:0;background:var(--surface-alt);z-index:3;min-width:160px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase">Student</th>
+            ${colHeaders}
+          </tr>
+        </thead>
+        <tbody>${studentRows}</tbody>
+      </table>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-      <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-right:4px">Bulk set:</span>
-      <button onclick="dlSetAllScan('got_it')" style="padding:5px 14px;border-radius:5px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-size:12px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif">All got it</button>
-      <button onclick="dlSetAllScan('needs_review')" style="padding:5px 14px;border-radius:5px;border:1px solid var(--rust);background:var(--rust-dim);color:var(--rust);font-size:12px;font-weight:600;cursor:pointer;font-family:'Instrument Sans',sans-serif">All needs review</button>
-      <button onclick="dlSetAllScan('taught')" style="padding:5px 14px;border-radius:5px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif">Clear</button>
-    </div>
-    <div id="dl-scan-list" style="max-height:45vh;overflow-y:auto">
-      ${studentRows}
-    </div>
-    <div style="font-size:10px;color:var(--text3);margin-top:10px;display:flex;gap:16px">
-      <span>${presentStudents.length} students present</span>
-      ${gotItCount ? `<span style="color:var(--green)">● ${gotItCount} got it</span>` : ''}
-      ${needsReviewCount ? `<span style="color:var(--rust)">● ${needsReviewCount} needs review</span>` : ''}
-      ${strand ? `<span style="margin-left:auto;color:var(--text3)">Strand: ${strand}</span>` : ''}
-    </div>
-  `;
+    <div style="font-size:10px;color:var(--text3);margin-top:8px;display:flex;gap:16px">
+      <span>${presentStudents.length} students · ${visibleICs.length} ICs shown</span>
+      ${nGotIt ? `<span style="color:var(--green)">● ${nGotIt} got it</span>` : ''}
+      ${nNeedsReview ? `<span style="color:var(--rust)">● ${nNeedsReview} needs review</span>` : ''}
+    </div>`;
 }
 
-// Cycle a student's scan status: taught → got_it → needs_review → taught
-function dlCycleStudentScan(studentId) {
-  const current = dlState.classScanMap[studentId] || 'taught';
-  const cycle = { 'taught': 'got_it', 'got_it': 'needs_review', 'needs_review': 'taught' };
-  const next = cycle[current];
-  if (next === 'taught') delete dlState.classScanMap[studentId];
-  else dlState.classScanMap[studentId] = next;
+function dlScanSetSubject(subject) {
+  dlState.scanSubjectFilter = subject;
+  dlState.selectedScanIC = null;
   const body = document.getElementById('dl-body');
   if (body) body.innerHTML = buildDlStep3();
 }
 
-// Set all present students to the given scan status
-function dlSetAllScan(status) {
-  const presentStudents = sortStudents(state.students.filter(s => !dlState.absentIds.has(s.id)));
-  if (status === 'taught') {
-    presentStudents.forEach(s => delete dlState.classScanMap[s.id]);
-  } else {
-    presentStudents.forEach(s => { dlState.classScanMap[s.id] = status; });
-  }
+function dlScanSelectIC(icId) {
+  dlState.selectedScanIC = dlState.selectedScanIC === icId ? null : icId;
+  const body = document.getElementById('dl-body');
+  if (body) body.innerHTML = buildDlStep3();
+}
+
+function dlScanCycleCell(studentId, icId) {
+  const key = studentId + '|' + icId;
+  const current = dlState.icScanMap[key] || 'taught';
+  const cycle = { 'taught': 'got_it', 'got_it': 'needs_review', 'needs_review': 'taught' };
+  const next = cycle[current];
+  if (next === 'taught') delete dlState.icScanMap[key];
+  else dlState.icScanMap[key] = next;
+  const wrap = document.getElementById('dl-scan-table-wrap');
+  const scrollTop = wrap ? wrap.scrollTop : 0;
+  const scrollLeft = wrap ? wrap.scrollLeft : 0;
+  const body = document.getElementById('dl-body');
+  if (body) body.innerHTML = buildDlStep3();
+  const newWrap = document.getElementById('dl-scan-table-wrap');
+  if (newWrap) { newWrap.scrollTop = scrollTop; newWrap.scrollLeft = scrollLeft; }
+}
+
+function dlScanBulkSet(status) {
+  const presentStudents = state.students.filter(s => !dlState.absentIds.has(s.id));
+  const icId = dlState.selectedScanIC;
+  if (!icId) return;
+  presentStudents.forEach(s => {
+    const key = s.id + '|' + icId;
+    if (status === 'taught') delete dlState.icScanMap[key];
+    else dlState.icScanMap[key] = status;
+  });
   const body = document.getElementById('dl-body');
   if (body) body.innerHTML = buildDlStep3();
 }
@@ -7221,10 +7294,9 @@ function dlNext() {
 
 // ── SAVE ──
 async function saveDailyLog() {
-  // Capture scan statuses immediately before any state changes or modal teardown.
-  // classScanMap keys are studentId → 'taught'|'got_it'|'needs_review'.
-  // Absent from the map means the teacher left that student as 'taught' (default).
-  const scanStatuses = Object.assign({}, dlState.classScanMap);
+  // Capture icScanMap before modal teardown: keys are studentId+'|'+icId → 'got_it'|'needs_review'.
+  // Absent from the map means the teacher left that cell as 'taught' (default).
+  const icScanSnapshot = Object.assign({}, dlState.icScanMap);
   const sessionICs   = dlState.selectedICs.slice();  // freeze IC list too
 
   closeDlModal();
@@ -7296,8 +7368,8 @@ async function saveDailyLog() {
   const icEntries = [];
   if (sessionICs.length) {
     presentStudents.forEach(student => {
-      const status = scanStatuses[student.id] || 'taught';
       sessionICs.forEach(icId => {
+        const status = icScanSnapshot[student.id + '|' + icId] || 'taught';
         icEntries.push({ date: dlState.date, student_id: student.id, ic_id: icId, status, notes: '' });
       });
     });
@@ -7314,9 +7386,9 @@ async function saveDailyLog() {
   checkDailyLogBadge();
   let icNote = '';
   if (icEntries.length) {
-    const nGotIt       = icEntries.filter(e => e.status === 'got_it').length;
-    const nNeedsReview = icEntries.filter(e => e.status === 'needs_review').length;
-    const nTaught      = icEntries.filter(e => e.status === 'taught').length;
+    const nGotIt       = Object.values(icScanSnapshot).filter(v => v === 'got_it').length;
+    const nNeedsReview = Object.values(icScanSnapshot).filter(v => v === 'needs_review').length;
+    const nTaught      = (sessionICs.length * presentStudents.length) - nGotIt - nNeedsReview;
     const parts = [];
     if (nGotIt)       parts.push(`${nGotIt} got it`);
     if (nNeedsReview) parts.push(`${nNeedsReview} needs review`);
