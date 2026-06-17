@@ -308,11 +308,6 @@ let state = {
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
   plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], weekKey: null },
-  plannerUi: {
-    selectedLessonId: null,
-    drawerOpen: false,
-    draggingLessonId: null,
-  },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -976,6 +971,12 @@ function renderView() {
 
 const PLANNER_WEEK_STORAGE_KEY = 'ct_planner_week_v1';
 
+// Escape a value for safe interpolation inside a single-quoted JS string in an
+// inline on* handler (guards against ids containing a backslash or apostrophe).
+function plannerJsStr(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function renderPlanner(main) {
   const plannerDays = [
     { key: 'unscheduled', label: 'Unscheduled' },
@@ -992,7 +993,9 @@ function renderPlanner(main) {
   const weekKey = plannerSelectedWeekKey();
   const weekLessons = state.lessonPlans.filter(lesson => lesson.weekKey === weekKey);
 
-  const selectedLesson = state.lessonPlans.find(lesson => lesson.id === state.plannerUi.selectedLessonId) || null;
+  // Scope the selected lesson to the displayed week so navigating weeks doesn't
+  // leave the drawer editing a now-hidden lesson from another week.
+  const selectedLesson = weekLessons.find(lesson => lesson.id === state.plannerUi.selectedLessonId) || null;
   if (!selectedLesson) {
     state.plannerUi.selectedLessonId = null;
     state.plannerUi.drawerOpen = false;
@@ -1065,9 +1068,9 @@ function plannerLessonCardHtml(lesson) {
     <div class="planner-lesson-card-wrap">
       <button
         class="planner-lesson-card ${isSelected ? 'is-selected' : ''} ${isTaught ? 'is-taught' : ''} ${incomplete ? 'is-incomplete' : ''}"
-        onclick="plannerOpenLessonDrawer('${lesson.id}')"
+        onclick="plannerOpenLessonDrawer('${plannerJsStr(lesson.id)}')"
         draggable="true"
-        ondragstart="plannerStartLessonDrag(event, '${lesson.id}')"
+        ondragstart="plannerStartLessonDrag(event, '${plannerJsStr(lesson.id)}')"
         ondragend="plannerEndLessonDrag(event)"
         type="button"
       >
@@ -1080,8 +1083,8 @@ function plannerLessonCardHtml(lesson) {
         </div>
       </button>
       <div class="planner-inline-actions">
-        <button class="planner-mini-btn" type="button" onclick="plannerDuplicateLesson('${lesson.id}')">Duplicate</button>
-        <button class="planner-mini-btn" type="button" onclick="plannerDeleteLesson('${lesson.id}')">Delete</button>
+        <button class="planner-mini-btn" type="button" onclick="plannerDuplicateLesson('${plannerJsStr(lesson.id)}')">Duplicate</button>
+        <button class="planner-mini-btn" type="button" onclick="plannerDeleteLesson('${plannerJsStr(lesson.id)}')">Delete</button>
       </div>
     </div>
   `;
@@ -1155,7 +1158,7 @@ function plannerSelectedICsHtml(lesson) {
     const ic = state.instructionalComponents.find(x => x.id === id);
     const label = ic ? (ic.name || ic.id) : id;
     const code = ic?.homeDescriptorId ? `<span class="planner-ic-chip">${escapeHtml(ic.homeDescriptorId)}</span> ` : '';
-    return `<span class="planner-selected-ic">${code}${escapeHtml(label)}<button class="planner-ic-remove" type="button" onclick="plannerToggleLessonIC('${id}')" title="Remove IC">×</button></span>`;
+    return `<span class="planner-selected-ic">${code}${escapeHtml(label)}<button class="planner-ic-remove" type="button" onclick="plannerToggleLessonIC('${plannerJsStr(id)}')" title="Remove IC">×</button></span>`;
   }).join('');
 }
 
@@ -1211,7 +1214,7 @@ function plannerICResultsHtml(lesson) {
         </div>
         ${ics.map(ic => {
           const on = selected.has(ic.id);
-          return `<button class="planner-ic-option ${on ? 'is-on' : ''}" type="button" onclick="plannerToggleLessonIC('${ic.id}')">
+          return `<button class="planner-ic-option ${on ? 'is-on' : ''}" type="button" onclick="plannerToggleLessonIC('${plannerJsStr(ic.id)}')">
             <span class="planner-ic-tick">${on ? '✓' : '+'}</span>
             <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
           </button>`;
