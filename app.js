@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.69';
+const APP_VERSION = '1.12.70';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -6003,8 +6003,7 @@ function buildDlStep2() {
       <!-- Subject selector -->
       <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px" id="dl-ai-subject-btns">
         ${availSubjects.map(s => {
-          const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-          const col = subjColours[s] || 'var(--text3)';
+          const col = subjectCol(s) || 'var(--text3)';
           const active = s === dlState.selectedSubject;
           return `<button onclick="dlSetAISubject('${s.replace(/'/g,"\\'")}')"
             style="padding:4px 10px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?col+'22':'none'};color:${active?col:'var(--text3)'};font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
@@ -6100,11 +6099,10 @@ function dlSetAISubject(subject) {
   dlState.selectedSubject = subject;
   // Re-render just the subject buttons
   const availSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
-  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
   const container = document.getElementById('dl-ai-subject-btns');
   if (container) {
     container.innerHTML = availSubjects.map(s => {
-      const col = subjColours[s] || 'var(--text3)';
+      const col = subjectCol(s) || 'var(--text3)';
       const active = s === subject;
       return `<button onclick="dlSetAISubject('${s.replace(/'/g,"\\'")}')"
         style="padding:4px 10px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?col+'22':'none'};color:${active?col:'var(--text3)'};font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
@@ -6119,8 +6117,7 @@ function buildDlSelectedChips() {
   return dlState.selectedCodes.map(code => {
     const cd = state.curriculumCodes.find(c => c.Code === code);
     // Colour chip by subject
-    const subjColours = { 'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)' };
-    const col = subjColours[cd?.Subject] || 'var(--blue)';
+    const col = subjectCol(cd?.Subject) || 'var(--blue)';
     return `<div style="display:inline-flex;align-items:center;gap:5px;background:${col}22;border:1px solid ${col};border-radius:4px;padding:3px 8px;font-size:11px;color:${col}">
       <span style="font-family:'DM Mono',monospace">${code}</span>
       ${cd ? `<span style="color:var(--text3);font-size:10px">${cd.Subject ? cd.Subject.slice(0,4).toUpperCase() : ''}</span>` : ''}
@@ -6763,20 +6760,19 @@ Return up to 10 ICs that best match the lesson description.`;
     byDescriptor[ic.homeDescriptorId].push(ic);
   });
 
-  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-  const subjectCol = subjColours[dlState.selectedSubject] || 'var(--purple)';
+  const subjCol = subjectCol(dlState.selectedSubject) || 'var(--purple)';
 
   const groupedHtml = Object.entries(byDescriptor).map(([descriptorId, ics]) => {
     const cd = state.curriculumCodes.find(c => c.Code === descriptorId);
     return `<div style="margin-bottom:10px">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;color:${subjectCol};margin-bottom:5px;display:flex;align-items:center;gap:6px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:${subjCol};margin-bottom:5px;display:flex;align-items:center;gap:6px">
         <span>${descriptorId}</span>
         ${cd ? `<span style="color:var(--text3);font-weight:400">${(cd.Descriptor||cd.Aspect||'').slice(0,60)}${(cd.Descriptor||cd.Aspect||'').length>60?'…':''}</span>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:5px">
         ${ics.map(ic => {
           const selected = dlState.selectedICs.includes(ic.id);
-          const btnCol = selected ? 'var(--green)' : subjectCol;
+          const btnCol = selected ? 'var(--green)' : subjCol;
           const btnBg  = selected ? 'var(--green-dim)' : 'var(--surface-alt)';
           return `<button onclick="dlAddAISuggestedIC('${ic.id}')" id="dl-ai-ic-chip-${ic.id}"
             style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:6px;
@@ -6830,9 +6826,8 @@ function dlAddAISuggestedIC(icId) {
 
   const selected = dlState.selectedICs.includes(icId);
   const ic = state.instructionalComponents.find(x => x.id === icId);
-  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-  const subjectCol = subjColours[dlState.selectedSubject] || 'var(--purple)';
-  const btnCol = selected ? 'var(--green)' : subjectCol;
+  const subjCol = subjectCol(dlState.selectedSubject) || 'var(--purple)';
+  const btnCol = selected ? 'var(--green)' : subjCol;
   const btnBg  = selected ? 'var(--green-dim)' : 'var(--surface-alt)';
 
   const chip = document.getElementById('dl-ai-ic-chip-' + icId);
@@ -6864,8 +6859,7 @@ function dlAddAISuggested(code) {
   dlRecalcSelectedCodes();
   const selected = dlState.selectedCodes.includes(code);
   const cd = state.curriculumCodes.find(c => c.Code === code);
-  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-  const col    = subjColours[cd?.Subject] || 'var(--purple)';
+  const col    = subjectCol(cd?.Subject) || 'var(--purple)';
   const btnCol = selected ? 'var(--green)' : col;
   const btnBg  = selected ? 'var(--green-dim)' : 'var(--surface-alt)';
 
@@ -7147,11 +7141,9 @@ function buildDlStep4() {
     'Developing':{ col:'var(--gold)',  bg:'var(--gold-dim)',  dot:'◐' },
     'Emerging':  { col:'var(--rust)',  bg:'var(--rust-dim)',  dot:'○' },
   };
-  const subjColours = {'English':'var(--blue)','Mathematics':'var(--green)','Science':'var(--teal)','HASS':'var(--gold)','Health and Physical Education':'var(--rust)','Design and Technologies':'var(--purple)','Digital Technologies':'var(--purple)'};
-
   const codeHeaders = descriptorIds.map(code => {
     const cd = state.curriculumCodes.find(c => c.Code === code);
-    const col = subjColours[cd?.Subject] || 'var(--blue)';
+    const col = subjectCol(cd?.Subject) || 'var(--blue)';
     const descriptor = cd ? (cd.Descriptor || cd.Aspect || '') : '';
     const entry = readyItems.find(r => r.descriptorId === code);
     return `<th style="padding:0;text-align:left;border-bottom:1px solid var(--border);min-width:180px;max-width:240px;vertical-align:bottom;border-left:1px solid var(--border)">
