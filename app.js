@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.70';
+const APP_VERSION = '1.12.71';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -182,10 +182,16 @@ const SUBJECT_COLOURS = {
   'HPE':                           { col: 'var(--rust)',   bg: 'var(--rust-dim)'   },
   'Design and Technologies':       { col: 'var(--purple)', bg: 'var(--purple-dim)' },
   'Digital Technologies':          { col: 'var(--purple)', bg: 'var(--purple-dim)' },
+  'Dance':                         { col: 'var(--neutral)', bg: 'var(--neutral-dim)' },
+  'Drama':                         { col: 'var(--neutral)', bg: 'var(--neutral-dim)' },
+  'Media Arts':                    { col: 'var(--neutral)', bg: 'var(--neutral-dim)' },
+  'Music':                         { col: 'var(--neutral)', bg: 'var(--neutral-dim)' },
+  'Visual Arts':                   { col: 'var(--neutral)', bg: 'var(--neutral-dim)' },
 };
 const SUBJECT_ICONS = {
   'English':'✦','Mathematics':'∑','Science':'⚗','HASS':'◎',
   'Health and Physical Education':'◉','HPE':'♥','Design and Technologies':'⬡','Digital Technologies':'⬡',
+  'Dance':'◐','Drama':'◓','Media Arts':'▣','Music':'♪','Visual Arts':'◫',
 };
 const YLM = {
   'F':'Foundation','1':'Year 1','2':'Year 2','3':'Year 3',
@@ -198,11 +204,18 @@ function subjectShort(subj) {
   if (subj === 'Health and Physical Education') return 'HPE';
   if (subj === 'Design and Technologies')       return 'D&T';
   if (subj === 'Digital Technologies')          return 'DigiTech';
+  if (subj === 'Media Arts')                    return 'Media Arts';
+  if (subj === 'Visual Arts')                   return 'Visual Arts';
   return subj;
 }
 function csvYear(yr) { return YLM[yr] || yr; }
 
-function hpeBandYearLevel(studentYear) {
+const BANDED_SUBJECTS = new Set([
+  'HPE', 'Design and Technologies', 'Digital Technologies',
+  'Dance', 'Drama', 'Media Arts', 'Music', 'Visual Arts',
+]);
+
+function bandYearLevel(studentYear) {
   const map = {
     'Foundation': 'Foundation',
     'Year 1':     'Foundation',
@@ -241,7 +254,14 @@ const CSV_FILES = {
   curriculumCodesEnglish: { file: 'MASTER_Content_Descriptors_English_AC9_v1.csv',  iconId: 'icon-cd-en',    navId: 'nav-load-cd-en' },
   curriculumCodesScience: { file: 'MASTER_Content_Descriptors_Science_AC9_v1.csv',  iconId: 'icon-cd-sci',   navId: 'nav-load-cd-sci' },
   curriculumCodesHASS:    { file: 'MASTER_Content_Descriptors_HASS_AC9_v1.csv',     iconId: 'icon-cd-hass',  navId: 'nav-load-cd-hass' },
-  curriculumCodesHPE:     { file: 'MASTER_Content_Descriptors_HPE_AC9_v1.csv',      iconId: 'icon-cd-hpe',   navId: 'nav-load-cd-hpe' },
+  curriculumCodesHPE:         { file: 'MASTER_Content_Descriptors_HPE_AC9_v1.csv',        iconId: 'icon-cd-hpe',   navId: 'nav-load-cd-hpe' },
+  curriculumCodesDesignTech:  { file: 'MASTER_Content_Descriptors_DesignTech_AC9_v1.csv',  iconId: 'icon-cd-dt',    navId: 'nav-load-cd-dt' },
+  curriculumCodesDigitalTech: { file: 'MASTER_Content_Descriptors_DigitalTech_AC9_v1.csv', iconId: 'icon-cd-dit',   navId: 'nav-load-cd-dit' },
+  curriculumCodesDance:       { file: 'MASTER_Content_Descriptors_Dance_AC9_v1.csv',       iconId: 'icon-cd-dan',   navId: 'nav-load-cd-dan' },
+  curriculumCodesDrama:       { file: 'MASTER_Content_Descriptors_Drama_AC9_v1.csv',       iconId: 'icon-cd-drm',   navId: 'nav-load-cd-drm' },
+  curriculumCodesMediaArts:   { file: 'MASTER_Content_Descriptors_MediaArts_AC9_v1.csv',   iconId: 'icon-cd-ma',    navId: 'nav-load-cd-ma' },
+  curriculumCodesMusic:       { file: 'MASTER_Content_Descriptors_Music_AC9_v1.csv',       iconId: 'icon-cd-mus',   navId: 'nav-load-cd-mus' },
+  curriculumCodesVisualArts:  { file: 'MASTER_Content_Descriptors_VisualArts_AC9_v1.csv',  iconId: 'icon-cd-va',    navId: 'nav-load-cd-va' },
   standards:       { file: 'MASTER_Achievement_Standards_Maths_AC9_v1.csv',    iconId: 'icon-st', navId: 'nav-load-st' },
   progressions:    { file: 'literacy progressions.csv',                         iconId: 'icon-pr', navId: 'nav-load-pr' },
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
@@ -1243,7 +1263,11 @@ function renderDashboard(main) {
     .sort((a,b) => new Date(b.date) - new Date(a.date))
     .slice(0, 5);
 
-  const subjectOrder = ['English','Mathematics','Science','HASS','HPE'];
+  const subjectOrder = [
+    'English', 'Mathematics', 'Science', 'HASS', 'HPE',
+    'Design and Technologies', 'Digital Technologies',
+    'Dance', 'Drama', 'Media Arts', 'Music', 'Visual Arts',
+  ];
 
 
   const subjects = subjectOrder.filter(subj => state.curriculumCodes.some(c => c.Subject === subj) && isSubjectEnabled(subj));
@@ -1254,8 +1278,8 @@ function renderDashboard(main) {
   // Taught stats — scoped to year levels in the class
   const classYearCodes = state.curriculumCodes.filter(c =>
     isCurriculumCodeEnabled(c) &&
-    (classYearLevels.length === 0 || (c.Subject === 'HPE'
-      ? classYearLevels.some(yl => hpeBandYearLevel(yl) === (c['Year Level']||'').trim())
+    (classYearLevels.length === 0 || (BANDED_SUBJECTS.has(c.Subject)
+      ? classYearLevels.some(yl => bandYearLevel(yl) === (c['Year Level']||'').trim())
       : classYearLevels.includes((c['Year Level']||'').trim())))
   );
   const totalCodes = classYearCodes.length;
@@ -1269,8 +1293,8 @@ function renderDashboard(main) {
     // All codes for this subject — but if we have students, scope to their year levels
     const allSubjCodes = state.curriculumCodes.filter(c => c.Subject === subj && isCurriculumCodeEnabled(c));
     const codes = classYearLevels.length > 0
-      ? allSubjCodes.filter(c => c.Subject === 'HPE'
-          ? classYearLevels.some(yl => hpeBandYearLevel(yl) === (c['Year Level']||'').trim())
+      ? allSubjCodes.filter(c => BANDED_SUBJECTS.has(c.Subject)
+          ? classYearLevels.some(yl => bandYearLevel(yl) === (c['Year Level']||'').trim())
           : classYearLevels.includes((c['Year Level']||'').trim()))
       : allSubjCodes;
 
@@ -1412,7 +1436,7 @@ function renderClassOverview(main) {
     return state.curriculumCodes.filter(c => {
       if (c.Subject !== ovf.subject) return false;
       if (!isCurriculumCodeEnabled(c)) return false;
-      if ((c['Year Level']||'').trim() !== (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear)) return false;
+      if ((c['Year Level']||'').trim() !== (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear)) return false;
       if (ovf.strand !== 'all' && c.Strand !== ovf.strand) return false;
       return true;
     });
@@ -1420,7 +1444,7 @@ function renderClassOverview(main) {
 
   function getStrandsForStudent(student) {
     const csvYear = yearLevelMap[normaliseYear(student.year_level)] || student.year_level;
-    return [...new Set(state.curriculumCodes.filter(c => c.Subject === ovf.subject && (c['Year Level']||'').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear) && isCurriculumCodeEnabled(c)).map(c => c.Strand).filter(Boolean))].sort();
+    return [...new Set(state.curriculumCodes.filter(c => c.Subject === ovf.subject && (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear) && isCurriculumCodeEnabled(c)).map(c => c.Strand).filter(Boolean))].sort();
   }
 
   function masteryColour(pct) {
@@ -1531,8 +1555,8 @@ function renderClassOverview(main) {
     // Collect enabled curriculum codes for this class's year levels that have ICs
     const eligibleCodes = state.curriculumCodes.filter(c =>
       isCurriculumCodeEnabled(c) &&
-      (c.Subject === 'HPE'
-        ? classYearLevels.some(yl => hpeBandYearLevel(yl) === (c['Year Level']||'').trim())
+      (BANDED_SUBJECTS.has(c.Subject)
+        ? classYearLevels.some(yl => bandYearLevel(yl) === (c['Year Level']||'').trim())
         : classYearLevels.includes((c['Year Level']||'').trim())) &&
       descriptorsWithICs.has(c.Code)
     );
@@ -1925,7 +1949,7 @@ function renderStudentDetail(main) {
     if (state.classSettings && !isCurriculumCodeEnabled(c)) return false;
     if (!yearFilter || yearFilter === 'all') return true;
     const csvYear = yearLevelMap[yearFilter] || yearFilter;
-    return (c['Year Level'] || '').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear);
+    return (c['Year Level'] || '').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear);
   });
 
   const filteredCodes = codes.filter(c => {
@@ -2022,7 +2046,7 @@ function renderStudentDetail(main) {
       if (!isCurriculumCodeEnabled(c)) return false;
       if (!yearFilter || yearFilter === 'all') return true;
       const csvYear = yearLevelMap[yearFilter] || yearFilter;
-      return (c['Year Level']||'').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear);
+      return (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear);
     });
     const strands = [...new Set(subjectCodes.map(c => c.Strand).filter(Boolean))].sort();
 
@@ -2211,7 +2235,7 @@ function getFilteredCurriculumCodes() {
   let codes = state.curriculumCodes.filter(c => {
     if (!isCurriculumCodeEnabled(c)) return false;
     if (cdFilters.subject !== 'all' && (c.Subject||'').trim() !== cdFilters.subject) return false;
-    if (cdFilters.year    !== 'all' && (c['Year Level']||'').trim() !== (c.Subject === 'HPE' ? hpeBandYearLevel(cdFilters.year) : cdFilters.year)) return false;
+    if (cdFilters.year    !== 'all' && (c['Year Level']||'').trim() !== (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(cdFilters.year) : cdFilters.year)) return false;
     if (cdFilters.strand  !== 'all' && (c.Strand||'').trim() !== cdFilters.strand) return false;
     const q = cdFilters.search.toLowerCase();
     if (q && !((c.Code||'').toLowerCase().includes(q)||(c.Descriptor||'').toLowerCase().includes(q)||(c.Strand||'').toLowerCase().includes(q))) return false;
@@ -3124,7 +3148,7 @@ function renderBulkAssess(main) {
     if (c.Subject !== ba.subjectFilter) return false;
     if (ba.strandFilter !== 'all' && c.Strand !== ba.strandFilter) return false;
     if (ba.yearFilter !== 'all') {
-      const mapped = c.Subject === 'HPE' ? hpeBandYearLevel(YLM[ba.yearFilter]||ba.yearFilter) : (YLM[ba.yearFilter]||ba.yearFilter);
+      const mapped = BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(YLM[ba.yearFilter]||ba.yearFilter) : (YLM[ba.yearFilter]||ba.yearFilter);
       if ((c['Year Level']||'').trim() !== mapped) return false;
     }
     if (state.classSettings && !isCurriculumCodeEnabled(c)) return false;
@@ -3214,7 +3238,7 @@ function renderBulkAssess(main) {
     const codesHtml = !student ? '' : (() => {
       const normYr = normaliseYear(student.year_level);
       const csvYear = YLM[normYr]||normYr;
-      const sCodes = state.curriculumCodes.filter(c => c.Subject===ba.subjectFilter && (c['Year Level']||'').trim()===(c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear) && (ba.strandFilter==='all'||c.Strand===ba.strandFilter) && isCurriculumCodeEnabled(c));
+      const sCodes = state.curriculumCodes.filter(c => c.Subject===ba.subjectFilter && (c['Year Level']||'').trim()===(BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear) && (ba.strandFilter==='all'||c.Strand===ba.strandFilter) && isCurriculumCodeEnabled(c));
       return sCodes.map((c,ci) => {
         const key = student.id+'|'+c.Code;
         const pending = ba.pendingChanges[key];
@@ -3327,7 +3351,7 @@ function buildStudentReportBody(s, opts) {
 
   // Codes in scope for summary stats
   const scopeCodes = state.curriculumCodes.filter(c => {
-    if ((c['Year Level']||'').trim() !== (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear)) return false;
+    if ((c['Year Level']||'').trim() !== (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear)) return false;
     if (opts.subjectFilter && c.Subject !== opts.subjectFilter) return false;
     if (opts.strandFilter  && c.Strand  !== opts.strandFilter)  return false;
     return true;
@@ -3341,7 +3365,7 @@ function buildStudentReportBody(s, opts) {
 
   function buildSubjectSection(subject) {
     let sCodes = state.curriculumCodes.filter(c =>
-      c.Subject === subject && (c['Year Level']||'').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear)
+      c.Subject === subject && (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear)
     );
     if (opts.strandFilter) sCodes = sCodes.filter(c => c.Strand === opts.strandFilter);
     if (!sCodes.length) return '';
@@ -3549,13 +3573,13 @@ function openPrintOptionsModal(studentId) {
   const currentStrand = null; // strand filter not yet tracked in detail view — future feature
 
   const availableSubjects = [...new Set(
-    state.curriculumCodes.filter(c => (c['Year Level']||'').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear)).map(c => c.Subject).filter(Boolean)
+    state.curriculumCodes.filter(c => (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear)).map(c => c.Subject).filter(Boolean)
   )].sort().filter(isSubjectEnabled);
   if (!availableSubjects.includes(currentSubject)) currentSubject = null;
 
   const availableStrands = currentSubject
     ? [...new Set(
-        state.curriculumCodes.filter(c => c.Subject === currentSubject && (c['Year Level']||'').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear) && isCurriculumCodeEnabled(c)).map(c => c.Strand).filter(Boolean)
+        state.curriculumCodes.filter(c => c.Subject === currentSubject && (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear) && isCurriculumCodeEnabled(c)).map(c => c.Strand).filter(Boolean)
       )].sort()
     : [];
 
@@ -3637,7 +3661,7 @@ function updatePrintStrandOpts() {
     if (!s) return;
       const csvYear = YLM[normaliseYear(s.year_level)] || s.year_level;
     const strands = [...new Set(
-      state.curriculumCodes.filter(c => c.Subject === subjVal && (c['Year Level']||'').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear) && isCurriculumCodeEnabled(c)).map(c => c.Strand).filter(Boolean)
+      state.curriculumCodes.filter(c => c.Subject === subjVal && (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear) && isCurriculumCodeEnabled(c)).map(c => c.Strand).filter(Boolean)
     )].sort();
     strandOpts.innerHTML = buildPrintStrandOpts(strands, null);
   }
@@ -3655,7 +3679,7 @@ function updatePrintScopePreview(studentId) {
   const csvYear = YLM[normaliseYear(s.year_level)] || s.year_level;
 
   const codes = state.curriculumCodes.filter(c => {
-    if ((c['Year Level']||'').trim() !== (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear)) return false;
+    if ((c['Year Level']||'').trim() !== (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear)) return false;
     if (subjVal !== 'all' && c.Subject !== subjVal) return false;
     if (strandVal !== 'all' && c.Strand !== strandVal) return false;
     if (!isCurriculumCodeEnabled(c)) return false;
@@ -3865,6 +3889,13 @@ const CURRICULUM_CODE_KEYS = new Set([
   'curriculumCodesScience',
   'curriculumCodesHASS',
   'curriculumCodesHPE',
+  'curriculumCodesDesignTech',
+  'curriculumCodesDigitalTech',
+  'curriculumCodesDance',
+  'curriculumCodesDrama',
+  'curriculumCodesMediaArts',
+  'curriculumCodesMusic',
+  'curriculumCodesVisualArts',
 ]);
 
 async function fetchCSVFromGitHub(key) {
@@ -3929,11 +3960,18 @@ async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
 
 async function fetchAllCSVs() {
   // ── Descriptor CSVs: sequential to avoid race condition on state.curriculumCodes ──
-  const count1 = await fetchCSVFromGitHub('curriculumCodes');         // Maths (sets)
-  const count2 = await fetchCSVFromGitHub('curriculumCodesEnglish');  // appends
-  const count3 = await fetchCSVFromGitHub('curriculumCodesScience');  // appends
-  const count4 = await fetchCSVFromGitHub('curriculumCodesHASS');     // appends
-  const count5 = await fetchCSVFromGitHub('curriculumCodesHPE');      // appends
+  const count1  = await fetchCSVFromGitHub('curriculumCodes');           // Maths (sets)
+  const count2  = await fetchCSVFromGitHub('curriculumCodesEnglish');   // appends
+  const count3  = await fetchCSVFromGitHub('curriculumCodesScience');   // appends
+  const count4  = await fetchCSVFromGitHub('curriculumCodesHASS');      // appends
+  const count5  = await fetchCSVFromGitHub('curriculumCodesHPE');       // appends
+  const count6  = await fetchCSVFromGitHub('curriculumCodesDesignTech');  // appends
+  const count7  = await fetchCSVFromGitHub('curriculumCodesDigitalTech'); // appends
+  const count8  = await fetchCSVFromGitHub('curriculumCodesDance');       // appends
+  const count9  = await fetchCSVFromGitHub('curriculumCodesDrama');       // appends
+  const count10 = await fetchCSVFromGitHub('curriculumCodesMediaArts');   // appends
+  const count11 = await fetchCSVFromGitHub('curriculumCodesMusic');       // appends
+  const count12 = await fetchCSVFromGitHub('curriculumCodesVisualArts');  // appends
 
   // ── Everything else in parallel ──
   const results = await Promise.all([
@@ -3951,7 +3989,9 @@ async function fetchAllCSVs() {
     fetchICsCSVFromGitHub('ics_year2_english_literacy'),
   ]);
 
-  const total = count1 + count2 + count3 + count4 + count5 + results.reduce((a, b) => a + b, 0);
+  const total = count1 + count2 + count3 + count4 + count5 + count6 + count7 +
+                count8 + count9 + count10 + count11 + count12 +
+                results.reduce((a, b) => a + b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
 }
 
@@ -7442,7 +7482,7 @@ function getTaughtDatesForCode(studentId, code) {
 function getUntaughtCodes(studentId, yearLevel) {
   const csvYear = YLM[normaliseYear(yearLevel)] || yearLevel;
   return state.curriculumCodes.filter(c =>
-    (c['Year Level']||'').trim() === (c.Subject === 'HPE' ? hpeBandYearLevel(csvYear) : csvYear) &&
+    (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear) &&
     !wasCodeTaughtToStudent(studentId, c.Code)
   );
 }
