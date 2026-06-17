@@ -4,8 +4,8 @@
 
 ClassTracker is a K-12 Australian Curriculum tracking web app for primary school teachers.
 Split-file architecture: index.html + app.js + styles.css
-Hosted at: chriswhite3140.github.io/class-tracker-split
-Repo: github.com/chriswhite3140/class-tracker-split
+Hosted at: chriswhite3140.github.io/Claude-Split/
+Repo: github.com/chriswhite3140/claude-split
 
 ## PR Review Focus Areas
 

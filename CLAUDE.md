@@ -21,7 +21,7 @@ This is the **new ClassTracker build** (`claude-split`). The old v1 app lives in
 
 ## Design documents — read before every task
 
-All five documents in `docs/` are authoritative. Claude Code must consult the relevant documents before implementing any feature.
+The documents in `docs/` are authoritative. Claude Code must consult the relevant documents before implementing any feature.
 
 | File | Purpose |
 |---|---|
@@ -30,6 +30,9 @@ All five documents in `docs/` are authoritative. Claude Code must consult the re
 | `docs/DATA-SCHEMA-DOCUMENT.md` | All data structures and relationships |
 | `docs/IC-FRAMEWORK-SPEC.md` | IC generation rules, ownership, mastery calculation |
 | `docs/IC-GENERATION-PROMPT-TEMPLATE.md` | AI prompt template for generating system default ICs |
+| `docs/WEEKLY-PLANNER-SPEC.md` | Weekly Planner UI and interaction spec (home screen) |
+| `docs/FIRST-BUILD-SLICE.md` | Smallest vertical slice that proves the core loop |
+| `docs/ARCHITECTURE-ASSESSMENT.md` | Current-state assessment, gaps, and forced build order |
 
 If a proposed change conflicts with any of these documents, do not proceed. Flag the conflict in a comment on the issue instead.
 
@@ -69,18 +72,30 @@ Google Apps Script connects to Google Sheets for data storage. The frontend comm
 
 ## Current build status
 
-### Completed (Foundation)
-- CSV auto-fetch wired for all six curriculum files including elaborations
-- `buildDescriptorIndex()` enriches `state.curriculumCodes` at init with `descriptorType` and `elaborations[]`
-- All descriptors correctly typed: HASS skill codes (`AC9HS{Y}S{n}`) → `"skill"`, all others → `"knowledge"`
+`app.js` is at **v1.12.68** (~9,100 lines). This is a mature build, not a foundation-stage one. Read `docs/ARCHITECTURE-ASSESSMENT.md` for the full picture before planning new work.
 
-### Next build priorities (in order)
-1. **IC data structure** — implement `state.instructionalComponents[]` with all fields from `docs/DATA-SCHEMA-DOCUMENT.md` section 2.3; wire into `buildDescriptorIndex()` so each descriptor can reference its ICs
-2. **System default IC display** — teachers can browse ICs per descriptor in the Curriculum Codes view
-3. **Core planning loop** — lesson creation linking 1–3 ICs, mark as taught, quick mastery entry
-4. **IC progress view** — mastery trajectory per IC per student
+### Built and working
+- CSV auto-fetch + `buildDescriptorIndex()` (descriptorType typing, elaborations)
+- IC data model — ownership tiers, stub/draft ICs, suppression, `homeDescriptorId`/`linkedDescriptorIds` (schema §2.3)
+- Daily Wizard — attendance → codes/ICs → per-student IC scan (`got_it`/`needs_review`) → quick mastery
+- Mastery + coverage — 80% validity gate, strand-history signals, coverage and class-overview views
+- Sheets backend for teaching/mastery data (Students, Progress, TaughtLog, TaughtICs, StandardsJudgments, ProgressionPlacements)
+- Bulk Assess, Standards Judgments, Progression Placement
 
-Do not build features outside this sequence without explicit instruction.
+### Known structural gaps (see `docs/ARCHITECTURE-ASSESSMENT.md`)
+- **Three competing planning surfaces** (`planner`, `weekly-planner`, `plan-log`) — not consolidated
+- **Lessons carry no ICs** — `lessonPlans` are title/subject only; violates "no lesson without ICs"
+- **Planning is localStorage-only** — not synced to Sheets, cannot join to outcomes
+- **Daily Wizard is isolated** — does not read planned lessons; outcomes have no `lessonId`
+- **No Unit Plan / SequenceBlock layer** — specced (schema §2.4–2.5) but unbuilt
+
+### Next build priorities (forced order — do not reorder)
+1. Consolidate to one canonical Weekly Planner; add `linkedICIds` to the lesson object
+2. Add `lessonId` to outcome writes + persist lessons to Sheets
+3. Wire Daily Wizard ↔ lessons (seed from planned lessons; write taught status back)
+4. Build the Unit Plan layer on top
+
+Do not build the Unit Plan layer (step 4) before the planner is consolidated and IC-linked (steps 1–3). Do not build features outside this sequence without explicit instruction.
 
 ---
 
