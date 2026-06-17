@@ -3116,7 +3116,7 @@ function filterBulkCodeList(q) {
   const filtered = state.curriculumCodes.filter(c => {
     if (c.Subject !== ba.subjectFilter) return false;
     if (ba.strandFilter !== 'all' && c.Strand !== ba.strandFilter) return false;
-    if (ba.yearFilter !== 'all' && (c['Year Level']||'').trim() !== (YLM[ba.yearFilter]||ba.yearFilter)) return false;
+    if (ba.yearFilter !== 'all' && (c['Year Level']||'').trim() !== (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(YLM[ba.yearFilter]||ba.yearFilter) : (YLM[ba.yearFilter]||ba.yearFilter))) return false;
     if (!isCurriculumCodeEnabled(c)) return false;
     if (q && !(c.Code.toLowerCase().includes(q.toLowerCase())||(c.Descriptor||'').toLowerCase().includes(q.toLowerCase()))) return false;
     return true;
@@ -4437,7 +4437,7 @@ function renderCoverage(main) {
   let codes = state.curriculumCodes.filter(c => {
     if (cf.subject !== 'all' && c.Subject !== cf.subject) return false;
     if (cf.strand  !== 'all' && c.Strand  !== cf.strand)  return false;
-    if (cf.year    !== 'all' && (c['Year Level']||'').trim() !== (YLM[cf.year]||cf.year)) return false;
+    if (cf.year    !== 'all' && (c['Year Level']||'').trim() !== (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(YLM[cf.year]||cf.year) : (YLM[cf.year]||cf.year))) return false;
     if (!isCurriculumCodeEnabled(c)) return false;
     return true;
   });
@@ -6125,7 +6125,7 @@ function wireDlStep2Events() {
   if (subjSel && subjSel.value === 'all' && presentYears.length === 1) {
     const firstSubj = [...new Set(
       state.curriculumCodes
-        .filter(c => (c['Year Level']||'').trim() === presentYears[0])
+        .filter(c => (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(presentYears[0]) : presentYears[0]))
         .map(c => c.Subject).filter(Boolean)
     )].sort()[0];
     if (firstSubj) subjSel.value = firstSubj;
@@ -6626,7 +6626,7 @@ function dlFilterCodes() {
     if (subj !== 'all') {
       const strands = [...new Set(
         state.curriculumCodes
-          .filter(c => c.Subject === subj && (year === 'all' || (c['Year Level']||'').trim() === year))
+          .filter(c => c.Subject === subj && (year === 'all' || (c['Year Level']||'').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(year) : year)))
           .map(c => c.Strand).filter(Boolean)
       )].sort();
       strandSel.innerHTML = `<option value="all">All strands</option>${strands.map(s => `<option value="${s}">${s}</option>`).join('')}`;
@@ -6641,7 +6641,7 @@ function dlFilterCodes() {
   const filtered = state.curriculumCodes.filter(c => {
     if (subj   !== 'all' && c.Subject !== subj) return false;
     if (strand !== 'all' && c.Strand  !== strand) return false;
-    if (year   !== 'all' && (c['Year Level']||'').trim() !== year) return false;
+    if (year   !== 'all' && (c['Year Level']||'').trim() !== (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(year) : year)) return false;
     if (q && !(
       (c.Code||'').toLowerCase().includes(q) ||
       (c.Descriptor||'').toLowerCase().includes(q) ||
@@ -6733,7 +6733,9 @@ async function dlAISuggest() {
     const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
     return cd &&
       cd.Subject === dlState.selectedSubject &&
-      (presentYearLevels.length === 0 || presentYearLevels.includes((cd['Year Level']||'').trim())) &&
+      (presentYearLevels.length === 0 || (BANDED_SUBJECTS.has(cd.Subject)
+        ? presentYearLevels.some(yl => bandYearLevel(yl) === (cd['Year Level']||'').trim())
+        : presentYearLevels.includes((cd['Year Level']||'').trim()))) &&
       !ic.isArchived;
   });
 
