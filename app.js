@@ -3123,7 +3123,10 @@ function renderBulkAssess(main) {
   const filteredCodes = state.curriculumCodes.filter(c => {
     if (c.Subject !== ba.subjectFilter) return false;
     if (ba.strandFilter !== 'all' && c.Strand !== ba.strandFilter) return false;
-    if (ba.yearFilter !== 'all' && (c['Year Level']||'').trim() !== (YLM[ba.yearFilter]||ba.yearFilter)) return false;
+    if (ba.yearFilter !== 'all') {
+      const mapped = c.Subject === 'HPE' ? hpeBandYearLevel(YLM[ba.yearFilter]||ba.yearFilter) : (YLM[ba.yearFilter]||ba.yearFilter);
+      if ((c['Year Level']||'').trim() !== mapped) return false;
+    }
     if (state.classSettings && !isCurriculumCodeEnabled(c)) return false;
     return true;
   });
