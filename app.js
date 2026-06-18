@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.1
+ * THIS FILE IS VERSION: 1.13.2
  * Last updated: 2026-05-23
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.2  - Planner IC picker: order suggestion results by confidence — strong first, then partial, then the "Create new IC" action, then weak matches at the very bottom (ordering only; scoring/thresholds unchanged)
  * v1.13.1  - Planner IC picker: three-tier confidence indicator (Strong/Partial/Weak, normalised to top suggestion) on intention-suggested ICs; always-visible "Create new IC" that opens the stub modal and auto-links the new stub to the lesson
  * v1.13.0  - Planner consolidation (step 1): retired Plan & Log and the legacy Weekly Planner; renderPlanner is now the single canonical Weekly Planner. New lesson schema (weekKey, intention, linkedICIds, position); ICs linked 1-3 per lesson via intention-driven suggestion + manual search/tick; week navigation; legacy planning localStorage wiped (clean start)
  * v1.12.58 - Stub IC Sheets persistence: loadStubICsFromSheets() at init merges persisted stubs (stub wins on ID collision); saveStubIC fire-and-forget POSTs to Apps Script after push
@@ -64,7 +65,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.1';
+const APP_VERSION = '1.13.2';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1213,11 +1214,11 @@ function plannerICResultsHtml(lesson) {
     (byDescriptor[key] = byDescriptor[key] || []).push(ic);
   });
 
-  const groupsHtml = Object.entries(byDescriptor).map(([code, ics]) => {
+  const groups = Object.entries(byDescriptor).map(([code, ics]) => {
     const cd = state.curriculumCodes.find(c => c.Code === code);
     const descText = cd ? (cd.Descriptor || cd.Aspect || '') : '';
     const conf = showConfidence ? plannerConfidenceTier(scores[code] || 0, maxScore) : null;
-    return `
+    const html = `
       <div class="planner-ic-group">
         <div class="planner-ic-group-head">
           <span class="planner-ic-group-code">${escapeHtml(code)}</span>
@@ -1233,9 +1234,19 @@ function plannerICResultsHtml(lesson) {
         }).join('')}
       </div>
     `;
-  }).join('');
+    return { tier: conf ? conf.key : null, html };
+  });
 
-  return groupsHtml + createRow;
+  // Tiered ordering: strong matches, then partial, then the create action, then
+  // weak matches at the very bottom (below create). Only suggestion mode has
+  // tiers; text-search/browse keeps the create action last.
+  if (showConfidence) {
+    const pick = t => groups.filter(g => g.tier === t).map(g => g.html).join('');
+    const untiered = groups.filter(g => !['strong', 'partial', 'weak'].includes(g.tier)).map(g => g.html).join('');
+    return pick('strong') + pick('partial') + untiered + createRow + pick('weak');
+  }
+
+  return groups.map(g => g.html).join('') + createRow;
 }
 
 // Bucket a descriptor's intention-match score into a three-tier confidence label,
