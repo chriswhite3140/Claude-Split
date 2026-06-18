@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.2
+ * THIS FILE IS VERSION: 1.13.3
  * Last updated: 2026-05-23
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.3  - Planner IC picker fix: confidence now normalises against descriptors that actually render (ranked descriptors with no loaded ICs no longer deflate every visible match to partial); suggestion groups flattened by score across descriptors (strong, then partial, then "Create new IC", then weak), not taxonomy order
  * v1.13.2  - Planner IC picker: order suggestion results by confidence — strong first, then partial, then the "Create new IC" action, then weak matches at the very bottom (ordering only; scoring/thresholds unchanged)
  * v1.13.1  - Planner IC picker: three-tier confidence indicator (Strong/Partial/Weak, normalised to top suggestion) on intention-suggested ICs; always-visible "Create new IC" that opens the stub modal and auto-links the new stub to the lesson
  * v1.13.0  - Planner consolidation (step 1): retired Plan & Log and the legacy Weekly Planner; renderPlanner is now the single canonical Weekly Planner. New lesson schema (weekKey, intention, linkedICIds, position); ICs linked 1-3 per lesson via intention-driven suggestion + manual search/tick; week navigation; legacy planning localStorage wiped (clean start)
@@ -65,7 +66,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.2';
+const APP_VERSION = '1.13.3';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1206,7 +1207,6 @@ function plannerICResultsHtml(lesson) {
   // Confidence is meaningful only for intention suggestions (not text search/browse).
   const scores = state.plannerUi.suggestionScores || {};
   const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
-  const maxScore = showConfidence ? Math.max(1, ...Object.values(scores).filter(n => typeof n === 'number')) : 0;
 
   const byDescriptor = {};
   resultIcs.forEach(ic => {
@@ -1214,10 +1214,18 @@ function plannerICResultsHtml(lesson) {
     (byDescriptor[key] = byDescriptor[key] || []).push(ic);
   });
 
+  // Normalise confidence against the descriptors that actually render. Some
+  // ranked descriptors have no loaded ICs and never appear in the list;
+  // including their scores here would deflate the tier of every visible match.
+  const maxScore = showConfidence
+    ? Math.max(1, ...Object.keys(byDescriptor).map(code => scores[code] || 0))
+    : 0;
+
   const groups = Object.entries(byDescriptor).map(([code, ics]) => {
     const cd = state.curriculumCodes.find(c => c.Code === code);
     const descText = cd ? (cd.Descriptor || cd.Aspect || '') : '';
-    const conf = showConfidence ? plannerConfidenceTier(scores[code] || 0, maxScore) : null;
+    const score = scores[code] || 0;
+    const conf = showConfidence ? plannerConfidenceTier(score, maxScore) : null;
     const html = `
       <div class="planner-ic-group">
         <div class="planner-ic-group-head">
@@ -1234,25 +1242,24 @@ function plannerICResultsHtml(lesson) {
         }).join('')}
       </div>
     `;
-    return { tier: conf ? conf.key : null, html };
+    return { score, tier: conf ? conf.key : null, html };
   });
 
-  // Tiered ordering: strong matches, then partial, then the create action, then
-  // weak matches at the very bottom (below create). Only suggestion mode has
-  // tiers; text-search/browse keeps the create action last.
-  if (showConfidence) {
-    const pick = t => groups.filter(g => g.tier === t).map(g => g.html).join('');
-    const untiered = groups.filter(g => !['strong', 'partial', 'weak'].includes(g.tier)).map(g => g.html).join('');
-    return pick('strong') + pick('partial') + untiered + createRow + pick('weak');
-  }
+  if (!showConfidence) return groups.map(g => g.html).join('') + createRow;
 
-  return groups.map(g => g.html).join('') + createRow;
+  // Flatten by confidence across the whole result set: sort descriptor groups by
+  // score (so strong groups, then partial), put the create action after the last
+  // non-weak group, then weak matches at the very bottom — below create.
+  const ordered = groups.slice().sort((a, b) => b.score - a.score);
+  const nonWeak = ordered.filter(g => g.tier !== 'weak').map(g => g.html).join('');
+  const weak = ordered.filter(g => g.tier === 'weak').map(g => g.html).join('');
+  return nonWeak + createRow + weak;
 }
 
 // Bucket a descriptor's intention-match score into a three-tier confidence label,
-// normalised to the top-ranked suggestion (raw scores scale with intention length,
-// so absolute cut-offs don't generalise). Boundaries from the observed distribution:
-// top cluster >=0.80 strong, mid 0.50-0.79 partial, tail <0.50 weak.
+// normalised to the top-scoring rendered suggestion (raw scores scale with
+// intention length, so absolute cut-offs don't generalise). Boundaries from the
+// observed distribution: top cluster >=0.80 strong, mid 0.50-0.79 partial, tail <0.50 weak.
 function plannerConfidenceTier(score, maxScore) {
   if (!score || !maxScore) return null;
   const ratio = score / maxScore;
