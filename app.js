@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.0
+ * THIS FILE IS VERSION: 1.13.1
  * Last updated: 2026-05-23
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.1  - Planner IC picker: three-tier confidence indicator (Strong/Partial/Weak, normalised to top suggestion) on intention-suggested ICs; always-visible "Create new IC" that opens the stub modal and auto-links the new stub to the lesson
  * v1.13.0  - Planner consolidation (step 1): retired Plan & Log and the legacy Weekly Planner; renderPlanner is now the single canonical Weekly Planner. New lesson schema (weekKey, intention, linkedICIds, position); ICs linked 1-3 per lesson via intention-driven suggestion + manual search/tick; week navigation; legacy planning localStorage wiped (clean start)
  * v1.12.58 - Stub IC Sheets persistence: loadStubICsFromSheets() at init merges persisted stubs (stub wins on ID collision); saveStubIC fire-and-forget POSTs to Apps Script after push
  * v1.12.57 - Stub modal: subject + year level selectors before descriptor, descriptor datalist filtered by subject+year, defaults from wizard context, locked state when descriptor pre-filled
@@ -63,7 +64,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.13.1';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -307,7 +308,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], weekKey: null },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, weekKey: null, pendingStubForLessonId: null },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -1191,11 +1192,20 @@ function plannerICResultsHtml(lesson) {
     resultIcs = pool.slice(0, 20);
   }
 
+  // Always-visible create action, pinned to the bottom of the results list.
+  const createRow = `<button class="planner-ic-create" type="button" onclick="plannerOpenCreateICModal()">+ Create new IC</button>`;
+
   if (!resultIcs.length) {
-    return `<div class="planner-ic-empty">${subject
+    const msg = subject
       ? 'No matching ICs. Try the search box, or write the intention and tap Suggest.'
-      : 'Choose a subject to see its ICs, or type the learning intention and tap Suggest.'}</div>`;
+      : 'Choose a subject to see its ICs, or type the learning intention and tap Suggest.';
+    return `<div class="planner-ic-empty">${msg}</div>${createRow}`;
   }
+
+  // Confidence is meaningful only for intention suggestions (not text search/browse).
+  const scores = state.plannerUi.suggestionScores || {};
+  const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
+  const maxScore = showConfidence ? Math.max(1, ...Object.values(scores).filter(n => typeof n === 'number')) : 0;
 
   const byDescriptor = {};
   resultIcs.forEach(ic => {
@@ -1203,9 +1213,10 @@ function plannerICResultsHtml(lesson) {
     (byDescriptor[key] = byDescriptor[key] || []).push(ic);
   });
 
-  return Object.entries(byDescriptor).map(([code, ics]) => {
+  const groupsHtml = Object.entries(byDescriptor).map(([code, ics]) => {
     const cd = state.curriculumCodes.find(c => c.Code === code);
     const descText = cd ? (cd.Descriptor || cd.Aspect || '') : '';
+    const conf = showConfidence ? plannerConfidenceTier(scores[code] || 0, maxScore) : null;
     return `
       <div class="planner-ic-group">
         <div class="planner-ic-group-head">
@@ -1217,11 +1228,26 @@ function plannerICResultsHtml(lesson) {
           return `<button class="planner-ic-option ${on ? 'is-on' : ''}" type="button" onclick="plannerToggleLessonIC('${plannerJsStr(ic.id)}')">
             <span class="planner-ic-tick">${on ? '✓' : '+'}</span>
             <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
+            ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
           </button>`;
         }).join('')}
       </div>
     `;
   }).join('');
+
+  return groupsHtml + createRow;
+}
+
+// Bucket a descriptor's intention-match score into a three-tier confidence label,
+// normalised to the top-ranked suggestion (raw scores scale with intention length,
+// so absolute cut-offs don't generalise). Boundaries from the observed distribution:
+// top cluster >=0.80 strong, mid 0.50-0.79 partial, tail <0.50 weak.
+function plannerConfidenceTier(score, maxScore) {
+  if (!score || !maxScore) return null;
+  const ratio = score / maxScore;
+  if (ratio >= 0.80) return { key: 'strong', label: 'Strong' };
+  if (ratio >= 0.50) return { key: 'partial', label: 'Partial' };
+  return { key: 'weak', label: 'Weak' };
 }
 
 function plannerEnsureUiState() {
@@ -1231,6 +1257,8 @@ function plannerEnsureUiState() {
   if (typeof state.plannerUi.draggingLessonId === 'undefined') state.plannerUi.draggingLessonId = null;
   if (typeof state.plannerUi.icSearch !== 'string') state.plannerUi.icSearch = '';
   if (!Array.isArray(state.plannerUi.suggestedICIds)) state.plannerUi.suggestedICIds = [];
+  if (!state.plannerUi.suggestionScores || typeof state.plannerUi.suggestionScores !== 'object') state.plannerUi.suggestionScores = {};
+  if (typeof state.plannerUi.pendingStubForLessonId === 'undefined') state.plannerUi.pendingStubForLessonId = null;
   if (!isValidIsoDate(state.plannerUi.weekKey)) state.plannerUi.weekKey = plannerNormalizeWeekStart(loadPlannerWeek());
 }
 
@@ -1480,21 +1508,24 @@ function plannerSuggestICsFromIntention() {
     intention.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4)
   )].slice(0, 25);
 
-  const rankedCodes = state.curriculumCodes
+  const ranked = state.curriculumCodes
     .filter(c => c.Subject === lesson.subject && isCurriculumCodeEnabled(c))
     .map(row => ({ code: row.Code, score: plannerScoreDescriptor(row, tokens) }))
     .filter(r => r.score > 0)
     .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code))
-    .slice(0, 8)
-    .map(r => r.code);
+    .slice(0, 8);
+
+  const scores = {};
+  ranked.forEach(r => { scores[r.code] = r.score; });
 
   const suggested = [];
-  rankedCodes.forEach(code => {
+  ranked.forEach(({ code }) => {
     getICsForDescriptor(code).forEach(ic => { if (!suggested.includes(ic.id)) suggested.push(ic.id); });
   });
 
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = suggested;
+  state.plannerUi.suggestionScores = scores;
 
   const searchInput = document.getElementById('planner-ic-search');
   if (searchInput) searchInput.value = '';
@@ -1507,6 +1538,17 @@ function plannerSuggestICsFromIntention() {
       : 'No IC matches from that intention — try the search box.',
     suggested.length ? 'success' : 'info'
   );
+}
+
+// "Create new IC" from the planner: open the existing stub-creation modal and,
+// on successful save, auto-link the new stub to the lesson being edited.
+function plannerOpenCreateICModal() {
+  plannerEnsureUiState();
+  const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
+  if (!lesson) return;
+  if ((lesson.linkedICIds || []).length >= 3) { toast('A lesson can link at most 3 ICs', 'error'); return; }
+  state.plannerUi.pendingStubForLessonId = lesson.id;
+  openStubICModal(undefined, lesson.subject || '');
 }
 
 function normalizeLessonPlan(raw = {}) {
@@ -6610,12 +6652,18 @@ function getStubDescriptorOptions(subject, year) {
     .join('');
 }
 
-function openStubICModal(descriptorCode) {
+function closeStubICModal() {
+  if (state.plannerUi) state.plannerUi.pendingStubForLessonId = null;
+  const overlay = document.getElementById('stub-ic-overlay');
+  if (overlay) overlay.remove();
+}
+
+function openStubICModal(descriptorCode, defaultSubjectOverride) {
   const locked = !!descriptorCode;
   const cd = locked ? state.curriculumCodes.find(c => c.Code === descriptorCode) : null;
 
   const allSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
-  const defaultSubject = locked ? (cd?.Subject || '') : (dlState.selectedSubject || allSubjects[0] || '');
+  const defaultSubject = locked ? (cd?.Subject || '') : (defaultSubjectOverride || dlState?.selectedSubject || allSubjects[0] || '');
   const subjectDisabled = locked || allSubjects.length <= 1;
 
   const defaultYear = locked ? (cd?.['Year Level'] || '') : getStubDefaultYear();
@@ -6640,7 +6688,7 @@ function openStubICModal(descriptorCode) {
           <div style="font-family:'Fraunces',serif;font-size:15px;margin-bottom:4px">Create Draft IC</div>
           ${locked ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${escapeHtml(descriptorCode)}</div>` : ''}
         </div>
-        <button onclick="document.getElementById('stub-ic-overlay').remove()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px;line-height:1">✕</button>
+        <button onclick="closeStubICModal()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px;line-height:1">✕</button>
       </div>
       <div style="padding:18px 20px">
         <div style="margin-bottom:14px">
@@ -6683,7 +6731,7 @@ function openStubICModal(descriptorCode) {
             style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif">
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
-          <button onclick="document.getElementById('stub-ic-overlay').remove()"
+          <button onclick="closeStubICModal()"
             style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:13px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
             Cancel
           </button>
@@ -6797,14 +6845,36 @@ function saveStubIC() {
     }
   })();
 
-  if (!dlState.selectedICs.includes(newIC.id)) {
-    dlState.selectedICs.push(newIC.id);
-  }
-  dlRecalcSelectedCodes();
   updateStubBadge();
 
   const overlay = document.getElementById('stub-ic-overlay');
   if (overlay) overlay.remove();
+
+  // Planner context: auto-link the new stub to the lesson being edited (mirrors
+  // ticking an existing IC), then stop — the wizard-specific updates don't apply.
+  const plannerLessonId = state.plannerUi && state.plannerUi.pendingStubForLessonId;
+  if (plannerLessonId) {
+    state.plannerUi.pendingStubForLessonId = null;
+    const li = state.lessonPlans.findIndex(l => l.id === plannerLessonId);
+    if (li >= 0) {
+      const linked = Array.isArray(state.lessonPlans[li].linkedICIds) ? [...state.lessonPlans[li].linkedICIds] : [];
+      if (linked.length >= 3) {
+        toast(`Draft IC "${name}" created, but the lesson already has 3 ICs`, 'info');
+      } else {
+        linked.push(newIC.id);
+        state.lessonPlans[li] = { ...state.lessonPlans[li], linkedICIds: linked };
+        saveLessonPlansState();
+        toast(`Draft IC "${name}" created and linked to the lesson`, 'success');
+      }
+    }
+    if (state.currentView === 'planner') renderView();
+    return;
+  }
+
+  if (!dlState.selectedICs.includes(newIC.id)) {
+    dlState.selectedICs.push(newIC.id);
+  }
+  dlRecalcSelectedCodes();
 
   dlStep2ICSearch = '';
   dlFilterCodes();
