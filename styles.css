@@ -603,6 +603,19 @@ body[data-text-size="large"] {
 .mb-nottaught { background: var(--status-neutral-bg); color: var(--status-neutral-text); border-color: var(--status-neutral-border); }
 .mastery-badge:hover { filter: brightness(1.2); }
 
+/* Linked-IC rollup badge — additive evidence surfaced on tethered descriptors. */
+.ic-rollup-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  margin-left: 6px;
+  font-family: 'DM Mono', monospace;
+  white-space: nowrap;
+}
+.ic-rollup-badge.ic-rollup-got_it       { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.ic-rollup-badge.ic-rollup-needs_review { background: var(--rust-dim);  color: var(--rust);  border: 1px solid var(--rust);  }
+.ic-rollup-badge.ic-rollup-taught       { background: var(--blue-dim);  color: var(--blue);  border: 1px solid var(--blue);  }
+
 .aspect-tag {
   font-size: 11px;
   color: var(--text3);
