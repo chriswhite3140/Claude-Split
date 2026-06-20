@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.4
+ * THIS FILE IS VERSION: 1.13.5
  * Last updated: 2026-06-20
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.5  - IC skill rollup fix: Coverage Gaps now rolls up linked ICs with OR per student (any one tethered got_it = met) instead of counting each tethered IC as required — removes false gaps on multi-context Science inquiry descriptors; shared rollUpICStatuses helper keeps the coverage bar and Bulk Assess badge in step
  * v1.13.4  - IC skill rollup: linkedDescriptorIds now surface IC outcomes on tethered CDs in Bulk Assess and Coverage Gaps (OR scoring: got_it on any one linked IC = met)
  * v1.13.3  - Planner IC picker fix: confidence now normalises against descriptors that actually render (ranked descriptors with no loaded ICs no longer deflate every visible match to partial); suggestion groups flattened by score across descriptors (strong, then partial, then "Create new IC", then weak), not taxonomy order
  * v1.13.2  - Planner IC picker: order suggestion results by confidence — strong first, then partial, then the "Create new IC" action, then weak matches at the very bottom (ordering only; scoring/thresholds unchanged)
@@ -67,7 +68,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.4';
+const APP_VERSION = '1.13.5';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -2027,8 +2028,21 @@ function renderClassOverview(main) {
         ic.homeDescriptorId !== c.Code
       );
       const rowICs = [...systemICs, ...linkedICs];
-      const allIcIds = rowICs.map(ic => ic.id);
-      const descCounts = getICStudentCounts(allIcIds, activeStudents);
+      // Coverage counts: home ICs counted per-IC (each is a required component); linked
+      // ICs rolled up with OR per student (any one tethered got_it = met) so a descriptor
+      // tethered to several contexts doesn't read as a false gap. Linked ICs stay
+      // display/rollup only and never feed the 80% mastery gate.
+      const descCounts = getICStudentCounts(systemICs.map(ic => ic.id), activeStudents);
+      if (linkedICs.length) {
+        activeStudents.forEach(s => {
+          const st = rollUpICStatuses(linkedICs.map(ic => getTaughtICStatus(s.id, ic.id)).filter(Boolean));
+          descCounts.total++;
+          if (st === 'got_it')            descCounts.gotIt++;
+          else if (st === 'needs_review') descCounts.needsReview++;
+          else if (st === 'taught')       descCounts.taught++;
+          else                            descCounts.notTaught++;
+        });
+      }
       const descPct = descCounts.total
         ? Math.round((descCounts.taught + descCounts.gotIt) / descCounts.total * 100)
         : null;
@@ -7916,6 +7930,16 @@ function getTaughtICStatus(studentId, icId) {
   return records[0].status;
 }
 
+// Collapse a set of per-IC statuses into one OR-rolled status (Option A): any got_it
+// wins, then needs_review, then taught, else null. Shared by the linked-IC rollup
+// (Bulk Assess badge) and the Coverage Gaps linked-IC counting so they stay in step.
+function rollUpICStatuses(statuses) {
+  if (statuses.includes('got_it') || statuses.includes('mastered')) return 'got_it';
+  if (statuses.includes('needs_review') || statuses.includes('not_yet')) return 'needs_review';
+  if (statuses.includes('taught')) return 'taught';
+  return null;
+}
+
 // Best IC status a student has across every IC that lists descriptorId in its
 // linkedDescriptorIds (tethered skill ICs — e.g. Science inquiry — homed under a
 // knowledge CD but surfacing evidence against the linked inquiry CD).
@@ -7928,15 +7952,7 @@ function getLinkedICStatusForDescriptor(studentId, descriptorId) {
     ic.linkedDescriptorIds.includes(descriptorId)
   );
   if (!linkedICs.length) return null;
-
-  const statuses = linkedICs
-    .map(ic => getTaughtICStatus(studentId, ic.id))
-    .filter(Boolean);
-
-  if (statuses.includes('got_it') || statuses.includes('mastered')) return 'got_it';
-  if (statuses.includes('needs_review') || statuses.includes('not_yet')) return 'needs_review';
-  if (statuses.includes('taught')) return 'taught';
-  return null;
+  return rollUpICStatuses(linkedICs.map(ic => getTaughtICStatus(studentId, ic.id)).filter(Boolean));
 }
 
 function getICsForDescriptorAndYears(descriptorId, yearLevels) {
