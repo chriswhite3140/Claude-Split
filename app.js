@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.3
- * Last updated: 2026-05-23
+ * THIS FILE IS VERSION: 1.13.4
+ * Last updated: 2026-06-20
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.4  - IC skill rollup: linkedDescriptorIds now surface IC outcomes on tethered CDs in Bulk Assess and Coverage Gaps (OR scoring: got_it on any one linked IC = met)
  * v1.13.3  - Planner IC picker fix: confidence now normalises against descriptors that actually render (ranked descriptors with no loaded ICs no longer deflate every visible match to partial); suggestion groups flattened by score across descriptors (strong, then partial, then "Create new IC", then weak), not taxonomy order
  * v1.13.2  - Planner IC picker: order suggestion results by confidence — strong first, then partial, then the "Create new IC" action, then weak matches at the very bottom (ordering only; scoring/thresholds unchanged)
  * v1.13.1  - Planner IC picker: three-tier confidence indicator (Strong/Partial/Weak, normalised to top suggestion) on intention-suggested ICs; always-visible "Create new IC" that opens the stub modal and auto-links the new stub to the lesson
@@ -66,7 +67,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.3';
+const APP_VERSION = '1.13.4';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -1902,10 +1903,12 @@ function renderClassOverview(main) {
     }
 
     // Build set of descriptor IDs that have at least one system default IC
+    // Include both home and linked (tethered) descriptors so a CD that only receives
+    // evidence via linkedDescriptorIds (e.g. a Science inquiry CD) still renders a row.
     const descriptorsWithICs = new Set(
       state.instructionalComponents
         .filter(ic => ic.ownerTier === 'system_default' && !ic.isArchived)
-        .map(ic => ic.homeDescriptorId)
+        .flatMap(ic => [ic.homeDescriptorId, ...ic.linkedDescriptorIds])
         .filter(Boolean)
     );
 
@@ -2012,10 +2015,19 @@ function renderClassOverview(main) {
     // Render a descriptor row (click to expand/collapse IC sub-rows).
     // Key uses 'desc|{code}' prefix — distinct from subject keys, 'subj|strand' keys, and 'icchip|…' keys.
     function renderDescriptorRow(c) {
+      // ICs homed on this descriptor (these alone drive the 80% mastery gate elsewhere).
       const systemICs = state.instructionalComponents.filter(ic =>
         ic.ownerTier === 'system_default' && !ic.isArchived && ic.homeDescriptorId === c.Code
       );
-      const allIcIds = systemICs.map(ic => ic.id);
+      // Tethered ICs — homed on another CD but listing this CD in linkedDescriptorIds.
+      // Optional/display-only: counted here for coverage/rollup, never in the mastery gate.
+      const linkedICs = state.instructionalComponents.filter(ic =>
+        ic.ownerTier === 'system_default' && !ic.isArchived &&
+        ic.linkedDescriptorIds.includes(c.Code) &&
+        ic.homeDescriptorId !== c.Code
+      );
+      const rowICs = [...systemICs, ...linkedICs];
+      const allIcIds = rowICs.map(ic => ic.id);
       const descCounts = getICStudentCounts(allIcIds, activeStudents);
       const descPct = descCounts.total
         ? Math.round((descCounts.taught + descCounts.gotIt) / descCounts.total * 100)
@@ -2024,13 +2036,14 @@ function renderClassOverview(main) {
       const descKey = 'desc|' + c.Code;
       const descOpen = !!state.icCoverageOpen[descKey];
 
-      const icRows = descOpen ? systemICs.map(ic => {
+      const icRows = descOpen ? rowICs.map(ic => {
         const icCounts = getICStudentCounts([ic.id], activeStudents);
+        const isLinked = ic.homeDescriptorId !== c.Code;
         const label = ic.name || ic.id;
         return `<div style="padding:6px 16px 6px 48px;border-bottom:1px solid var(--border);background:var(--surface)">
           <div style="display:flex;align-items:center;gap:12px">
             <div style="min-width:120px;flex-shrink:0">
-              <div style="font-family:'Instrument Sans',sans-serif;font-size:12px;color:var(--text-muted);line-height:1.4">${escapeHtml(label.length > 60 ? label.slice(0, 60) + '…' : label)}</div>
+              <div style="font-family:'Instrument Sans',sans-serif;font-size:12px;color:var(--text-muted);line-height:1.4">${escapeHtml(label.length > 60 ? label.slice(0, 60) + '…' : label)}${isLinked ? ` <span title="Tethered skill IC — homed on ${escapeHtml(ic.homeDescriptorId)}" style="font-family:'DM Mono',monospace;font-size:8px;color:var(--blue);border:1px solid var(--blue);border-radius:6px;padding:1px 5px;white-space:nowrap">↳ ${escapeHtml(ic.homeDescriptorId)}</span>` : ''}</div>
             </div>
             <div style="flex:1;min-width:0"></div>
             ${renderCoverageBar(icCounts)}
@@ -3539,6 +3552,19 @@ function renderBulkAssess(main) {
     }).join('');
   }
 
+  // Additive linked-IC evidence badge. Surfaces only where the teacher has no explicit
+  // progress rating for this descriptor — the four buttons stay authoritative; this never
+  // overrides them. OR rollup via getLinkedICStatusForDescriptor.
+  function icRollupBadge(studentId, code) {
+    const hasExplicit = state.progress.some(p => p.student_id === studentId && p.code === code);
+    if (hasExplicit) return '';
+    const linkedStatus = getLinkedICStatusForDescriptor(studentId, code);
+    if (!linkedStatus) return '';
+    const labels = { got_it: 'IC ✓', taught: 'IC •', needs_review: 'IC ↻' };
+    const titles = { got_it: 'got it', taught: 'taught', needs_review: 'needs review' };
+    return `<span class="ic-rollup-badge ic-rollup-${linkedStatus}" title="Evidence from linked IC: ${titles[linkedStatus]}">${labels[linkedStatus] || 'IC'}</span>`;
+  }
+
   function buildByCode() {
     const code = ba.selectedCode;
     const cd = code ? state.curriculumCodes.find(c => c.Code===code) : null;
@@ -3566,7 +3592,7 @@ function renderBulkAssess(main) {
                     <div><div style="font-size:13px;font-weight:600">${s.last_name}, ${s.first_name}</div><div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Yr ${s.year_level}${changed?' · <span style="color:var(--gold)">changed</span>':''}</div></div>
                   </div>
                 </td>
-                <td style="padding:8px 16px"><div style="display:flex;gap:6px;flex-wrap:wrap">${masteryBtns(key, current)}</div></td>
+                <td style="padding:8px 16px"><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${masteryBtns(key, current)}${icRollupBadge(s.id, code)}</div></td>
               </tr>`;
             }).join('')}
           </tbody></table></div>
@@ -3609,7 +3635,7 @@ function renderBulkAssess(main) {
         return `<tr style="background:${getStripedRowSurface(ci)}${changed?';box-shadow:inset 3px 0 0 var(--gold)':''}">
           <td style="padding:10px 16px;width:140px;vertical-align:top;padding-top:12px"><span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--blue)">${c.Code}</span></td>
           <td style="padding:8px 8px;font-size:11px;color:var(--text-muted);line-height:1.4;max-width:300px;vertical-align:top;padding-top:12px">${c.Descriptor||c.Aspect||'—'}</td>
-          <td style="padding:8px 16px;vertical-align:top;padding-top:8px"><div style="display:flex;gap:4px;flex-wrap:wrap">${masteryBtns(key, current)}</div></td>
+          <td style="padding:8px 16px;vertical-align:top;padding-top:8px"><div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${masteryBtns(key, current)}${icRollupBadge(student.id, c.Code)}</div></td>
         </tr>`;
       }).join('');
     })();
@@ -7888,6 +7914,29 @@ function getTaughtICStatus(studentId, icId) {
   if (!records.length) return null;
   records.sort((a, b) => new Date(b.date) - new Date(a.date));
   return records[0].status;
+}
+
+// Best IC status a student has across every IC that lists descriptorId in its
+// linkedDescriptorIds (tethered skill ICs — e.g. Science inquiry — homed under a
+// knowledge CD but surfacing evidence against the linked inquiry CD).
+// OR rollup (Option A): got_it on any one linked IC = met. Display/evidence only;
+// these ICs are optional and never feed the 80% mastery gate.
+function getLinkedICStatusForDescriptor(studentId, descriptorId) {
+  const linkedICs = state.instructionalComponents.filter(ic =>
+    !ic.isArchived &&
+    !(ic.ownerTier === 'system_default' && ic.suppressedByTeacher) &&
+    ic.linkedDescriptorIds.includes(descriptorId)
+  );
+  if (!linkedICs.length) return null;
+
+  const statuses = linkedICs
+    .map(ic => getTaughtICStatus(studentId, ic.id))
+    .filter(Boolean);
+
+  if (statuses.includes('got_it') || statuses.includes('mastered')) return 'got_it';
+  if (statuses.includes('needs_review') || statuses.includes('not_yet')) return 'needs_review';
+  if (statuses.includes('taught')) return 'taught';
+  return null;
 }
 
 function getICsForDescriptorAndYears(descriptorId, yearLevels) {
