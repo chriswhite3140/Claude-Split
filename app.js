@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.12.69
+ * THIS FILE IS VERSION: 1.13.3
  * Last updated: 2026-05-23
  * ============================================================
  *
@@ -10,6 +10,10 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.3  - Planner IC picker fix: confidence now normalises against descriptors that actually render (ranked descriptors with no loaded ICs no longer deflate every visible match to partial); suggestion groups flattened by score across descriptors (strong, then partial, then "Create new IC", then weak), not taxonomy order
+ * v1.13.2  - Planner IC picker: order suggestion results by confidence — strong first, then partial, then the "Create new IC" action, then weak matches at the very bottom (ordering only; scoring/thresholds unchanged)
+ * v1.13.1  - Planner IC picker: three-tier confidence indicator (Strong/Partial/Weak, normalised to top suggestion) on intention-suggested ICs; always-visible "Create new IC" that opens the stub modal and auto-links the new stub to the lesson
+ * v1.13.0  - Planner consolidation (step 1): retired Plan & Log and the legacy Weekly Planner; renderPlanner is now the single canonical Weekly Planner. New lesson schema (weekKey, intention, linkedICIds, position); ICs linked 1-3 per lesson via intention-driven suggestion + manual search/tick; week navigation; legacy planning localStorage wiped (clean start)
  * v1.12.58 - Stub IC Sheets persistence: loadStubICsFromSheets() at init merges persisted stubs (stub wins on ID collision); saveStubIC fire-and-forget POSTs to Apps Script after push
  * v1.12.57 - Stub modal: subject + year level selectors before descriptor, descriptor datalist filtered by subject+year, defaults from wizard context, locked state when descriptor pre-filled
  * v1.12.56 - Stub modal: optional descriptorCode param, descriptor selector first field (searchable datalist), name auto-fills from descriptor, locked when pre-filled; AI suggester adds stub link below results
@@ -62,13 +66,13 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.72';
-const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
+const APP_VERSION = '1.13.3';
+const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
 const APP_UI_STATE_STORAGE_KEY = 'ct_ui_state_v1';
 const RESTORABLE_VIEWS = new Set([
-  'dashboard', 'students', 'overview', 'bulk-assess', 'daily-log', 'planner', 'plan-log', 'weekly-planner',
+  'dashboard', 'students', 'overview', 'bulk-assess', 'daily-log', 'planner',
   'coverage', 'standards-judgments', 'progression-placement', 'admin', 'curriculum', 'standards', 'progressions'
 ]);
 let systemThemeMediaQuery = null;
@@ -77,7 +81,6 @@ function loadUIState() {
   try {
     const parsed = JSON.parse(localStorage.getItem(APP_UI_STATE_STORAGE_KEY) || '{}');
     let currentView = RESTORABLE_VIEWS.has(parsed?.currentView) ? parsed.currentView : 'dashboard';
-    if (currentView === 'plan-log' || currentView === 'weekly-planner') currentView = 'planner';
     return { currentView };
   } catch (e) {
     return { currentView: 'dashboard' };
@@ -309,14 +312,8 @@ let state = {
   // Stored in localStorage so it persists across sessions
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
-  planLog: loadPlanLogState(),
-  weeklyPlanner: loadWeeklyPlannerState(),
   lessonPlans: loadLessonPlansState(),
-  plannerUi: {
-    selectedLessonId: null,
-    drawerOpen: false,
-    draggingLessonId: null,
-  },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, weekKey: null, pendingStubForLessonId: null },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -960,8 +957,6 @@ function renderView() {
     case 'bulk-assess':             renderBulkAssess(main); break;
     case 'daily-log':               renderDailyLog(main); break;
     case 'planner':                 renderPlanner(main); break;
-    case 'plan-log':                renderPlanLog(main); break;
-    case 'weekly-planner':          renderWeeklyPlanner(main); break;
     case 'coverage':                renderCoverage(main); break;
     case 'standards-judgments':     renderStandardsJudgments(main); break;
     case 'progression-placement':   renderProgressionPlacement(main); break;
@@ -971,6 +966,21 @@ function renderView() {
     case 'progressions':            renderProgressions(main); break;
     default:                        renderDashboard(main);
   }
+}
+
+// ════════════════════════════════════════════════════
+// ── WEEKLY PLANNER (canonical planning surface) ──
+// One consolidated planner: weekly board (Unscheduled + Mon–Fri), lesson drawer,
+// IC linking (1–3 per lesson), drag/drop, week navigation. Lessons persist to
+// localStorage for now (Sheets persistence is step two).
+// ════════════════════════════════════════════════════
+
+const PLANNER_WEEK_STORAGE_KEY = 'ct_planner_week_v1';
+
+// Escape a value for safe interpolation inside a single-quoted JS string in an
+// inline on* handler (guards against ids containing a backslash or apostrophe).
+function plannerJsStr(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 function renderPlanner(main) {
@@ -984,46 +994,34 @@ function renderPlanner(main) {
   ];
 
   if (!Array.isArray(state.lessonPlans)) state.lessonPlans = [];
-  plannerSeedLessonPlansFromWeeklyBlocks();
-  if (!state.plannerUi || typeof state.plannerUi !== 'object') {
-    state.plannerUi = { selectedLessonId: null, drawerOpen: false, draggingLessonId: null };
-  }
+  plannerEnsureUiState();
 
-  const selectedLesson = state.lessonPlans.find(lesson => lesson.id === state.plannerUi.selectedLessonId) || null;
+  const weekKey = plannerSelectedWeekKey();
+  const weekLessons = state.lessonPlans.filter(lesson => lesson.weekKey === weekKey);
+
+  // Scope the selected lesson to the displayed week so navigating weeks doesn't
+  // leave the drawer editing a now-hidden lesson from another week.
+  const selectedLesson = weekLessons.find(lesson => lesson.id === state.plannerUi.selectedLessonId) || null;
   if (!selectedLesson) {
     state.plannerUi.selectedLessonId = null;
     state.plannerUi.drawerOpen = false;
   }
 
+  const noICsLoaded = !state.instructionalComponents.some(ic => !ic.isArchived);
+
   const boardColumns = plannerDays.map(day => {
-    const dayLessons = state.lessonPlans.filter(lesson => lesson.dayKey === day.key);
+    const dayLessons = weekLessons
+      .filter(lesson => lesson.dayKey === day.key)
+      .sort((a, b) => (a.position || 0) - (b.position || 0));
     return `
       <section class="planner-lesson-column">
         <div class="planner-lesson-column-head">${day.label}</div>
         <div class="planner-lesson-column-body" ondragover="plannerAllowLessonDrop(event)" ondrop="plannerDropLessonToDay(event, '${day.key}')" ondragleave="plannerLessonDropLeave(event)">
           ${dayLessons.length === 0
             ? `<div class="planner-lesson-empty">No lessons</div>`
-            : dayLessons.map(lesson => `
-              <div class="planner-lesson-card-wrap">
-                <button
-                  class="planner-lesson-card ${state.plannerUi.selectedLessonId === lesson.id ? 'is-selected' : ''}"
-                  onclick="plannerOpenLessonDrawer('${lesson.id}')"
-                  draggable="true"
-                  ondragstart="plannerStartLessonDrag(event, '${lesson.id}')"
-                  ondragend="plannerEndLessonDrag(event)"
-                  type="button"
-                >
-                  <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
-                  <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
-                  ${lesson.shortDescription ? `<div class="planner-lesson-card-desc">${escapeHtml(lesson.shortDescription)}</div>` : ''}
-                </button>
-                <div class="planner-inline-actions">
-                  <button class="planner-mini-btn" type="button" onclick="plannerDuplicateLesson('${lesson.id}')">Duplicate</button>
-                  <button class="planner-mini-btn" type="button" onclick="plannerDeleteLesson('${lesson.id}')">Delete</button>
-                </div>
-              </div>
-            `).join('')
+            : dayLessons.map(lesson => plannerLessonCardHtml(lesson)).join('')
           }
+          <button class="planner-add-in-column" type="button" onclick="plannerAddLesson('${day.key}')">+ Add</button>
         </div>
       </section>
     `;
@@ -1032,10 +1030,13 @@ function renderPlanner(main) {
   main.innerHTML = `
     <div class="topbar" style="padding:14px 24px">
       <div>
-        <div class="topbar-title">Planner</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:2px">Weekly board with lesson drawer editing.</div>
+        <div class="topbar-title">Weekly Planner</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:2px">${escapeHtml(plannerWeekRangeLabel(weekKey))}</div>
       </div>
-      <div class="topbar-actions">
+      <div class="topbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn" type="button" onclick="plannerShiftWeek(-1)">‹ Prev</button>
+        <button class="btn" type="button" onclick="plannerGoToThisWeek()">This week</button>
+        <button class="btn" type="button" onclick="plannerShiftWeek(1)">Next ›</button>
         <button class="btn btn-primary" id="planner-add-lesson-btn" type="button" onclick="plannerAddLesson()">+ Add Lesson</button>
       </div>
     </div>
@@ -1043,8 +1044,10 @@ function renderPlanner(main) {
       <section class="card planner-shell-board">
         <div class="card-head">
           <div class="card-title">Week Board</div>
-          <div style="font-size:12px;color:var(--text3)">Click a lesson card to edit</div>
+          <div style="font-size:12px;color:var(--text3)">Click a lesson card to edit · drag to move between days</div>
         </div>
+        ${noICsLoaded ? `<div class="planner-banner">No Instructional Components are loaded yet — lessons need at least one IC. Load curriculum/IC data first.</div>` : ''}
+        ${weekLessons.length === 0 ? `<div class="planner-empty-week">No lessons for this week yet. Use <strong>+ Add Lesson</strong> to create one.</div>` : ''}
         <div class="planner-lesson-board">
           ${boardColumns}
         </div>
@@ -1054,62 +1057,278 @@ function renderPlanner(main) {
           <div class="card-title">Lesson Drawer</div>
           <div style="font-size:12px;color:var(--text3)">${state.plannerUi.drawerOpen && selectedLesson ? 'Editing selected lesson' : 'Select a lesson card'}</div>
         </div>
-        ${state.plannerUi.drawerOpen && selectedLesson ? `
-          <div style="padding:16px">
-            <div class="form-group">
-              <label class="form-label">Title</label>
-              <input class="form-input" type="text" value="${escapeHtml(selectedLesson.title || '')}" oninput="plannerUpdateSelectedLessonField('title', this.value)">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Short description</label>
-              <textarea class="form-input" rows="3" oninput="plannerUpdateSelectedLessonField('shortDescription', this.value)">${escapeHtml(selectedLesson.shortDescription || '')}</textarea>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Subject</label>
-              <select class="form-input" onchange="plannerUpdateSelectedLessonField('subject', this.value)">
-                <option value="">— select subject —</option>
-                ${PLANNER_SUBJECTS.map(s => `<option value="${s}" ${selectedLesson.subject === s ? 'selected' : ''}>${s}</option>`).join('')}
-              </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">Day</label>
-              <select class="form-input" onchange="plannerUpdateSelectedLessonField('dayKey', this.value)">
-                ${plannerDays.map(day => `<option value="${day.key}" ${selectedLesson.dayKey === day.key ? 'selected' : ''}>${day.label}</option>`).join('')}
-              </select>
-            </div>
-          </div>
-        ` : `
-          <div class="planner-shell-placeholder">
-            Select any lesson card from the weekly board to open editing.
-          </div>
-        `}
+        ${state.plannerUi.drawerOpen && selectedLesson
+          ? plannerDrawerHtml(selectedLesson, plannerDays)
+          : `<div class="planner-shell-placeholder">Select any lesson card from the weekly board to open editing.</div>`}
       </aside>
     </div>
   `;
 }
 
-function plannerSeedLessonPlansFromWeeklyBlocks() {
-  if (state.lessonPlans.length > 0) return;
-  const weekData = getPlannerWeekData();
-  const seeded = (weekData.blocks || [])
-    .slice()
-    .sort((a, b) => (a.day - b.day) || (a.period - b.period))
-    .map(block => ({
-      id: `lesson_${block.id}`,
-      title: block.title || '',
-      shortDescription: block.notes || '',
-      subject: block.subject || '',
-      dayKey: ['mon', 'tue', 'wed', 'thu', 'fri'][Math.max(0, Math.min(4, Number(block.day) || 0))],
-    }));
-  state.lessonPlans = seeded;
-  saveLessonPlansState();
+function plannerLessonCardHtml(lesson) {
+  const isSelected = state.plannerUi.selectedLessonId === lesson.id;
+  const isTaught = lesson.status === 'taught';
+  const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
+  const incomplete = icCount === 0;
+  return `
+    <div class="planner-lesson-card-wrap">
+      <button
+        class="planner-lesson-card ${isSelected ? 'is-selected' : ''} ${isTaught ? 'is-taught' : ''} ${incomplete ? 'is-incomplete' : ''}"
+        onclick="plannerOpenLessonDrawer('${plannerJsStr(lesson.id)}')"
+        draggable="true"
+        ondragstart="plannerStartLessonDrag(event, '${plannerJsStr(lesson.id)}')"
+        ondragend="plannerEndLessonDrag(event)"
+        type="button"
+      >
+        <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+        <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
+        <div class="planner-lesson-card-tags">
+          ${plannerLessonICSummaryHtml(lesson)}
+          <span class="planner-status-pill ${isTaught ? 'is-taught' : ''}">${isTaught ? 'Taught' : 'Planned'}</span>
+          ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
+        </div>
+      </button>
+      <div class="planner-inline-actions">
+        <button class="planner-mini-btn" type="button" onclick="plannerDuplicateLesson('${plannerJsStr(lesson.id)}')">Duplicate</button>
+        <button class="planner-mini-btn" type="button" onclick="plannerDeleteLesson('${plannerJsStr(lesson.id)}')">Delete</button>
+      </div>
+    </div>
+  `;
+}
+
+// Compact IC display for the lesson card: count + up to two short descriptor codes.
+function plannerLessonICSummaryHtml(lesson) {
+  const ids = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : [];
+  if (!ids.length) return '';
+  const codes = [...new Set(ids
+    .map(id => state.instructionalComponents.find(ic => ic.id === id)?.homeDescriptorId)
+    .filter(Boolean))];
+  const countChip = `<span class="planner-ic-chip planner-ic-count">${ids.length} IC${ids.length === 1 ? '' : 's'}</span>`;
+  const shown = codes.slice(0, 2).map(code => `<span class="planner-ic-chip">${escapeHtml(code)}</span>`).join('');
+  const extra = codes.length > 2 ? `<span class="planner-ic-chip">+${codes.length - 2}</span>` : '';
+  return countChip + shown + extra;
+}
+
+function plannerDrawerHtml(lesson, plannerDays) {
+  const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
+  const isTaught = lesson.status === 'taught';
+  return `
+    <div style="padding:16px">
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <input class="form-input" type="text" value="${escapeHtml(lesson.title || '')}" oninput="plannerUpdateSelectedLessonField('title', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Subject</label>
+        <select class="form-input" onchange="plannerUpdateSelectedLessonField('subject', this.value)">
+          <option value="">— select subject —</option>
+          ${PLANNER_SUBJECTS.map(s => `<option value="${s}" ${lesson.subject === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Day</label>
+        <select class="form-input" onchange="plannerUpdateSelectedLessonField('dayKey', this.value)">
+          ${plannerDays.map(day => `<option value="${day.key}" ${lesson.dayKey === day.key ? 'selected' : ''}>${day.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Learning intention</label>
+        <textarea class="form-input" rows="3" placeholder="What am I trying to get kids to do or learn?" oninput="plannerUpdateSelectedLessonField('intention', this.value)">${escapeHtml(lesson.intention || '')}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Instructional Components (1–3) · ${icCount}/3 selected</label>
+        ${icCount === 0 ? `<div class="planner-incomplete-note">This lesson is incomplete — add at least one IC before it can be marked taught.</div>` : ''}
+        <div class="planner-selected-ics">${plannerSelectedICsHtml(lesson)}</div>
+        <div class="planner-ic-controls">
+          <input class="form-input" id="planner-ic-search" type="text" placeholder="Search ICs by name or code" value="${escapeHtml(state.plannerUi.icSearch || '')}" oninput="plannerHandleICSearchInput(this.value)">
+          <button class="btn" type="button" onclick="plannerSuggestICsFromIntention()">Suggest from intention</button>
+        </div>
+        <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0;display:flex;gap:10px;align-items:center">
+        ${isTaught
+          ? `<button class="btn" type="button" onclick="plannerSetLessonStatus('planned')">Mark as planned</button>`
+          : `<button class="btn btn-primary" type="button" onclick="plannerSetLessonStatus('taught')">Mark as taught</button>`}
+        <span style="font-size:12px;color:var(--text3)">Status: ${isTaught ? 'Taught' : 'Planned'}</span>
+      </div>
+    </div>
+  `;
+}
+
+function plannerSelectedICsHtml(lesson) {
+  const ids = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : [];
+  if (!ids.length) return `<div style="font-size:12px;color:var(--text3)">No ICs linked yet.</div>`;
+  return ids.map(id => {
+    const ic = state.instructionalComponents.find(x => x.id === id);
+    const label = ic ? (ic.name || ic.id) : id;
+    const code = ic?.homeDescriptorId ? `<span class="planner-ic-chip">${escapeHtml(ic.homeDescriptorId)}</span> ` : '';
+    return `<span class="planner-selected-ic">${code}${escapeHtml(label)}<button class="planner-ic-remove" type="button" onclick="plannerToggleLessonIC('${plannerJsStr(id)}')" title="Remove IC">×</button></span>`;
+  }).join('');
+}
+
+// Suggestion/search results for the IC picker, grouped by descriptor.
+function plannerICResultsHtml(lesson) {
+  const subject = lesson.subject || '';
+  const search = (state.plannerUi.icSearch || '').trim().toLowerCase();
+  const selected = new Set(Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : []);
+
+  // Candidate pool: active ICs, scoped to the lesson's subject when one is chosen.
+  let pool = state.instructionalComponents.filter(ic => !ic.isArchived);
+  if (subject) {
+    pool = pool.filter(ic => {
+      const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+      return cd && cd.Subject === subject;
+    });
+  }
+
+  let resultIcs;
+  if (search) {
+    resultIcs = pool.filter(ic =>
+      (ic.name || '').toLowerCase().includes(search) ||
+      (ic.description || '').toLowerCase().includes(search) ||
+      (ic.homeDescriptorId || '').toLowerCase().includes(search)
+    ).slice(0, 30);
+  } else if (Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length) {
+    const sugg = new Set(state.plannerUi.suggestedICIds);
+    resultIcs = pool.filter(ic => sugg.has(ic.id));
+  } else {
+    resultIcs = pool.slice(0, 20);
+  }
+
+  // Always-visible create action, pinned to the bottom of the results list.
+  const createRow = `<button class="planner-ic-create" type="button" onclick="plannerOpenCreateICModal()">+ Create new IC</button>`;
+
+  if (!resultIcs.length) {
+    const msg = subject
+      ? 'No matching ICs. Try the search box, or write the intention and tap Suggest.'
+      : 'Choose a subject to see its ICs, or type the learning intention and tap Suggest.';
+    return `<div class="planner-ic-empty">${msg}</div>${createRow}`;
+  }
+
+  // Confidence is meaningful only for intention suggestions (not text search/browse).
+  const scores = state.plannerUi.suggestionScores || {};
+  const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
+
+  const byDescriptor = {};
+  resultIcs.forEach(ic => {
+    const key = ic.homeDescriptorId || '—';
+    (byDescriptor[key] = byDescriptor[key] || []).push(ic);
+  });
+
+  // Normalise confidence against the descriptors that actually render. Some
+  // ranked descriptors have no loaded ICs and never appear in the list;
+  // including their scores here would deflate the tier of every visible match.
+  const maxScore = showConfidence
+    ? Math.max(1, ...Object.keys(byDescriptor).map(code => scores[code] || 0))
+    : 0;
+
+  const groups = Object.entries(byDescriptor).map(([code, ics]) => {
+    const cd = state.curriculumCodes.find(c => c.Code === code);
+    const descText = cd ? (cd.Descriptor || cd.Aspect || '') : '';
+    const score = scores[code] || 0;
+    const conf = showConfidence ? plannerConfidenceTier(score, maxScore) : null;
+    const html = `
+      <div class="planner-ic-group">
+        <div class="planner-ic-group-head">
+          <span class="planner-ic-group-code">${escapeHtml(code)}</span>
+          ${descText ? `<span class="planner-ic-group-desc">${escapeHtml(descText.slice(0, 70))}${descText.length > 70 ? '…' : ''}</span>` : ''}
+        </div>
+        ${ics.map(ic => {
+          const on = selected.has(ic.id);
+          return `<button class="planner-ic-option ${on ? 'is-on' : ''}" type="button" onclick="plannerToggleLessonIC('${plannerJsStr(ic.id)}')">
+            <span class="planner-ic-tick">${on ? '✓' : '+'}</span>
+            <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
+            ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
+          </button>`;
+        }).join('')}
+      </div>
+    `;
+    return { score, tier: conf ? conf.key : null, html };
+  });
+
+  if (!showConfidence) return groups.map(g => g.html).join('') + createRow;
+
+  // Flatten by confidence across the whole result set: sort descriptor groups by
+  // score (so strong groups, then partial), put the create action after the last
+  // non-weak group, then weak matches at the very bottom — below create.
+  const ordered = groups.slice().sort((a, b) => b.score - a.score);
+  const nonWeak = ordered.filter(g => g.tier !== 'weak').map(g => g.html).join('');
+  const weak = ordered.filter(g => g.tier === 'weak').map(g => g.html).join('');
+  return nonWeak + createRow + weak;
+}
+
+// Bucket a descriptor's intention-match score into a three-tier confidence label,
+// normalised to the top-scoring rendered suggestion (raw scores scale with
+// intention length, so absolute cut-offs don't generalise). Boundaries from the
+// observed distribution: top cluster >=0.80 strong, mid 0.50-0.79 partial, tail <0.50 weak.
+function plannerConfidenceTier(score, maxScore) {
+  if (!score || !maxScore) return null;
+  const ratio = score / maxScore;
+  if (ratio >= 0.80) return { key: 'strong', label: 'Strong' };
+  if (ratio >= 0.50) return { key: 'partial', label: 'Partial' };
+  return { key: 'weak', label: 'Weak' };
+}
+
+function plannerEnsureUiState() {
+  if (!state.plannerUi || typeof state.plannerUi !== 'object') state.plannerUi = {};
+  if (typeof state.plannerUi.selectedLessonId === 'undefined') state.plannerUi.selectedLessonId = null;
+  if (typeof state.plannerUi.drawerOpen === 'undefined') state.plannerUi.drawerOpen = false;
+  if (typeof state.plannerUi.draggingLessonId === 'undefined') state.plannerUi.draggingLessonId = null;
+  if (typeof state.plannerUi.icSearch !== 'string') state.plannerUi.icSearch = '';
+  if (!Array.isArray(state.plannerUi.suggestedICIds)) state.plannerUi.suggestedICIds = [];
+  if (!state.plannerUi.suggestionScores || typeof state.plannerUi.suggestionScores !== 'object') state.plannerUi.suggestionScores = {};
+  if (typeof state.plannerUi.pendingStubForLessonId === 'undefined') state.plannerUi.pendingStubForLessonId = null;
+  if (!isValidIsoDate(state.plannerUi.weekKey)) state.plannerUi.weekKey = plannerNormalizeWeekStart(loadPlannerWeek());
+}
+
+function plannerSelectedWeekKey() {
+  plannerEnsureUiState();
+  return state.plannerUi.weekKey;
+}
+
+function plannerWeekRangeLabel(weekKey) {
+  const start = parseIsoDateLocal(weekKey);
+  if (!start) return 'This week';
+  const end = parseIsoDateLocal(addDaysToDate(weekKey, 4));
+  const opts = { day: 'numeric', month: 'short' };
+  return `Week of ${start.toLocaleDateString('en-AU', opts)} – ${end.toLocaleDateString('en-AU', opts)}`;
+}
+
+function plannerShiftWeek(deltaWeeks) {
+  plannerEnsureUiState();
+  state.plannerUi.weekKey = plannerNormalizeWeekStart(addDaysToDate(state.plannerUi.weekKey, deltaWeeks * 7));
+  savePlannerWeek();
+  renderView();
+}
+
+function plannerGoToThisWeek() {
+  plannerEnsureUiState();
+  state.plannerUi.weekKey = plannerNormalizeWeekStart(toIsoDate(getWeekStart()));
+  savePlannerWeek();
+  renderView();
+}
+
+function loadPlannerWeek() {
+  try {
+    const raw = localStorage.getItem(PLANNER_WEEK_STORAGE_KEY);
+    return isValidIsoDate(raw) ? raw : toIsoDate(getWeekStart());
+  } catch (e) {
+    return toIsoDate(getWeekStart());
+  }
+}
+
+function savePlannerWeek() {
+  try { localStorage.setItem(PLANNER_WEEK_STORAGE_KEY, state.plannerUi.weekKey); } catch (e) {}
 }
 
 function plannerOpenLessonDrawer(lessonId) {
-  const lessonExists = state.lessonPlans.some(lesson => lesson.id === lessonId);
-  if (!lessonExists) return;
+  if (!state.lessonPlans.some(lesson => lesson.id === lessonId)) return;
   state.plannerUi.selectedLessonId = lessonId;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.icSearch = '';
+  state.plannerUi.suggestedICIds = [];
   renderView();
 }
 
@@ -1146,45 +1365,65 @@ function plannerDropLessonToDay(ev, targetDayKey) {
 
   const idx = state.lessonPlans.findIndex(lesson => lesson.id === lessonId);
   if (idx < 0) return;
-  if (state.lessonPlans[idx].dayKey === targetDayKey) {
-    plannerEndLessonDrag();
-    return;
-  }
 
-  state.lessonPlans[idx] = { ...state.lessonPlans[idx], dayKey: targetDayKey };
+  // Drop appends to the end of the target column (covers move-between-days,
+  // move-to-unscheduled, and coarse within-day reordering).
+  const weekKey = plannerSelectedWeekKey();
+  const maxPos = state.lessonPlans
+    .filter(lesson => lesson.weekKey === weekKey && lesson.dayKey === targetDayKey && lesson.id !== lessonId)
+    .reduce((max, lesson) => Math.max(max, lesson.position || 0), 0);
+
+  state.lessonPlans[idx] = { ...state.lessonPlans[idx], dayKey: targetDayKey, position: maxPos + 1 };
   saveLessonPlansState();
   state.plannerUi.draggingLessonId = null;
   renderView();
 }
 
-function plannerAddLesson() {
+function plannerAddLesson(dayKey) {
+  plannerEnsureUiState();
+  const weekKey = plannerSelectedWeekKey();
+  const targetDay = ['unscheduled', 'mon', 'tue', 'wed', 'thu', 'fri'].includes(dayKey) ? dayKey : 'unscheduled';
+  const maxPos = state.lessonPlans
+    .filter(lesson => lesson.weekKey === weekKey && lesson.dayKey === targetDay)
+    .reduce((max, lesson) => Math.max(max, lesson.position || 0), 0);
   const newLesson = {
-    id: `lesson_new_${Date.now()}`,
+    id: `lesson_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
     title: 'New Lesson',
-    shortDescription: '',
     subject: '',
-    dayKey: 'unscheduled',
+    weekKey,
+    dayKey: targetDay,
+    intention: '',
+    linkedICIds: [],
     status: 'planned',
+    position: maxPos + 1,
   };
   state.lessonPlans.push(newLesson);
   saveLessonPlansState();
   state.plannerUi.selectedLessonId = newLesson.id;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.icSearch = '';
+  state.plannerUi.suggestedICIds = [];
   renderView();
 }
 
 function plannerDuplicateLesson(lessonId) {
   const lesson = state.lessonPlans.find(item => item.id === lessonId);
   if (!lesson) return;
-  const duplicatedLesson = {
-    id: `lesson_copy_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+  const maxPos = state.lessonPlans
+    .filter(item => item.weekKey === lesson.weekKey && item.dayKey === lesson.dayKey)
+    .reduce((max, item) => Math.max(max, item.position || 0), 0);
+  const copy = {
+    id: `lesson_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
     title: lesson.title || '',
-    shortDescription: lesson.shortDescription || '',
     subject: lesson.subject || '',
+    weekKey: lesson.weekKey,
     dayKey: lesson.dayKey || 'unscheduled',
-    status: lesson.status || 'planned',
+    intention: lesson.intention || '',
+    linkedICIds: Array.isArray(lesson.linkedICIds) ? [...lesson.linkedICIds] : [],
+    status: 'planned',
+    position: maxPos + 1,
   };
-  state.lessonPlans.push(duplicatedLesson);
+  state.lessonPlans.push(copy);
   saveLessonPlansState();
   renderView();
 }
@@ -1192,9 +1431,7 @@ function plannerDuplicateLesson(lessonId) {
 function plannerDeleteLesson(lessonId) {
   const lesson = state.lessonPlans.find(item => item.id === lessonId);
   if (!lesson) return;
-  const confirmed = confirm(`Delete lesson "${lesson.title || 'Untitled lesson'}"?`);
-  if (!confirmed) return;
-
+  if (!confirm(`Delete lesson "${lesson.title || 'Untitled lesson'}"?`)) return;
   state.lessonPlans = state.lessonPlans.filter(item => item.id !== lessonId);
   if (state.plannerUi?.selectedLessonId === lessonId) {
     state.plannerUi.selectedLessonId = null;
@@ -1205,31 +1442,152 @@ function plannerDeleteLesson(lessonId) {
 }
 
 function plannerUpdateSelectedLessonField(field, value) {
-  const editableFields = new Set(['title', 'shortDescription', 'subject', 'dayKey']);
-  if (!editableFields.has(field)) return;
+  const editable = new Set(['title', 'subject', 'dayKey', 'intention']);
+  if (!editable.has(field)) return;
   const selectedId = state.plannerUi?.selectedLessonId;
   if (!selectedId) return;
   const idx = state.lessonPlans.findIndex(lesson => lesson.id === selectedId);
   if (idx < 0) return;
 
-  const nextValue = field === 'dayKey'
-    ? (['unscheduled', 'mon', 'tue', 'wed', 'thu', 'fri'].includes(value) ? value : state.lessonPlans[idx].dayKey)
-    : value;
+  let nextValue = value;
+  if (field === 'dayKey') {
+    nextValue = ['unscheduled', 'mon', 'tue', 'wed', 'thu', 'fri'].includes(value) ? value : state.lessonPlans[idx].dayKey;
+  }
   state.lessonPlans[idx] = { ...state.lessonPlans[idx], [field]: nextValue };
   saveLessonPlansState();
-  if (field === 'dayKey') renderView();
+  // title/intention update silently (preserve input focus); day/subject re-render.
+  if (field === 'subject') state.plannerUi.suggestedICIds = [];
+  if (field === 'dayKey' || field === 'subject') renderView();
+}
+
+function plannerToggleLessonIC(icId) {
+  const selectedId = state.plannerUi?.selectedLessonId;
+  if (!selectedId) return;
+  const idx = state.lessonPlans.findIndex(lesson => lesson.id === selectedId);
+  if (idx < 0) return;
+  const current = Array.isArray(state.lessonPlans[idx].linkedICIds) ? [...state.lessonPlans[idx].linkedICIds] : [];
+  const at = current.indexOf(icId);
+  if (at >= 0) {
+    current.splice(at, 1);
+  } else {
+    if (current.length >= 3) { toast('A lesson can link at most 3 ICs', 'error'); return; }
+    current.push(icId);
+  }
+  state.lessonPlans[idx] = { ...state.lessonPlans[idx], linkedICIds: current };
+  saveLessonPlansState();
+  renderView();
+}
+
+function plannerSetLessonStatus(status) {
+  const selectedId = state.plannerUi?.selectedLessonId;
+  if (!selectedId) return;
+  const idx = state.lessonPlans.findIndex(lesson => lesson.id === selectedId);
+  if (idx < 0) return;
+  const next = status === 'taught' ? 'taught' : 'planned';
+  if (next === 'taught' && !(state.lessonPlans[idx].linkedICIds || []).length) {
+    toast('Add at least one IC before marking this lesson as taught', 'error');
+    return;
+  }
+  state.lessonPlans[idx] = { ...state.lessonPlans[idx], status: next };
+  saveLessonPlansState();
+  renderView();
+}
+
+// Search input updates only the results container so the field keeps focus.
+function plannerHandleICSearchInput(value) {
+  plannerEnsureUiState();
+  state.plannerUi.icSearch = value;
+  const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
+  const container = document.getElementById('planner-ic-results');
+  if (lesson && container) container.innerHTML = plannerICResultsHtml(lesson);
+}
+
+// Heuristic IC suggestion from the lesson's intention text. Ports the
+// curriculum-code scoring previously used in Plan & Log: tokenise the intention,
+// score the subject's descriptors, then surface the ICs under the best-matching
+// descriptors for the teacher to tick.
+// TODO(step-future): replace/augment this heuristic with an AI call — the same
+// seam the Daily Wizard uses via apiCall('claudeSuggest', { prompt }). Build the
+// prompt from lesson.intention + the candidate IC list, intersect the returned
+// ids with the subject-scoped pool, and fall back to this heuristic on failure.
+function plannerScoreDescriptor(row, tokens) {
+  const text = [row.Descriptor || row.Aspect || row.Description || '', row.Strand, row['Sub-strand'] || row['Sub Strand'] || ''].join(' ').toLowerCase();
+  let score = 0;
+  tokens.forEach(t => { if (t && text.includes(t)) score += (t.length > 6 ? 2 : 1); });
+  return score;
+}
+
+function plannerSuggestICsFromIntention() {
+  plannerEnsureUiState();
+  const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
+  if (!lesson) return;
+  if (!lesson.subject) { toast('Choose a subject first', 'error'); return; }
+  const intention = (lesson.intention || '').trim();
+  if (!intention) { toast('Write a learning intention first', 'error'); return; }
+
+  const tokens = [...new Set(
+    intention.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4)
+  )].slice(0, 25);
+
+  const ranked = state.curriculumCodes
+    .filter(c => c.Subject === lesson.subject && isCurriculumCodeEnabled(c))
+    .map(row => ({ code: row.Code, score: plannerScoreDescriptor(row, tokens) }))
+    .filter(r => r.score > 0)
+    .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code))
+    .slice(0, 8);
+
+  const scores = {};
+  ranked.forEach(r => { scores[r.code] = r.score; });
+
+  const suggested = [];
+  ranked.forEach(({ code }) => {
+    getICsForDescriptor(code).forEach(ic => { if (!suggested.includes(ic.id)) suggested.push(ic.id); });
+  });
+
+  state.plannerUi.icSearch = '';
+  state.plannerUi.suggestedICIds = suggested;
+  state.plannerUi.suggestionScores = scores;
+
+  const searchInput = document.getElementById('planner-ic-search');
+  if (searchInput) searchInput.value = '';
+  const container = document.getElementById('planner-ic-results');
+  if (container) container.innerHTML = plannerICResultsHtml(lesson);
+
+  toast(
+    suggested.length
+      ? `Suggested ${suggested.length} IC${suggested.length === 1 ? '' : 's'} — tick the ones you want.`
+      : 'No IC matches from that intention — try the search box.',
+    suggested.length ? 'success' : 'info'
+  );
+}
+
+// "Create new IC" from the planner: open the existing stub-creation modal and,
+// on successful save, auto-link the new stub to the lesson being edited.
+function plannerOpenCreateICModal() {
+  plannerEnsureUiState();
+  const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
+  if (!lesson) return;
+  if ((lesson.linkedICIds || []).length >= 3) { toast('A lesson can link at most 3 ICs', 'error'); return; }
+  state.plannerUi.pendingStubForLessonId = lesson.id;
+  openStubICModal(undefined, lesson.subject || '');
 }
 
 function normalizeLessonPlan(raw = {}) {
   const validDayKeys = ['mon', 'tue', 'wed', 'thu', 'fri', 'unscheduled'];
-  const dayKey = validDayKeys.includes(raw.dayKey) ? raw.dayKey : 'mon';
+  const dayKey = validDayKeys.includes(raw.dayKey) ? raw.dayKey : 'unscheduled';
+  const status = raw.status === 'taught' ? 'taught' : 'planned';
+  const weekKey = isValidIsoDate(raw.weekKey) ? plannerNormalizeWeekStart(raw.weekKey) : toIsoDate(getWeekStart());
+  const linkedICIds = Array.isArray(raw.linkedICIds) ? raw.linkedICIds.map(String).slice(0, 3) : [];
   return {
     id: String(raw.id || `lesson_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`),
     title: String(raw.title || ''),
-    shortDescription: String(raw.shortDescription || ''),
     subject: String(raw.subject || ''),
+    weekKey,
     dayKey,
-    status: String(raw.status || 'planned'),
+    intention: String(raw.intention || ''),
+    linkedICIds,
+    status,
+    position: Number.isFinite(raw.position) ? raw.position : 0,
   };
 }
 
@@ -1246,8 +1604,8 @@ function loadLessonPlansState() {
 
 function saveLessonPlansState() {
   try {
-    const lessonPlans = Array.isArray(state.lessonPlans) ? state.lessonPlans.map(normalizeLessonPlan) : [];
-    localStorage.setItem(LESSON_PLANS_STORAGE_KEY, JSON.stringify(lessonPlans));
+    const lessons = Array.isArray(state.lessonPlans) ? state.lessonPlans.map(normalizeLessonPlan) : [];
+    localStorage.setItem(LESSON_PLANS_STORAGE_KEY, JSON.stringify(lessons));
   } catch (e) {}
 }
 
@@ -6318,12 +6676,18 @@ function getStubDescriptorOptions(subject, year) {
     .join('');
 }
 
-function openStubICModal(descriptorCode) {
+function closeStubICModal() {
+  if (state.plannerUi) state.plannerUi.pendingStubForLessonId = null;
+  const overlay = document.getElementById('stub-ic-overlay');
+  if (overlay) overlay.remove();
+}
+
+function openStubICModal(descriptorCode, defaultSubjectOverride) {
   const locked = !!descriptorCode;
   const cd = locked ? state.curriculumCodes.find(c => c.Code === descriptorCode) : null;
 
   const allSubjects = [...new Set(state.curriculumCodes.map(c => c.Subject).filter(Boolean))].sort();
-  const defaultSubject = locked ? (cd?.Subject || '') : (dlState.selectedSubject || allSubjects[0] || '');
+  const defaultSubject = locked ? (cd?.Subject || '') : (defaultSubjectOverride || dlState?.selectedSubject || allSubjects[0] || '');
   const subjectDisabled = locked || allSubjects.length <= 1;
 
   const defaultYear = locked ? (cd?.['Year Level'] || '') : getStubDefaultYear();
@@ -6348,7 +6712,7 @@ function openStubICModal(descriptorCode) {
           <div style="font-family:'Fraunces',serif;font-size:15px;margin-bottom:4px">Create Draft IC</div>
           ${locked ? `<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${escapeHtml(descriptorCode)}</div>` : ''}
         </div>
-        <button onclick="document.getElementById('stub-ic-overlay').remove()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px;line-height:1">✕</button>
+        <button onclick="closeStubICModal()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px;line-height:1">✕</button>
       </div>
       <div style="padding:18px 20px">
         <div style="margin-bottom:14px">
@@ -6391,7 +6755,7 @@ function openStubICModal(descriptorCode) {
             style="width:100%;padding:8px 10px;background:var(--surface-alt);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box;font-family:'Instrument Sans',sans-serif">
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
-          <button onclick="document.getElementById('stub-ic-overlay').remove()"
+          <button onclick="closeStubICModal()"
             style="padding:8px 18px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-size:13px;cursor:pointer;font-family:'Instrument Sans',sans-serif">
             Cancel
           </button>
@@ -6505,14 +6869,36 @@ function saveStubIC() {
     }
   })();
 
-  if (!dlState.selectedICs.includes(newIC.id)) {
-    dlState.selectedICs.push(newIC.id);
-  }
-  dlRecalcSelectedCodes();
   updateStubBadge();
 
   const overlay = document.getElementById('stub-ic-overlay');
   if (overlay) overlay.remove();
+
+  // Planner context: auto-link the new stub to the lesson being edited (mirrors
+  // ticking an existing IC), then stop — the wizard-specific updates don't apply.
+  const plannerLessonId = state.plannerUi && state.plannerUi.pendingStubForLessonId;
+  if (plannerLessonId) {
+    state.plannerUi.pendingStubForLessonId = null;
+    const li = state.lessonPlans.findIndex(l => l.id === plannerLessonId);
+    if (li >= 0) {
+      const linked = Array.isArray(state.lessonPlans[li].linkedICIds) ? [...state.lessonPlans[li].linkedICIds] : [];
+      if (linked.length >= 3) {
+        toast(`Draft IC "${name}" created, but the lesson already has 3 ICs`, 'info');
+      } else {
+        linked.push(newIC.id);
+        state.lessonPlans[li] = { ...state.lessonPlans[li], linkedICIds: linked };
+        saveLessonPlansState();
+        toast(`Draft IC "${name}" created and linked to the lesson`, 'success');
+      }
+    }
+    if (state.currentView === 'planner') renderView();
+    return;
+  }
+
+  if (!dlState.selectedICs.includes(newIC.id)) {
+    dlState.selectedICs.push(newIC.id);
+  }
+  dlRecalcSelectedCodes();
 
   dlStep2ICSearch = '';
   dlFilterCodes();
@@ -7602,535 +7988,8 @@ function renderDailyLog(main) {
 
 
 // ════════════════════════════════════════════════════
-// ── PLAN & LOG LEARNING ──
-// local-first planning workflow that links into taught log + Bulk Assess
+// ── DATE / WEEK UTILITIES (shared) ──
 // ════════════════════════════════════════════════════
-
-function loadPlanLogState() {
-  try {
-    const raw = localStorage.getItem('ct_plan_log_entries');
-    const entries = raw ? JSON.parse(raw) : [];
-    return {
-      entries: Array.isArray(entries) ? entries : [],
-      activeEntryId: null,
-      filters: { classId: 'all', subject: 'all', status: 'all', date: '' },
-      manualCodeInput: ''
-    };
-  } catch(e) {
-    return { entries: [], activeEntryId: null, filters: { classId: 'all', subject: 'all', status: 'all', date: '' }, manualCodeInput: '' };
-  }
-}
-
-function savePlanLogState() {
-  try { localStorage.setItem('ct_plan_log_entries', JSON.stringify(state.planLog?.entries || [])); } catch(e) {}
-}
-
-function getPlanStatuses() {
-  return ['Draft', 'Planned', 'Partially taught', 'Taught'];
-}
-
-function getPlanEntrySubjects() {
-  return getEnabledSubjectsFromRows(state.curriculumCodes).sort();
-}
-
-function getGroupYearLevels(groupId) {
-  // Current data model has one student roster. Group filter is planning metadata only.
-  // We scope suggestions by available class year levels in the current roster.
-  const years = [...new Set(state.students.map(s => normaliseYear(s.year_level)).filter(Boolean))];
-  return years.length ? years : ['F','1','2','3','4','5','6'];
-}
-
-function getPlanStrands(subject) {
-  if (!subject) return [];
-  return [...new Set(state.curriculumCodes
-    .filter(c => c.Subject === subject && isCurriculumCodeEnabled(c))
-    .map(c => c.Strand).filter(Boolean))].sort();
-}
-
-function getPlanAreas(subject, strand) {
-  if (!subject || !strand) return [];
-  return [...new Set(state.curriculumCodes
-    .filter(c => c.Subject === subject && c.Strand === strand && isCurriculumCodeEnabled(c))
-    .map(c => c['Sub-strand'] || c['Sub Strand']).filter(Boolean))].sort();
-}
-
-function blankPlanEntry() {
-  const groups = state.classSettings?.groups || [];
-  const subjects = getPlanEntrySubjects();
-  const subject = subjects[0] || '';
-  const strands = getPlanStrands(subject);
-  return {
-    id: 'plan_' + Date.now(),
-    date: new Date().toISOString().split('T')[0],
-    classId: (state.classSettings?.activeGroup) || (groups[0]?.id || ''),
-    subject,
-    strand: strands[0] || '',
-    area: '',
-    title: '',
-    learningDescription: '',
-    learningIntention: '',
-    successCriteria: '',
-    status: 'Draft',
-    actuallyTaught: '',
-    suggestedCodes: [],
-    confirmedCodes: [],
-    selectedComponentsByCode: {},
-    assessmentPrompt: '',
-    lastUpdated: new Date().toISOString()
-  };
-}
-
-function getActivePlanEntry() {
-  const pl = state.planLog;
-  if (!pl || !pl.entries.length) return null;
-  let entry = pl.entries.find(e => e.id === pl.activeEntryId);
-  if (!entry) {
-    entry = pl.entries[0];
-    pl.activeEntryId = entry.id;
-  }
-  if (!entry.selectedComponentsByCode || typeof entry.selectedComponentsByCode !== 'object') {
-    entry.selectedComponentsByCode = {};
-  }
-  return entry;
-}
-
-function createPlanEntry() {
-  const entry = blankPlanEntry();
-  state.planLog.entries.unshift(entry);
-  state.planLog.activeEntryId = entry.id;
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function updatePlanEntryField(field, value) {
-  const entry = getActivePlanEntry();
-  if (!entry) return;
-  entry[field] = value;
-  if (field === 'subject') {
-    const strands = getPlanStrands(value);
-    entry.strand = strands.includes(entry.strand) ? entry.strand : (strands[0] || '');
-    const areas = getPlanAreas(entry.subject, entry.strand);
-    entry.area = areas.includes(entry.area) ? entry.area : '';
-  }
-  if (field === 'strand') {
-    const areas = getPlanAreas(entry.subject, value);
-    entry.area = areas.includes(entry.area) ? entry.area : '';
-  }
-  entry.lastUpdated = new Date().toISOString();
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function scoreCodeSuggestion(row, tokens) {
-  const text = [row.Description, row.Strand, row['Sub-strand'] || row['Sub Strand'] || ''].join(' ').toLowerCase();
-  let score = 0;
-  tokens.forEach(t => { if (t && text.includes(t)) score += (t.length > 6 ? 2 : 1); });
-  return score;
-}
-
-function suggestPlanCodes() {
-  const entry = getActivePlanEntry();
-  if (!entry) return;
-  if (!entry.learningDescription?.trim()) { toast('Add the planned learning description first', 'error'); return; }
-  const years = getGroupYearLevels(entry.classId).map(csvYear);
-  const text = `${entry.title || ''} ${entry.learningDescription || ''} ${entry.learningIntention || ''} ${entry.successCriteria || ''}`.toLowerCase();
-  const tokens = [...new Set(text.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4))].slice(0, 25);
-
-  const pool = state.curriculumCodes.filter(c =>
-    c.Subject === entry.subject &&
-    (!entry.strand || c.Strand === entry.strand) &&
-    (!entry.area || (c['Sub-strand'] || c['Sub Strand']) === entry.area) &&
-    years.includes(c.Year_Level) &&
-    isCurriculumCodeEnabled(c)
-  );
-
-  const ranked = pool
-    .map(row => ({
-      code: row.Code,
-      description: row.Description || '',
-      score: scoreCodeSuggestion(row, tokens)
-    }))
-    .filter(r => r.score > 0 || !tokens.length)
-    .sort((a,b) => b.score - a.score || a.code.localeCompare(b.code))
-    .slice(0, 12);
-
-  entry.suggestedCodes = ranked.map(r => ({ code: r.code, description: r.description }));
-  entry.lastUpdated = new Date().toISOString();
-  savePlanLogState();
-  toast(`Suggested ${entry.suggestedCodes.length} code${entry.suggestedCodes.length===1?'':'s'}. Confirm the ones you want to use.`, 'success');
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function removeSuggestedCode(code) {
-  const entry = getActivePlanEntry();
-  if (!entry) return;
-  entry.suggestedCodes = entry.suggestedCodes.filter(c => c.code !== code);
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function confirmSuggestedCode(code) {
-  const entry = getActivePlanEntry();
-  if (!entry) return;
-  if (!entry.confirmedCodes.includes(code)) entry.confirmedCodes.push(code);
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function removeConfirmedCode(code) {
-  const entry = getActivePlanEntry();
-  if (!entry) return;
-  entry.confirmedCodes = entry.confirmedCodes.filter(c => c !== code);
-  if (entry.selectedComponentsByCode) delete entry.selectedComponentsByCode[code];
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function togglePlanComponent(code, componentId, checked) {
-  const entry = getActivePlanEntry();
-  if (!entry) return;
-  if (!entry.selectedComponentsByCode) entry.selectedComponentsByCode = {};
-  const selected = [...(entry.selectedComponentsByCode[code] || [])];
-  const idx = selected.indexOf(componentId);
-  if (checked && idx === -1) {
-    if (selected.length >= 3) { toast('Select up to 3 components per content descriptor', 'error'); return; }
-    selected.push(componentId);
-  }
-  if (!checked && idx >= 0) selected.splice(idx, 1);
-  entry.selectedComponentsByCode[code] = selected;
-  entry.lastUpdated = new Date().toISOString();
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function addPlanComponent(code) {
-  const input = document.getElementById(`pl-new-component-${code}`);
-  const entry = getActivePlanEntry();
-  if (!input || !entry) return;
-  const text = input.value.trim();
-  if (!text) return;
-  const component = addComponentForCode(code, text);
-  if (!component) return;
-  if (!entry.selectedComponentsByCode) entry.selectedComponentsByCode = {};
-  const selected = [...(entry.selectedComponentsByCode[code] || [])];
-  if (!selected.includes(component.id) && selected.length < 3) selected.push(component.id);
-  entry.selectedComponentsByCode[code] = selected;
-  entry.lastUpdated = new Date().toISOString();
-  input.value = '';
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function addManualPlanCode() {
-  const entry = getActivePlanEntry();
-  if (!entry) return;
-  const input = document.getElementById('pl-manual-code-input');
-  const code = (input?.value || '').trim();
-  if (!code) return;
-  const row = state.curriculumCodes.find(c => c.Code.toLowerCase() === code.toLowerCase());
-  if (!row) { toast('Code not found in loaded curriculum data', 'error'); return; }
-  if (!isCurriculumCodeEnabled(row)) { toast('That code is disabled in Class Settings', 'error'); return; }
-  if (!entry.confirmedCodes.includes(row.Code)) entry.confirmedCodes.push(row.Code);
-  input.value = '';
-  savePlanLogState();
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-async function markPlanAsTaught(entryId = null) {
-  const entry = entryId ? state.planLog.entries.find(e => e.id === entryId) : getActivePlanEntry();
-  if (!entry) return;
-  if (!entry.confirmedCodes.length) { toast('Confirm at least one curriculum code before marking as taught', 'error'); return; }
-
-  const date = entry.date || new Date().toISOString().split('T')[0];
-  const entries = [];
-  state.students.forEach(s => {
-    entry.confirmedCodes.forEach(code => {
-      const dup = state.taughtLog.some(t => t.student_id === s.id && t.code === code && t.date === date);
-      if (!dup) {
-        const selectedComponents = (entry.selectedComponentsByCode?.[code] || [])
-          .map(id => state.components.find(c => c.id === id)?.description)
-          .filter(Boolean)
-          .slice(0, 3);
-        const componentNote = selectedComponents.length ? ` | Components: ${selectedComponents.join(' | ')}` : '';
-        entries.push({ date, student_id: s.id, code, notes: `${entry.actuallyTaught || 'Logged via Plan and Log Learning'}${componentNote}` });
-      }
-    });
-  });
-
-  if (entries.length) {
-    setSyncing(true);
-    try {
-      const result = await apiCall('saveTaughtLog', { entries });
-      entries.forEach((e, i) => state.taughtLog.push({ id: result?.ids?.[i] || ('local_' + Date.now() + '_' + i), ...e }));
-    } catch(err) {
-      entries.forEach((e, i) => state.taughtLog.push({ id: 'local_' + Date.now() + '_' + i, ...e }));
-      toast('Saved taught entries locally (sync issue)', 'error');
-    }
-    setSyncing(false);
-  }
-
-  entry.status = 'Taught';
-  entry.lastUpdated = new Date().toISOString();
-  savePlanLogState();
-  checkDailyLogBadge();
-  toast(`Marked as taught. ${entries.length} taught log entr${entries.length===1?'y':'ies'} added.`, 'success');
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function generateAssessmentPrompt(entry) {
-  const codeLines = entry.confirmedCodes
-    .map(code => {
-      const row = state.curriculumCodes.find(c => c.Code === code);
-      const selected = (entry.selectedComponentsByCode?.[code] || [])
-        .map(id => state.components.find(c => c.id === id)?.description)
-        .filter(Boolean);
-      const componentText = selected.length ? `\n  Components: ${selected.join(' | ')}` : '';
-      return `- ${code}: ${row?.Description || row?.Descriptor || 'Curriculum code'}${componentText}`;
-    })
-    .join('\n');
-  return [
-    `Assessment prompt for ${entry.title || 'planned lesson'} (${entry.subject})`,
-    `Planned learning: ${entry.learningDescription || 'N/A'}`,
-    `Actually taught: ${entry.actuallyTaught || 'N/A'}`,
-    'Confirmed curriculum codes:',
-    codeLines || '- None confirmed',
-    'Create a short formative assessment task with success criteria-aligned evidence checks and a simple rubric language for primary students.'
-  ].join('\n');
-}
-
-function usePlanForAssessment(entryId = null) {
-  const entry = entryId ? state.planLog.entries.find(e => e.id === entryId) : getActivePlanEntry();
-  if (!entry) return;
-  if (!entry.confirmedCodes.length) { toast('Confirm curriculum codes first', 'error'); return; }
-  entry.assessmentPrompt = generateAssessmentPrompt(entry);
-  entry.lastUpdated = new Date().toISOString();
-  savePlanLogState();
-
-  if (!state.bulkAssess) state.bulkAssess = { mode:'by-code', yearFilter:'all', subjectFilter:'English', strandFilter:'all', selectedCode:null, selectedStudent:null, date:new Date().toISOString().split('T')[0], pendingChanges:{} };
-  state.bulkAssess.subjectFilter = entry.subject || state.bulkAssess.subjectFilter;
-  state.bulkAssess.selectedCode = entry.confirmedCodes[0] || null;
-  state.bulkAssess.date = entry.date || state.bulkAssess.date;
-  toast('Assessment prompt generated. You can now record evidence in Bulk Assess.', 'success');
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function selectPlanEntry(id) {
-  state.planLog.activeEntryId = id;
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function setPlanFilter(field, value) {
-  state.planLog.filters[field] = value;
-  renderPlanLog(document.getElementById('main-content'));
-}
-
-function renderPlanLog(main) {
-  if (!state.planLog) state.planLog = loadPlanLogState();
-  const pl = state.planLog;
-  const statuses = getPlanStatuses();
-  const classes = state.classSettings?.groups || [];
-
-  if (!pl.entries.length) {
-    const first = blankPlanEntry();
-    pl.entries = [first];
-    pl.activeEntryId = first.id;
-    savePlanLogState();
-  }
-
-  const active = getActivePlanEntry();
-  const subjects = getPlanEntrySubjects();
-  if (active && active.subject && !subjects.includes(active.subject)) {
-    active.subject = subjects[0] || '';
-    active.strand = '';
-  }
-
-  const strands = getPlanStrands(active?.subject || '');
-  const areas = getPlanAreas(active?.subject || '', active?.strand || '');
-
-  const filteredEntries = pl.entries.filter(e =>
-    (pl.filters.classId === 'all' || e.classId === pl.filters.classId) &&
-    (pl.filters.subject === 'all' || e.subject === pl.filters.subject) &&
-    (pl.filters.status === 'all' || e.status === pl.filters.status) &&
-    (!pl.filters.date || e.date === pl.filters.date)
-  );
-
-  function className(classId) {
-    return classes.find(c => c.id === classId)?.name || 'Class';
-  }
-
-  const suggestedRows = (active?.suggestedCodes || []).map(s => `
-    <div style="display:grid;grid-template-columns:150px 1fr auto;gap:8px;align-items:start;padding:7px 0;border-bottom:1px solid var(--border)">
-      <label style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:10px;color:var(--blue)">
-        <input type="checkbox" onchange="this.checked?confirmSuggestedCode('${s.code}'):removeConfirmedCode('${s.code}')" ${(active.confirmedCodes||[]).includes(s.code)?'checked':''}>
-        ${s.code}
-      </label>
-      <div style="font-size:11px;color:var(--text-muted)">${s.description || '—'}</div>
-      <button class="btn" style="padding:3px 8px" onclick="removeSuggestedCode('${s.code}')">Remove</button>
-    </div>`).join('');
-
-  const confirmedRows = (active?.confirmedCodes || []).map(code => {
-    const row = state.curriculumCodes.find(c => c.Code === code);
-    const codeComponents = getComponentsForCode(code);
-    const selectedComponents = active.selectedComponentsByCode?.[code] || [];
-    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
-      <div style="flex:1">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-family:'DM Mono',monospace;font-size:10px;background:var(--green-dim);color:var(--green);padding:2px 8px;border-radius:10px">${code}</span>
-          <span style="font-size:11px;color:var(--text3)">${row?.Description || row?.Descriptor || ''}</span>
-          <button class="btn" style="margin-left:auto;padding:2px 8px" onclick="removeConfirmedCode('${code}')">✕</button>
-        </div>
-        <details style="margin-top:6px">
-          <summary style="font-size:11px;color:var(--text3);cursor:pointer">Assessable components (optional, choose 1–3)</summary>
-          <div style="margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface)">
-            ${codeComponents.length
-              ? codeComponents.map(cmp => `<label style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;font-size:11px;color:var(--text-muted)">
-                  <input type="checkbox" ${selectedComponents.includes(cmp.id) ? 'checked' : ''} onchange="togglePlanComponent('${code}','${cmp.id}',this.checked)">
-                  <span>${cmp.description}</span>
-                </label>`).join('')
-              : `<div style="font-size:11px;color:var(--text3);margin-bottom:6px">No components yet. Add one below.</div>`}
-            <div style="display:flex;gap:6px;margin-top:6px">
-              <input id="pl-new-component-${code}" class="form-input" placeholder="Add component for ${code}">
-              <button class="btn" onclick="addPlanComponent('${code}')">Add</button>
-            </div>
-            <div style="font-size:10px;color:var(--text3);margin-top:4px">Selected: ${selectedComponents.length}/3</div>
-          </div>
-        </details>
-      </div>
-    </div>`;
-  }).join('');
-
-  main.innerHTML = `
-    <div class="topbar" style="flex-wrap:wrap;gap:10px;padding:14px 24px">
-      <div class="topbar-title">Plan and Log Learning</div>
-      <button class="btn btn-primary" onclick="createPlanEntry()">+ New Plan</button>
-      <button class="btn" onclick="showView('bulk-assess')">Go to Bulk Assess</button>
-    </div>
-    <div class="content">
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-head"><div class="card-title">Plan entries</div></div>
-        <div style="padding:12px 14px">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-            <select class="form-input" style="max-width:180px" onchange="setPlanFilter('classId',this.value)">
-              <option value="all" ${pl.filters.classId==='all'?'selected':''}>All classes</option>
-              ${classes.map(c => `<option value="${c.id}" ${pl.filters.classId===c.id?'selected':''}>${c.name}</option>`).join('')}
-            </select>
-            <select class="form-input" style="max-width:180px" onchange="setPlanFilter('subject',this.value)">
-              <option value="all" ${pl.filters.subject==='all'?'selected':''}>All subjects</option>
-              ${subjects.map(s => `<option value="${s}" ${pl.filters.subject===s?'selected':''}>${s}</option>`).join('')}
-            </select>
-            <select class="form-input" style="max-width:180px" onchange="setPlanFilter('status',this.value)">
-              <option value="all" ${pl.filters.status==='all'?'selected':''}>All statuses</option>
-              ${statuses.map(st => `<option value="${st}" ${pl.filters.status===st?'selected':''}>${st}</option>`).join('')}
-            </select>
-            <input class="form-input" type="date" value="${pl.filters.date||''}" onchange="setPlanFilter('date',this.value)" style="max-width:160px">
-          </div>
-          <div style="overflow-x:auto">
-            <table style="width:100%;border-collapse:collapse;min-width:720px">
-              <thead>
-                <tr style="background:var(--surface-alt)">
-                  <th style="padding:7px 8px;text-align:left;font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Date</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Class</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Subject</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Title</th>
-                  <th style="padding:7px 8px;text-align:left;font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Status</th>
-                  <th style="padding:7px 8px;text-align:center;font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Confirmed</th>
-                  <th style="padding:7px 8px;text-align:right;font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${filteredEntries.map(e => `<tr style="border-bottom:1px solid var(--border)">
-                  <td style="padding:8px">${e.date || '—'}</td>
-                  <td style="padding:8px">${className(e.classId)}</td>
-                  <td style="padding:8px">${e.subject || '—'}</td>
-                  <td style="padding:8px">${e.title || '<span style=\"color:var(--text3)\">Untitled plan</span>'}</td>
-                  <td style="padding:8px"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:var(--surface-alt)">${e.status || 'Draft'}</span></td>
-                  <td style="padding:8px;text-align:center;font-family:'DM Mono',monospace">${(e.confirmedCodes||[]).length}</td>
-                  <td style="padding:8px;text-align:right">
-                    <button class="btn" style="padding:2px 8px" onclick="selectPlanEntry('${e.id}')">Open/Edit</button>
-                    <button class="btn" style="padding:2px 8px" onclick="markPlanAsTaught('${e.id}')">Mark taught</button>
-                    <button class="btn" style="padding:2px 8px" onclick="usePlanForAssessment('${e.id}')">Use for assessment</button>
-                  </td>
-                </tr>`).join('') || `<tr><td colspan="7" style="padding:14px;color:var(--text3)">No matching plan entries.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      ${active ? `<div class="card">
-        <div class="card-head">
-          <div class="card-title">Edit plan</div>
-          <div style="font-size:10px;color:var(--text3)">Last updated: ${new Date(active.lastUpdated || Date.now()).toLocaleString()}</div>
-        </div>
-        <div style="padding:16px 18px">
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.12em;margin-bottom:8px">Basic info</div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
-            <div class="form-group" style="margin-bottom:0"><label class="form-label">Date</label><input class="form-input" type="date" value="${active.date||''}" onchange="updatePlanEntryField('date',this.value)"></div>
-            <div class="form-group" style="margin-bottom:0"><label class="form-label">Class / teacher group</label><select class="form-input" onchange="updatePlanEntryField('classId',this.value)">${classes.map(c => `<option value="${c.id}" ${active.classId===c.id?'selected':''}>${c.name}</option>`).join('')}</select></div>
-            <div class="form-group" style="margin-bottom:0"><label class="form-label">Subject</label><select class="form-input" onchange="updatePlanEntryField('subject',this.value)">${subjects.map(s => `<option value="${s}" ${active.subject===s?'selected':''}>${s}</option>`).join('')}</select></div>
-            <div class="form-group" style="margin-bottom:0"><label class="form-label">Strand</label><select class="form-input" onchange="updatePlanEntryField('strand',this.value)">${strands.map(st => `<option value="${st}" ${active.strand===st?'selected':''}>${st}</option>`).join('')}</select></div>
-            <div class="form-group" style="margin-bottom:0"><label class="form-label">Curriculum area (optional)</label><select class="form-input" onchange="updatePlanEntryField('area',this.value)"><option value="">All areas</option>${areas.map(a => `<option value="${a}" ${active.area===a?'selected':''}>${a}</option>`).join('')}</select></div>
-            <div class="form-group" style="margin-bottom:0"><label class="form-label">Status</label><select class="form-input" onchange="updatePlanEntryField('status',this.value)">${statuses.map(st => `<option value="${st}" ${active.status===st?'selected':''}>${st}</option>`).join('')}</select></div>
-          </div>
-
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.12em;margin:8px 0">Learning description</div>
-          <div class="form-group"><label class="form-label">Lesson title</label><input class="form-input" value="${active.title || ''}" oninput="updatePlanEntryField('title',this.value)"></div>
-          <div class="form-group"><label class="form-label">Planned learning description</label><textarea class="form-input" style="min-height:90px" oninput="updatePlanEntryField('learningDescription',this.value)">${active.learningDescription || ''}</textarea></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div class="form-group"><label class="form-label">Learning intention (optional)</label><textarea class="form-input" style="min-height:70px" oninput="updatePlanEntryField('learningIntention',this.value)">${active.learningIntention || ''}</textarea></div>
-            <div class="form-group"><label class="form-label">Success criteria (optional)</label><textarea class="form-input" style="min-height:70px" oninput="updatePlanEntryField('successCriteria',this.value)">${active.successCriteria || ''}</textarea></div>
-          </div>
-
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.12em;margin:10px 0 8px">Curriculum codes</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-            <button class="btn btn-primary" onclick="suggestPlanCodes()">Suggest Curriculum Codes</button>
-            <span style="font-size:11px;color:var(--text3)">Suggestions are never auto-confirmed. Tick only what you approve.</span>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div style="background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:10px">
-              <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Suggested codes</div>
-              ${suggestedRows || `<div style="font-size:11px;color:var(--text3)">No suggestions yet. Click <strong>Suggest Curriculum Codes</strong>.</div>`}
-            </div>
-            <div style="background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:10px">
-              <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Confirmed codes (${(active.confirmedCodes||[]).length})</div>
-              ${confirmedRows || `<div style="font-size:11px;color:var(--text3)">No confirmed codes yet.</div>`}
-              <div style="display:flex;gap:6px;margin-top:8px">
-                <input id="pl-manual-code-input" class="form-input" placeholder="Add code manually (e.g. AC9M2N03)">
-                <button class="btn" onclick="addManualPlanCode()">Add</button>
-              </div>
-            </div>
-          </div>
-
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.12em;margin:14px 0 8px">Teaching status</div>
-          <div class="form-group"><label class="form-label">What was actually taught</label><textarea class="form-input" style="min-height:80px" oninput="updatePlanEntryField('actuallyTaught',this.value)">${active.actuallyTaught || ''}</textarea></div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn" onclick="updatePlanEntryField('status','Draft')">Set Draft</button>
-            <button class="btn" onclick="updatePlanEntryField('status','Planned')">Set Planned</button>
-            <button class="btn" onclick="updatePlanEntryField('status','Partially taught')">Set Partially taught</button>
-            <button class="btn btn-primary" onclick="markPlanAsTaught()">Mark as Taught</button>
-          </div>
-
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.12em;margin:14px 0 8px">Assessment</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-            <button class="btn btn-primary" onclick="usePlanForAssessment()">Use for Assessment</button>
-            <button class="btn" onclick="showView('bulk-assess')">Open existing assessment workflow</button>
-          </div>
-          <textarea class="form-input" style="min-height:120px" readonly>${active.assessmentPrompt || 'Assessment prompt will appear here after clicking Use for Assessment.'}</textarea>
-        </div>
-      </div>` : ''}
-    </div>
-  `;
-}
-
-
-// ════════════════════════════════════════════════════
-// ── WEEKLY PLANNER ──
-// timetable-style weekly planning with quick blocks, drag/drop, duplicate, and day view
-// ════════════════════════════════════════════════════
-
-const WEEKLY_PLANNER_STORAGE_KEY = 'ct_weekly_planner_v1';
-const PLANNER_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-const PLANNER_WEEKLY_FOCUS_DEFAULTS = ['Literacy', 'Maths', 'Phonics', 'Reading', 'Writing'];
 
 function toIsoDate(date) {
   const d = new Date(date);
@@ -8174,841 +8033,6 @@ function plannerNormalizeWeekStart(value) {
   return toIsoDate(getWeekStart(parseIsoDateLocal(value)));
 }
 
-function normalizePlannerSettings(raw = {}) {
-  const periodsPerDay = Math.min(12, Math.max(3, Number(raw.periodsPerDay) || 6));
-  const recessAfter = Math.min(periodsPerDay - 1, Math.max(0, Number(raw.recessAfter) || 2));
-  const lunchAfter = Math.min(periodsPerDay - 1, Math.max(0, Number(raw.lunchAfter) || 4));
-  const dayStart = /^\d{2}:\d{2}$/.test(raw.dayStart || '') ? raw.dayStart : '09:00';
-  const periodLength = Math.min(120, Math.max(20, Number(raw.periodLength) || 50));
-  return { dayStart, periodLength, periodsPerDay, recessAfter, lunchAfter };
-}
-
-function plannerNormalizeFocusKey(value = '') {
-  return String(value || '').trim().toLowerCase();
-}
-
-function normalizePlannerBlock(raw = {}) {
-  const duration = Number(raw.duration) === 2 ? 2 : 1;
-  const period = Math.max(1, Number(raw.period) || 1);
-  const day = Math.min(4, Math.max(0, Number(raw.day) || 0));
-  return {
-    ...raw,
-    id: raw.id || `wp_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-    day,
-    period,
-    duration,
-    title: String(raw.title || raw.subject || ''),
-    subject: String(raw.subject || raw.title || ''),
-    focus: String(raw.focus || ''),
-    notes: String(raw.notes || ''),
-  };
-}
-
-function normalizeWeeklyFocusEntries(rawEntries = []) {
-  const list = Array.isArray(rawEntries) ? rawEntries : [];
-  const normalized = list
-    .map((entry, idx) => ({
-      id: entry?.id || `wf_${idx}_${Math.random().toString(16).slice(2, 6)}`,
-      subject: String(entry?.subject || '').trim(),
-      focus: String(entry?.focus || '').trim(),
-    }))
-    .filter(entry => entry.subject);
-  if (normalized.length) return normalized;
-  return PLANNER_WEEKLY_FOCUS_DEFAULTS.map(subject => ({
-    id: `wf_${plannerNormalizeFocusKey(subject)}`,
-    subject,
-    focus: '',
-  }));
-}
-
-function loadWeeklyPlannerState() {
-  const defaults = {
-    settings: normalizePlannerSettings(),
-    currentWeekStart: toIsoDate(getWeekStart()),
-    weeks: {},
-    dayViewDay: null,
-    draggingBlockId: null,
-  };
-  try {
-    const raw = localStorage.getItem(WEEKLY_PLANNER_STORAGE_KEY);
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw);
-    return {
-      settings: normalizePlannerSettings(parsed?.settings || {}),
-      currentWeekStart: plannerNormalizeWeekStart(parsed?.currentWeekStart || defaults.currentWeekStart),
-      weeks: parsed?.weeks && typeof parsed.weeks === 'object' ? parsed.weeks : {},
-      dayViewDay: Number.isInteger(parsed?.dayViewDay) ? parsed.dayViewDay : null,
-      draggingBlockId: null,
-    };
-  } catch (e) {
-    return defaults;
-  }
-}
-
-function saveWeeklyPlannerState() {
-  const wp = state.weeklyPlanner || loadWeeklyPlannerState();
-  const payload = {
-    settings: normalizePlannerSettings(wp.settings),
-    currentWeekStart: wp.currentWeekStart,
-    weeks: wp.weeks || {},
-    dayViewDay: Number.isInteger(wp.dayViewDay) ? wp.dayViewDay : null,
-  };
-  try { localStorage.setItem(WEEKLY_PLANNER_STORAGE_KEY, JSON.stringify(payload)); } catch (e) {}
-}
-
-function getPlannerWeekKey() {
-  if (!state.weeklyPlanner) state.weeklyPlanner = loadWeeklyPlannerState();
-  const normalized = plannerNormalizeWeekStart(state.weeklyPlanner.currentWeekStart || toIsoDate(getWeekStart()));
-  if (state.weeklyPlanner.currentWeekStart !== normalized) {
-    state.weeklyPlanner.currentWeekStart = normalized;
-    saveWeeklyPlannerState();
-  }
-  return normalized;
-}
-
-function getPlannerWeekData(weekKey = null) {
-  const wp = state.weeklyPlanner;
-  const key = weekKey || getPlannerWeekKey();
-  if (!wp.weeks[key]) wp.weeks[key] = { blocks: [], weeklyFocusEntries: normalizeWeeklyFocusEntries([]) };
-  if (!Array.isArray(wp.weeks[key].blocks)) wp.weeks[key].blocks = [];
-  wp.weeks[key].blocks = wp.weeks[key].blocks.map(normalizePlannerBlock);
-  wp.weeks[key].weeklyFocusEntries = normalizeWeeklyFocusEntries(wp.weeks[key].weeklyFocusEntries);
-  return wp.weeks[key];
-}
-
-function getPlannerBlocks() {
-  return getPlannerWeekData().blocks;
-}
-
-function findPlannerBlock(blockId) {
-  return getPlannerBlocks().find(b => b.id === blockId);
-}
-
-function plannerBlockCoversPeriod(block, period) {
-  const duration = Number(block.duration) === 2 ? 2 : 1;
-  return period >= block.period && period < (block.period + duration);
-}
-
-function getPlannerBlockAt(day, period, skipId = null) {
-  return getPlannerBlocks().find(b => b.day === day && plannerBlockCoversPeriod(b, period) && b.id !== skipId);
-}
-
-function plannerCanPlaceBlock(day, period, duration = 1, skipId = null) {
-  const settings = normalizePlannerSettings(state.weeklyPlanner.settings);
-  const normalizedDuration = Number(duration) === 2 ? 2 : 1;
-  if (period < 1 || period > settings.periodsPerDay) return false;
-  if (period + normalizedDuration - 1 > settings.periodsPerDay) return false;
-  for (let p = period; p < period + normalizedDuration; p++) {
-    if (getPlannerBlockAt(day, p, skipId)) return false;
-  }
-  return true;
-}
-
-function plannerCanPlaceBlockInCollection(collection, day, period, duration = 1, skipId = null, periodsPerDay = 12) {
-  const normalizedDuration = Number(duration) === 2 ? 2 : 1;
-  if (period < 1 || period > periodsPerDay) return false;
-  if (period + normalizedDuration - 1 > periodsPerDay) return false;
-  for (let p = period; p < period + normalizedDuration; p++) {
-    const clash = (collection || []).find(b => b.day === day && plannerBlockCoversPeriod(b, p) && b.id !== skipId);
-    if (clash) return false;
-  }
-  return true;
-}
-
-function plannerGetWeeklyFocusForBlock(block, weekData = getPlannerWeekData()) {
-  const key = plannerNormalizeFocusKey(block.title || block.subject);
-  if (!key) return '';
-  const match = (weekData.weeklyFocusEntries || []).find(entry => plannerNormalizeFocusKey(entry.subject) === key);
-  return (match?.focus || '').trim();
-}
-
-function plannerGetDisplayFocus(block, weekData = getPlannerWeekData()) {
-  const customFocus = (block.focus || '').trim();
-  if (customFocus) return { text: customFocus, inherited: false };
-  const inheritedFocus = plannerGetWeeklyFocusForBlock(block, weekData);
-  if (inheritedFocus) return { text: inheritedFocus, inherited: true };
-  return { text: 'Add focus', inherited: false };
-}
-
-function plannerWeekLabel() {
-  const start = parseIsoDateLocal(getPlannerWeekKey());
-  const end = new Date(start);
-  end.setDate(start.getDate() + 4);
-  const fmt = { day: 'numeric', month: 'short' };
-  return `${start.toLocaleDateString('en-AU', fmt)} – ${end.toLocaleDateString('en-AU', fmt)}`;
-}
-
-function plannerGetTimeForPeriod(periodNumber) {
-  const settings = normalizePlannerSettings(state.weeklyPlanner.settings);
-  const [h, m] = settings.dayStart.split(':').map(Number);
-  const startMinutes = h * 60 + m + ((periodNumber - 1) * settings.periodLength);
-  const endMinutes = startMinutes + settings.periodLength;
-  const toLabel = (mins) => {
-    const hh = String(Math.floor(mins / 60)).padStart(2, '0');
-    const mm = String(mins % 60).padStart(2, '0');
-    return `${hh}:${mm}`;
-  };
-  return `${toLabel(startMinutes)}–${toLabel(endMinutes)}`;
-}
-
-function plannerChangeWeek(direction) {
-  const current = getPlannerWeekKey();
-  if (direction === 'current') {
-    state.weeklyPlanner.currentWeekStart = toIsoDate(getWeekStart());
-  } else if (direction === 'next' || direction === 'prev') {
-    const delta = direction === 'next' ? 7 : -7;
-    state.weeklyPlanner.currentWeekStart = addDaysToDate(current, delta);
-  } else {
-    return;
-  }
-  state.weeklyPlanner.currentWeekStart = plannerNormalizeWeekStart(state.weeklyPlanner.currentWeekStart);
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerUpdateSetting(field, value) {
-  if (!state.weeklyPlanner) state.weeklyPlanner = loadWeeklyPlannerState();
-  const next = { ...state.weeklyPlanner.settings, [field]: value };
-  state.weeklyPlanner.settings = normalizePlannerSettings(next);
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerOpenBlockModal(day, period, blockId = null) {
-  const existing = blockId ? findPlannerBlock(blockId) : null;
-  const settings = normalizePlannerSettings(state.weeklyPlanner.settings);
-  const weekData = getPlannerWeekData();
-  const inheritedFocus = existing ? plannerGetWeeklyFocusForBlock(existing, weekData) : '';
-  const modal = document.createElement('div');
-  modal.className = 'modal-overlay';
-  modal.id = 'modal-overlay';
-  modal.innerHTML = `
-    <div class="modal" style="max-width:560px;width:95%">
-      <div class="modal-head">
-        <div class="modal-title">${existing ? 'Edit lesson block' : 'Quick add lesson block'}</div>
-        <button class="modal-close" onclick="closeModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label class="form-label">Subject / title</label>
-          <input id="wp-title" class="form-input" placeholder="e.g. Literacy, Maths" value="${escapeHtml(existing?.title || '')}">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Focus (optional block override)</label>
-          <input id="wp-focus" class="form-input" placeholder="Leave blank to inherit Weekly Focus" value="${escapeHtml(existing?.focus || '')}">
-          <div style="font-size:12px;color:var(--text3);margin-top:4px">${inheritedFocus ? `Weekly Focus for this subject: ${escapeHtml(inheritedFocus)}` : 'No Weekly Focus match yet for this subject/title.'}</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Duration</label>
-          <select id="wp-duration" class="form-input">
-            <option value="1" ${(existing?.duration || 1) === 1 ? 'selected' : ''}>1 period</option>
-            <option value="2" ${(existing?.duration || 1) === 2 ? 'selected' : ''}>2 periods</option>
-          </select>
-          ${period >= settings.periodsPerDay ? `<div style="font-size:12px;color:var(--status-warn-text);margin-top:4px">This is the final period, so duration is limited by available periods.</div>` : ''}
-        </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Notes (optional)</label>
-          <textarea id="wp-notes" class="form-input" style="min-height:70px" placeholder="Optional notes">${escapeHtml(existing?.notes || '')}</textarea>
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="plannerSaveBlockFromModal(${day}, ${period}, ${blockId ? `'${blockId}'` : 'null'})">${existing ? 'Save changes' : 'Create block'}</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  const focusInput = document.getElementById('wp-focus');
-  if (focusInput) focusInput.focus();
-}
-
-function plannerSaveBlockFromModal(day, period, blockId = null) {
-  const title = document.getElementById('wp-title')?.value?.trim() || '';
-  const focus = document.getElementById('wp-focus')?.value?.trim() || '';
-  const notes = document.getElementById('wp-notes')?.value?.trim() || '';
-  const duration = Number(document.getElementById('wp-duration')?.value || 1) === 2 ? 2 : 1;
-  if (!title && !focus) {
-    toast('Add at least a title or a focus', 'error');
-    return;
-  }
-
-  if (blockId) {
-    const block = findPlannerBlock(blockId);
-    if (!block) return;
-    if (!plannerCanPlaceBlock(block.day, block.period, duration, blockId)) {
-      toast('Not enough free periods for this duration.', 'error');
-      return;
-    }
-    block.title = title;
-    block.subject = title;
-    block.focus = focus;
-    block.notes = notes;
-    block.duration = duration;
-  } else {
-    if (!plannerCanPlaceBlock(day, period, duration)) {
-      toast('That slot does not have enough free periods for this block.', 'error');
-      return;
-    }
-    getPlannerBlocks().push({
-      id: `wp_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-      day,
-      period,
-      duration,
-      subject: title,
-      title,
-      focus,
-      notes,
-    });
-  }
-
-  closeModal();
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerDeleteBlock(blockId) {
-  const blocks = getPlannerBlocks();
-  const idx = blocks.findIndex(b => b.id === blockId);
-  if (idx === -1) return;
-  if (!confirm('Delete this lesson block?')) return;
-  blocks.splice(idx, 1);
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerStartDrag(ev, blockId) {
-  const blockEl = ev.target?.closest?.('[data-planner-block-id]');
-  if (!blockEl) return;
-  if (ev.dataTransfer) {
-    ev.dataTransfer.effectAllowed = 'move';
-    ev.dataTransfer.setData('text/plain', blockId);
-  }
-  state.weeklyPlanner.draggingBlockId = blockId;
-  blockEl.classList.add('is-dragging');
-}
-
-function plannerEndDrag(ev) {
-  const blockEl = ev.target?.closest?.('[data-planner-block-id]');
-  if (blockEl) blockEl.classList.remove('is-dragging');
-  state.weeklyPlanner.draggingBlockId = null;
-  document.querySelectorAll('.planner-cell').forEach(cell => cell.classList.remove('drop-over'));
-}
-
-function plannerDragOver(ev) {
-  ev.preventDefault();
-  ev.currentTarget.classList.add('drop-over');
-}
-
-function plannerDragLeave(ev) {
-  ev.currentTarget.classList.remove('drop-over');
-}
-
-function plannerDrop(ev, day, period) {
-  ev.preventDefault();
-  ev.currentTarget.classList.remove('drop-over');
-  const blockId = ev.dataTransfer.getData('text/plain') || state.weeklyPlanner.draggingBlockId;
-  if (!blockId) return;
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  if (block.day === day && block.period === period) return;
-  if (!plannerCanPlaceBlock(day, period, block.duration || 1, blockId)) {
-    toast('Target slot is already occupied. Use Duplicate or Move instead.', 'error');
-    return;
-  }
-  block.day = day;
-  block.period = period;
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerOpenDuplicateModal(blockId) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const settings = normalizePlannerSettings(state.weeklyPlanner.settings);
-  const modal = document.createElement('div');
-  modal.className = 'modal-overlay';
-  modal.id = 'modal-overlay';
-  modal.innerHTML = `
-    <div class="modal" style="max-width:520px;width:94%">
-      <div class="modal-head">
-        <div class="modal-title">Duplicate lesson block</div>
-        <button class="modal-close" onclick="closeModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group"><label class="form-label">Block</label><div style="font-size:13px;color:var(--text)">${escapeHtml(block.title || 'Untitled')}</div><div style="font-size:12px;color:var(--text3)">${escapeHtml(block.focus || 'No focus set')}</div></div>
-        <div class="form-group">
-          <label class="form-label">Duplicate mode</label>
-          <select id="wp-dup-mode" class="form-input" onchange="plannerUpdateDuplicateModeUI()">
-            <option value="single">Single slot</option>
-            <option value="tomorrow">Tomorrow</option>
-            <option value="selected-days">Selected days (this week)</option>
-            <option value="all-weekdays">All weekdays (this week)</option>
-          </select>
-        </div>
-        <div id="wp-dup-single" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="form-group"><label class="form-label">Target day</label>
-            <select id="wp-dup-day" class="form-input">${PLANNER_DAYS.map((name, idx) => `<option value="${idx}" ${idx===block.day?'selected':''}>${name}</option>`).join('')}</select>
-          </div>
-          <div class="form-group"><label class="form-label">Target period</label>
-            <select id="wp-dup-period" class="form-input">${Array.from({length: settings.periodsPerDay}, (_, i) => i + 1).map(p => `<option value="${p}" ${p===block.period?'selected':''}>Period ${p}</option>`).join('')}</select>
-          </div>
-        </div>
-        <div id="wp-dup-selected-days" style="display:none;gap:8px;flex-wrap:wrap">
-          ${PLANNER_DAYS.map((name, idx) => `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text)"><input type="checkbox" class="wp-dup-day-check" value="${idx}" ${idx === block.day ? '' : 'checked'}> ${name}</label>`).join('')}
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="plannerConfirmDuplicate('${blockId}')">Duplicate</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  plannerUpdateDuplicateModeUI();
-}
-
-function plannerUpdateDuplicateModeUI() {
-  const mode = document.getElementById('wp-dup-mode')?.value || 'single';
-  const single = document.getElementById('wp-dup-single');
-  const selected = document.getElementById('wp-dup-selected-days');
-  if (single) single.style.display = mode === 'single' ? 'grid' : 'none';
-  if (selected) selected.style.display = mode === 'selected-days' ? 'flex' : 'none';
-}
-
-function plannerConfirmDuplicate(blockId) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const mode = document.getElementById('wp-dup-mode')?.value || 'single';
-  const targets = [];
-  if (mode === 'single') {
-    targets.push({
-      day: Number(document.getElementById('wp-dup-day')?.value || 0),
-      period: Number(document.getElementById('wp-dup-period')?.value || 1),
-    });
-  } else if (mode === 'tomorrow') {
-    if (block.day >= 4) {
-      toast('No tomorrow slot available from Friday in this week.', 'error');
-      return;
-    }
-    targets.push({ day: block.day + 1, period: block.period });
-  } else if (mode === 'all-weekdays') {
-    PLANNER_DAYS.forEach((_, day) => {
-      if (day !== block.day) targets.push({ day, period: block.period });
-    });
-  } else {
-    document.querySelectorAll('.wp-dup-day-check:checked').forEach(el => {
-      const day = Number(el.value);
-      targets.push({ day, period: block.period });
-    });
-  }
-  if (!targets.length) {
-    toast('Select at least one target day.', 'error');
-    return;
-  }
-  let copied = 0;
-  let skipped = 0;
-  targets.forEach(target => {
-    const isSameSlot = target.day === block.day && target.period === block.period;
-    if (isSameSlot || !plannerCanPlaceBlock(target.day, target.period, block.duration || 1)) {
-      skipped += 1;
-      return;
-    }
-    getPlannerBlocks().push({
-      ...block,
-      id: `wp_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-      day: target.day,
-      period: target.period,
-    });
-    copied += 1;
-  });
-  if (!copied) {
-    toast('No valid free slots for duplication.', 'error');
-    return;
-  }
-  closeModal();
-  saveWeeklyPlannerState();
-  renderView();
-  toast(skipped ? `Duplicated to ${copied} slot(s); skipped ${skipped} occupied slot(s).` : `Duplicated to ${copied} slot(s).`, 'success');
-}
-
-function plannerOpenMoveModal(blockId) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const settings = normalizePlannerSettings(state.weeklyPlanner.settings);
-  const modal = document.createElement('div');
-  modal.className = 'modal-overlay';
-  modal.id = 'modal-overlay';
-  modal.innerHTML = `
-    <div class="modal" style="max-width:500px;width:94%">
-      <div class="modal-head">
-        <div class="modal-title">Move lesson block</div>
-        <button class="modal-close" onclick="closeModal()">✕</button>
-      </div>
-      <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="form-group"><label class="form-label">Day</label>
-          <select id="wp-move-day" class="form-input">${PLANNER_DAYS.map((name, idx) => `<option value="${idx}" ${idx===block.day?'selected':''}>${name}</option>`).join('')}</select>
-        </div>
-        <div class="form-group"><label class="form-label">Period</label>
-          <select id="wp-move-period" class="form-input">${Array.from({length: settings.periodsPerDay}, (_, i) => i + 1).map(p => `<option value="${p}" ${p===block.period?'selected':''}>Period ${p}</option>`).join('')}</select>
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="plannerConfirmMove('${blockId}')">Move block</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-}
-
-function plannerConfirmMove(blockId) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const day = Number(document.getElementById('wp-move-day')?.value || 0);
-  const period = Number(document.getElementById('wp-move-period')?.value || 1);
-  if (!plannerCanPlaceBlock(day, period, block.duration || 1, blockId)) {
-    toast('Target slot already has a lesson block', 'error');
-    return;
-  }
-  block.day = day;
-  block.period = period;
-  closeModal();
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerToggleDayView(dayIndex) {
-  state.weeklyPlanner.dayViewDay = state.weeklyPlanner.dayViewDay === dayIndex ? null : dayIndex;
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerMoveWithinDay(blockId, direction) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const settings = normalizePlannerSettings(state.weeklyPlanner.settings);
-  const targetPeriod = block.period + direction;
-  if (targetPeriod < 1 || targetPeriod > settings.periodsPerDay) return;
-  if (!plannerCanPlaceBlock(block.day, targetPeriod, block.duration || 1, block.id)) {
-    toast('That period already has a lesson block', 'error');
-    return;
-  }
-  block.period = targetPeriod;
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerFindNextAvailableSlot(block, startDay = block.day, startPeriod = block.period + 1) {
-  const settings = normalizePlannerSettings(state.weeklyPlanner.settings);
-  for (let day = startDay; day < PLANNER_DAYS.length; day++) {
-    const periodStart = day === startDay ? startPeriod : 1;
-    for (let period = periodStart; period <= settings.periodsPerDay; period++) {
-      if (plannerCanPlaceBlock(day, period, block.duration || 1, block.id)) return { day, period };
-    }
-  }
-  return null;
-}
-
-function plannerMoveToTomorrow(blockId) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const targetDay = block.day + 1;
-  if (targetDay > 4) {
-    toast('No tomorrow slot left in this week.', 'error');
-    return;
-  }
-  if (!plannerCanPlaceBlock(targetDay, block.period, block.duration || 1, block.id)) {
-    toast('Tomorrow slot is occupied. Try next available slot or carry over.', 'error');
-    return;
-  }
-  block.day = targetDay;
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerMoveToNextAvailableSlot(blockId) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const slot = plannerFindNextAvailableSlot(block);
-  if (!slot) {
-    toast('No free slot available for this block this week.', 'error');
-    return;
-  }
-  block.day = slot.day;
-  block.period = slot.period;
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerCarryOverBlock(blockId) {
-  const block = findPlannerBlock(blockId);
-  if (!block) return;
-  const currentWeekKey = getPlannerWeekKey();
-  const nextWeekKey = addDaysToDate(currentWeekKey, 7);
-  const currentWeek = getPlannerWeekData(currentWeekKey);
-  const nextWeek = getPlannerWeekData(nextWeekKey);
-  const periodsPerDay = normalizePlannerSettings(state.weeklyPlanner.settings).periodsPerDay;
-  if (!plannerCanPlaceBlockInCollection(nextWeek.blocks, block.day, block.period, block.duration || 1, null, periodsPerDay)) {
-    toast('Cannot carry over: target slot in next week is unavailable.', 'error');
-    return;
-  }
-  currentWeek.blocks = currentWeek.blocks.filter(b => b.id !== blockId);
-  nextWeek.blocks.push({
-    ...block,
-    id: `wp_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-  });
-  saveWeeklyPlannerState();
-  renderView();
-  toast('Block carried over to the same slot next week.', 'success');
-}
-
-function plannerUpdateWeeklyFocusEntry(entryId, field, value) {
-  const weekData = getPlannerWeekData();
-  const entry = (weekData.weeklyFocusEntries || []).find(item => item.id === entryId);
-  if (!entry) return;
-  entry[field] = String(value || '').trim();
-  if (field === 'subject' && !entry.subject) {
-    weekData.weeklyFocusEntries = weekData.weeklyFocusEntries.filter(item => item.id !== entryId);
-  }
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerAddWeeklyFocusEntry() {
-  const weekData = getPlannerWeekData();
-  weekData.weeklyFocusEntries.push({
-    id: `wf_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-    subject: '',
-    focus: '',
-  });
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-function plannerRemoveWeeklyFocusEntry(entryId) {
-  const weekData = getPlannerWeekData();
-  weekData.weeklyFocusEntries = (weekData.weeklyFocusEntries || []).filter(item => item.id !== entryId);
-  saveWeeklyPlannerState();
-  renderView();
-}
-
-
-function plannerBindInteractions(main) {
-  if (!main) return;
-  if (main.dataset.plannerBound === '1') return;
-  main.dataset.plannerBound = '1';
-
-  main.addEventListener('click', (ev) => {
-    const navBtn = ev.target.closest('[data-planner-week-nav]');
-    if (navBtn && main.contains(navBtn)) {
-      plannerChangeWeek(navBtn.dataset.plannerWeekNav);
-      return;
-    }
-
-    const emptyCell = ev.target.closest('[data-planner-empty-cell]');
-    if (emptyCell && main.contains(emptyCell)) {
-      const day = Number(emptyCell.dataset.day);
-      const period = Number(emptyCell.dataset.period);
-      plannerOpenBlockModal(day, period);
-    }
-  });
-
-  main.addEventListener('dragstart', (ev) => {
-    const blockEl = ev.target.closest('[data-planner-block-id]');
-    if (!blockEl || !main.contains(blockEl)) return;
-    plannerStartDrag(ev, blockEl.dataset.plannerBlockId);
-  });
-
-  main.addEventListener('dragend', (ev) => {
-    const blockEl = ev.target.closest('[data-planner-block-id]');
-    if (!blockEl || !main.contains(blockEl)) return;
-    plannerEndDrag(ev);
-  });
-
-  main.addEventListener('dragover', (ev) => {
-    const cell = ev.target.closest('[data-planner-cell]');
-    if (!cell || !main.contains(cell)) return;
-    plannerDragOver(ev);
-  });
-
-  main.addEventListener('dragleave', (ev) => {
-    const cell = ev.target.closest('[data-planner-cell]');
-    if (!cell || !main.contains(cell)) return;
-    plannerDragLeave(ev);
-  });
-
-  main.addEventListener('drop', (ev) => {
-    const cell = ev.target.closest('[data-planner-cell]');
-    if (!cell || !main.contains(cell)) return;
-    const day = Number(cell.dataset.day);
-    const period = Number(cell.dataset.period);
-    plannerDrop(ev, day, period);
-  });
-}
-
-function renderWeeklyPlanner(main) {
-  if (!state.weeklyPlanner) state.weeklyPlanner = loadWeeklyPlannerState();
-  const wp = state.weeklyPlanner;
-  wp.settings = normalizePlannerSettings(wp.settings);
-
-  const settings = wp.settings;
-  const weekData = getPlannerWeekData();
-  const blocks = weekData.blocks;
-  const weekKey = getPlannerWeekKey();
-
-  const dayHeaders = PLANNER_DAYS.map((day, idx) => {
-    const dayDate = addDaysToDate(weekKey, idx);
-    return `<th><button class="planner-day-btn" onclick="plannerToggleDayView(${idx})">${day}<span>${parseIsoDateLocal(dayDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</span></button></th>`;
-  }).join('');
-
-  const bodyRows = [];
-  const coveredTracker = {};
-  for (let period = 1; period <= settings.periodsPerDay; period++) {
-    const cells = PLANNER_DAYS.map((_, dayIdx) => {
-      const skipKey = `${dayIdx}-${period}`;
-      if (coveredTracker[skipKey]) {
-        return `<td class="planner-cell planner-covered"><span>Continues from previous period</span></td>`;
-      }
-      const block = blocks.find(b => b.day === dayIdx && b.period === period);
-      if (!block) {
-        return `<td class="planner-cell planner-empty" data-planner-cell="1" data-planner-empty-cell="1" data-day="${dayIdx}" data-period="${period}"><span>+ Add</span></td>`;
-      }
-
-      const duration = block.duration || 1;
-      for (let covered = period + 1; covered < period + duration; covered++) {
-        coveredTracker[`${dayIdx}-${covered}`] = true;
-      }
-      const col = subjectCol(block.subject || block.title || 'English');
-      const bg = subjectBg(block.subject || block.title || 'English');
-      const focusDisplay = plannerGetDisplayFocus(block, weekData);
-      return `<td class="planner-cell" data-planner-cell="1" data-day="${dayIdx}" data-period="${period}">
-        <div class="planner-block ${duration === 2 ? 'planner-block-span-2' : ''}" draggable="true" data-planner-block-id="${block.id}" style="--planner-block-col:${col};--planner-block-bg:${bg}">
-          <div class="planner-block-top">
-            <button class="planner-block-title" onclick="plannerOpenBlockModal(${dayIdx}, ${period}, '${block.id}')">${escapeHtml(block.title || 'Untitled')}</button>
-            <div class="planner-block-actions">
-              <button class="planner-mini-btn" onclick="event.stopPropagation();plannerOpenDuplicateModal('${block.id}')">Duplicate</button>
-              <button class="planner-mini-btn" onclick="event.stopPropagation();plannerOpenMoveModal('${block.id}')">Move</button>
-            </div>
-          </div>
-          <div class="planner-focus">${escapeHtml(focusDisplay.text)}${focusDisplay.inherited ? '<span class="planner-focus-chip">Weekly focus</span>' : ''}</div>
-          <div class="planner-duration">Duration: ${duration} period${duration === 2 ? 's' : ''}</div>
-          ${block.notes ? `<div class="planner-notes">${escapeHtml(block.notes)}</div>` : ''}
-          <div class="planner-inline-actions">
-            <button class="planner-mini-btn" onclick="event.stopPropagation();plannerOpenBlockModal(${dayIdx}, ${period}, '${block.id}')">Edit</button>
-            <button class="planner-mini-btn" onclick="event.stopPropagation();plannerMoveToTomorrow('${block.id}')">Tomorrow</button>
-            <button class="planner-mini-btn" onclick="event.stopPropagation();plannerMoveToNextAvailableSlot('${block.id}')">Next slot</button>
-            <button class="planner-mini-btn" onclick="event.stopPropagation();plannerCarryOverBlock('${block.id}')">Carry over</button>
-            <button class="planner-mini-btn" onclick="event.stopPropagation();plannerDeleteBlock('${block.id}')">Delete</button>
-          </div>
-        </div>
-      </td>`;
-    }).join('');
-
-    bodyRows.push(`<tr><td class="planner-period-col"><div>Period ${period}</div><span>${plannerGetTimeForPeriod(period)}</span></td>${cells}</tr>`);
-
-    if (settings.recessAfter === period) {
-      bodyRows.push(`<tr><td></td><td colspan="5" class="planner-break-row">Recess break</td></tr>`);
-    }
-    if (settings.lunchAfter === period) {
-      bodyRows.push(`<tr><td></td><td colspan="5" class="planner-break-row">Lunch break</td></tr>`);
-    }
-  }
-
-  const dayView = Number.isInteger(wp.dayViewDay) ? wp.dayViewDay : null;
-  const dayViewBlocks = dayView === null
-    ? []
-    : blocks.filter(b => b.day === dayView).sort((a, b) => a.period - b.period);
-
-  main.innerHTML = `
-    <div class="topbar" style="flex-wrap:wrap;gap:10px;padding:14px 24px">
-      <div class="topbar-title">Weekly Planner</div>
-      <div class="planner-week-nav">
-        <button class="btn" data-planner-week-nav="prev" id="planner-week-prev">← Previous week</button>
-        <button class="btn" data-planner-week-nav="current" id="planner-week-current">Current week</button>
-        <button class="btn" data-planner-week-nav="next" id="planner-week-next">Next week →</button>
-      </div>
-      <div class="planner-week-label">Week: ${plannerWeekLabel()}</div>
-    </div>
-    <div class="content">
-      <details class="card planner-settings">
-        <summary class="card-head" style="cursor:pointer;list-style:none">
-          <div class="card-title">Planner settings</div>
-          <div style="font-size:12px;color:var(--text3)">Adjust timetable structure</div>
-        </summary>
-        <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
-          <div class="form-group" style="margin-bottom:0"><label class="form-label">Day start time</label><input class="form-input" type="time" value="${settings.dayStart}" onchange="plannerUpdateSetting('dayStart', this.value)"></div>
-          <div class="form-group" style="margin-bottom:0"><label class="form-label">Period length (minutes)</label><input class="form-input" type="number" min="20" max="120" value="${settings.periodLength}" onchange="plannerUpdateSetting('periodLength', this.value)"></div>
-          <div class="form-group" style="margin-bottom:0"><label class="form-label">Periods per day</label><input class="form-input" type="number" min="3" max="12" value="${settings.periodsPerDay}" onchange="plannerUpdateSetting('periodsPerDay', this.value)"></div>
-          <div class="form-group" style="margin-bottom:0"><label class="form-label">Recess after period</label><input class="form-input" type="number" min="0" max="${Math.max(1, settings.periodsPerDay - 1)}" value="${settings.recessAfter}" onchange="plannerUpdateSetting('recessAfter', this.value)"></div>
-          <div class="form-group" style="margin-bottom:0"><label class="form-label">Lunch after period</label><input class="form-input" type="number" min="0" max="${Math.max(1, settings.periodsPerDay - 1)}" value="${settings.lunchAfter}" onchange="plannerUpdateSetting('lunchAfter', this.value)"></div>
-        </div>
-      </details>
-      <details class="card planner-settings">
-        <summary class="card-head" style="cursor:pointer;list-style:none">
-          <div class="card-title">Weekly Focus</div>
-          <div style="font-size:12px;color:var(--text3)">Set short focus prompts for recurring blocks</div>
-        </summary>
-        <div style="padding:14px;display:flex;flex-direction:column;gap:8px">
-          ${(weekData.weeklyFocusEntries || []).map(entry => `
-            <div class="planner-weekly-focus-row">
-              <input class="form-input" placeholder="Subject / lesson type" value="${escapeHtml(entry.subject)}" onchange="plannerUpdateWeeklyFocusEntry('${entry.id}', 'subject', this.value)">
-              <input class="form-input" placeholder="Weekly focus (short)" value="${escapeHtml(entry.focus)}" onchange="plannerUpdateWeeklyFocusEntry('${entry.id}', 'focus', this.value)">
-              <button class="btn" onclick="plannerRemoveWeeklyFocusEntry('${entry.id}')">Remove</button>
-            </div>
-          `).join('')}
-          <div><button class="btn" onclick="plannerAddWeeklyFocusEntry()">+ Add weekly focus row</button></div>
-        </div>
-      </details>
-
-      <div class="card" style="overflow:auto">
-        <table class="planner-grid">
-          <thead>
-            <tr>
-              <th>Time</th>
-              ${dayHeaders}
-            </tr>
-          </thead>
-          <tbody>
-            ${bodyRows.join('')}
-          </tbody>
-        </table>
-      </div>
-
-      ${dayView === null ? '' : `
-      <div class="card">
-        <div class="card-head">
-          <div class="card-title">${PLANNER_DAYS[dayView]} day view</div>
-          <button class="btn" onclick="plannerToggleDayView(${dayView})">Close day view</button>
-        </div>
-        <div style="padding:14px">
-          ${dayViewBlocks.length ? dayViewBlocks.map(block => {
-            const displayFocus = plannerGetDisplayFocus(block, weekData);
-            return `
-            <div class="planner-day-item">
-              <div>
-                <div class="planner-day-item-title">Period ${block.period} · ${plannerGetTimeForPeriod(block.period)}</div>
-                <div style="font-size:13px;color:var(--text)">${escapeHtml(block.title || 'Untitled')}</div>
-                <div style="font-size:13px;color:var(--text-muted)">${escapeHtml(displayFocus.text)} ${displayFocus.inherited ? '· Weekly focus' : ''}</div>
-                <div style="font-size:12px;color:var(--text3)">Duration: ${block.duration || 1} period${(block.duration || 1) === 2 ? 's' : ''}</div>
-                ${block.notes ? `<div style="font-size:12px;color:var(--text3);margin-top:4px">${escapeHtml(block.notes)}</div>` : ''}
-              </div>
-              <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-                <button class="btn" onclick="plannerMoveWithinDay('${block.id}', -1)">↑ Earlier</button>
-                <button class="btn" onclick="plannerMoveWithinDay('${block.id}', 1)">↓ Later</button>
-                <button class="btn" onclick="plannerMoveToTomorrow('${block.id}')">Tomorrow</button>
-                <button class="btn" onclick="plannerMoveToNextAvailableSlot('${block.id}')">Next slot</button>
-                <button class="btn" onclick="plannerCarryOverBlock('${block.id}')">Carry over</button>
-                <button class="btn" onclick="plannerOpenBlockModal(${block.day}, ${block.period}, '${block.id}')">Edit</button>
-                <button class="btn" onclick="plannerOpenMoveModal('${block.id}')">Move</button>
-              </div>
-            </div>
-          `;
-          }).join('') : `<div style="font-size:13px;color:var(--text3)">No blocks yet for this day.</div>`}
-        </div>
-      </div>`}
-    </div>
-  `;
-
-  plannerBindInteractions(main);
-}
-
 // ── Apps Script additions needed ──
 console.info(
   `%cClassTracker v${APP_VERSION} — Apps Script update needed\n\n` +
@@ -9018,6 +8042,19 @@ console.info(
   'Open browser console after deploying to see full Apps Script code.',
   'color:#60a5fa;font-family:monospace;font-size:11px'
 );
+
+// One-time clean start for the consolidated planner (step 1). The legacy planning
+// surfaces (lessonPlans v1, weeklyPlanner, planLog) are retired and their data is
+// intentionally not migrated — see ARCHITECTURE-ASSESSMENT.md step 1.
+function plannerWipeLegacyPlanningData() {
+  try {
+    if (localStorage.getItem('ct_planner_v2_wiped')) return;
+    ['ct_planner_lesson_plans_v1', 'ct_weekly_planner_v1', 'ct_plan_log_entries'].forEach(k => {
+      try { localStorage.removeItem(k); } catch (e) {}
+    });
+    localStorage.setItem('ct_planner_v2_wiped', '1');
+  } catch (e) {}
+}
 
 async function init() {
   const verEl = document.getElementById('sidebar-version');
@@ -9029,9 +8066,8 @@ async function init() {
   const uiState = loadUIState();
   setCurrentView(uiState.currentView, { persist: false });
 
-  const hasStoredPlanner = !!localStorage.getItem(WEEKLY_PLANNER_STORAGE_KEY);
-  state.weeklyPlanner = loadWeeklyPlannerState();
-  if (!hasStoredPlanner) saveWeeklyPlannerState();
+  // Clean start for the consolidated planner (step 1): wipe retired surfaces' data.
+  plannerWipeLegacyPlanningData();
 
   // Show loading message
   const main = document.getElementById('main-content');
