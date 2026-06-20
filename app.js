@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.5
+ * THIS FILE IS VERSION: 1.13.6
  * Last updated: 2026-06-20
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.6  - Year 2 Science IC review: linked AC9S2U01-IC8 to AC9S2H01; linked AC9S2H01-IC2 to AC9S2U01
  * v1.13.5  - IC skill rollup fix: Coverage Gaps now rolls up linked ICs with OR per student (any one tethered got_it = met) instead of counting each tethered IC as required — removes false gaps on multi-context Science inquiry descriptors; shared rollUpICStatuses helper keeps the coverage bar and Bulk Assess badge in step
  * v1.13.4  - IC skill rollup: linkedDescriptorIds now surface IC outcomes on tethered CDs in Bulk Assess and Coverage Gaps (OR scoring: got_it on any one linked IC = met)
  * v1.13.3  - Planner IC picker fix: confidence now normalises against descriptors that actually render (ranked descriptors with no loaded ICs no longer deflate every visible match to partial); suggestion groups flattened by score across descriptors (strong, then partial, then "Create new IC", then weak), not taxonomy order
@@ -68,7 +69,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.5';
+const APP_VERSION = '1.13.6';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
