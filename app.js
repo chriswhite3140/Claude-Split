@@ -62,7 +62,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.12.71';
+const APP_VERSION = '1.12.72';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lesson_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -274,6 +274,9 @@ const CSV_FILES = {
   ics_year2_english_language:    { file: 'ics_year2_english_language.csv' },
   ics_year2_english_literature:  { file: 'ics_year2_english_literature.csv' },
   ics_year2_english_literacy:    { file: 'ics_year2_english_literacy.csv' },
+  ics_year2_science_understanding:   { file: 'ics_year2_science_understanding.csv' },
+  ics_year2_science_human_endeavour: { file: 'ics_year2_science_human_endeavour.csv' },
+  ics_year2_science_inquiry_skills:  { file: 'ics_year2_science_inquiry_skills.csv' },
 };
 
 // ── STATE ──
@@ -3987,6 +3990,9 @@ async function fetchAllCSVs() {
     fetchICsCSVFromGitHub('ics_year2_english_language'),
     fetchICsCSVFromGitHub('ics_year2_english_literature'),
     fetchICsCSVFromGitHub('ics_year2_english_literacy'),
+    fetchICsCSVFromGitHub('ics_year2_science_understanding'),
+    fetchICsCSVFromGitHub('ics_year2_science_human_endeavour'),
+    fetchICsCSVFromGitHub('ics_year2_science_inquiry_skills'),
   ]);
 
   const total = count1 + count2 + count3 + count4 + count5 + count6 + count7 +
