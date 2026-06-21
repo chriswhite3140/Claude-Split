@@ -2,14 +2,16 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.6
- * Last updated: 2026-06-20
+ * THIS FILE IS VERSION: 1.13.7
+ * Last updated: 2026-06-21
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.7  - Fix: Bulk Assess ratings can now be cleared by clicking the active button again
+ * v1.13.7  - Fix: clicking a student card in Students view now opens the student detail view
  * v1.13.6  - Year 2 Science IC review: linked AC9S2U01-IC8 to AC9S2H01; linked AC9S2H01-IC2 to AC9S2U01
  * v1.13.5  - IC skill rollup fix: Coverage Gaps now rolls up linked ICs with OR per student (any one tethered got_it = met) instead of counting each tethered IC as required — removes false gaps on multi-context Science inquiry descriptors; shared rollUpICStatuses helper keeps the coverage bar and Bulk Assess badge in step
  * v1.13.4  - IC skill rollup: linkedDescriptorIds now surface IC outcomes on tethered CDs in Bulk Assess and Coverage Gaps (OR scoring: got_it on any one linked IC = met)
@@ -69,7 +71,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.6';
+const APP_VERSION = '1.13.7';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -2264,7 +2266,7 @@ function renderStudents(main) {
 function renderStudentCards(students) {
   return students.map((s, i) => {
     const stats = getProgressStats(s.id);
-    return `<div class="student-card" onclick="openStudentDetail('${s.id}')">
+    return `<div class="student-card" data-action="openStudentDetail" data-student-id="${s.id}">
       <div class="sc-top">
         <div class="sc-avatar ${getAvClass(i)}">${getInitials(s)}</div>
         <div><div class="sc-name">${s.first_name} ${s.last_name}</div><div class="sc-year">Year ${s.year_level}</div></div>
@@ -3402,7 +3404,24 @@ function setBulkYear(y)    { state.bulkAssess.yearFilter=y; renderBulkAssess(doc
 function setBulkStrand(s)  { state.bulkAssess.strandFilter=s; renderBulkAssess(document.getElementById('main-content')); }
 function setBulkCode(c)    { state.bulkAssess.selectedCode=c; renderBulkAssess(document.getElementById('main-content')); }
 function setBulkStudent(s) { state.bulkAssess.selectedStudent=s; renderBulkAssess(document.getElementById('main-content')); }
-function setBulkMastery(key, mastery) { state.bulkAssess.pendingChanges[key]=mastery; renderBulkAssess(document.getElementById('main-content')); }
+function setBulkMastery(key, mastery) {
+  const [sid, code] = key.split('|');
+  const saved = getMasteryForCode(sid, code);
+  const pending = state.bulkAssess.pendingChanges[key];
+  const current = pending !== undefined ? pending : (saved || 'Not taught');
+  // Clicking the already-active rating toggles it off. 'Not taught' is an explicit
+  // value (not a toggle target) so re-clicking it just keeps it set.
+  if (current === mastery && mastery !== 'Not taught') {
+    if (saved && saved !== 'Not taught') {
+      state.bulkAssess.pendingChanges[key] = null; // null = clear the saved rating on save
+    } else {
+      delete state.bulkAssess.pendingChanges[key]; // no saved rating — just drop the pending entry
+    }
+  } else {
+    state.bulkAssess.pendingChanges[key] = mastery;
+  }
+  renderBulkAssess(document.getElementById('main-content'));
+}
 function applyMasteryToAll(code, mastery) {
   const ba = state.bulkAssess;
   state.students.filter(s => ba.yearFilter==='all'||normaliseYear(s.year_level)===ba.yearFilter).forEach(s => { ba.pendingChanges[s.id+'|'+code]=mastery; });
@@ -3411,6 +3430,16 @@ function applyMasteryToAll(code, mastery) {
 function discardBulkChanges() { state.bulkAssess.pendingChanges={}; renderBulkAssess(document.getElementById('main-content')); }
 
 document.addEventListener('click', function(e) {
+  // ── Generic data-action handlers (delegated; preferred over inline onclick) ──
+  const actionEl = e.target.closest('[data-action]');
+  if (actionEl) {
+    const act = actionEl.dataset.action;
+    if (act === 'openStudentDetail' && actionEl.dataset.studentId) {
+      openStudentDetail(actionEl.dataset.studentId);
+      return;
+    }
+  }
+
   // ── Progression Placement buttons ──
   const ppType = e.target.closest('[data-pp-type]');
   if (ppType) {
@@ -3563,7 +3592,8 @@ function renderBulkAssess(main) {
     return ['Achieved','Developing','Emerging','Not taught'].map(m => {
       const [col, bg] = masteryColours[m];
       const active = current === m;
-      return `<button data-ba-action="setBulkMastery" data-ba-key="${key}" data-ba-val="${m}" style="padding:3px 9px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">${m}</button>`;
+      const canClear = active && m !== 'Not taught';
+      return `<button data-ba-action="setBulkMastery" data-ba-key="${key}" data-ba-val="${m}" title="${canClear?'Click again to clear':m}" style="padding:3px 9px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">${m}</button>`;
     }).join('');
   }
 
@@ -3702,7 +3732,10 @@ async function saveBulkAssess() {
   setSyncing(true);
   toast(`Saving ${changes.length} change${changes.length>1?'s':''}…`, 'info');
   let saved = 0;
-  for (const [key, mastery] of changes) {
+  for (const [key, rawMastery] of changes) {
+    // A null pending value means "clear this rating" — persist it as 'Not taught'
+    // so the saved record is unset rather than left at its previous value.
+    const mastery = rawMastery === null ? 'Not taught' : rawMastery;
     const [studentId, code] = key.split('|');
     const existing = state.progress.find(p => p.student_id===studentId && p.code===code);
     try {
