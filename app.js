@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.7
+ * THIS FILE IS VERSION: 1.13.8
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.8  - Fix: student card click in Students view now correctly opens student detail (coerce dataset string ID to number when student IDs are numeric, so the strict === lookup no longer fails and redirects back to Students)
  * v1.13.7  - Fix: Bulk Assess ratings can now be cleared by clicking the active button again; toggling off an unsaved change reverts to the saved rating rather than clearing it (no silent loss of existing assessment data)
  * v1.13.7  - Fix: clicking a student card in Students view now opens the student detail view
  * v1.13.6  - Year 2 Science IC review: linked AC9S2U01-IC8 to AC9S2H01; linked AC9S2H01-IC2 to AC9S2U01
@@ -71,7 +72,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.7';
+const APP_VERSION = '1.13.8';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -3438,7 +3439,12 @@ document.addEventListener('click', function(e) {
   if (actionEl) {
     const act = actionEl.dataset.action;
     if (act === 'openStudentDetail' && actionEl.dataset.studentId) {
-      openStudentDetail(actionEl.dataset.studentId);
+      const rawId = actionEl.dataset.studentId;
+      // dataset values are always strings; coerce to number if state.students uses numeric IDs
+      // so the strict === lookup in openStudentDetail/renderStudentDetail does not fail
+      const sid = state.students.length && typeof state.students[0].id === 'number'
+        ? Number(rawId) : rawId;
+      openStudentDetail(sid);
       return;
     }
   }
