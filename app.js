@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.8
+ * THIS FILE IS VERSION: 1.13.10
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,7 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
- * v1.13.8  - Fix: student card click in Students view now correctly opens student detail (coerce dataset string ID to number when student IDs are numeric, so the strict === lookup no longer fails and redirects back to Students)
+ * v1.13.10 - Fix: student card click reliably opens student detail — openStudentDetail now resolves the student by matching String(id) and selects that student's own id, covering all call sites and any mix of numeric/string IDs (no more redirect back to Students)
  * v1.13.7  - Fix: Bulk Assess ratings can now be cleared by clicking the active button again; toggling off an unsaved change reverts to the saved rating rather than clearing it (no silent loss of existing assessment data)
  * v1.13.7  - Fix: clicking a student card in Students view now opens the student detail view
  * v1.13.6  - Year 2 Science IC review: linked AC9S2U01-IC8 to AC9S2H01; linked AC9S2H01-IC2 to AC9S2U01
@@ -72,7 +72,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.8';
+const APP_VERSION = '1.13.10';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -2292,11 +2292,15 @@ function filterStudents(q) {
 
 // ── STUDENT DETAIL ──
 function openStudentDetail(studentId) {
-  state.selectedStudent = studentId;
+  // Call sites pass the id as a string (inline onclick markup and the dataset delegator),
+  // but state.students ids can be numbers, strings, or a mix (Sheets-loaded rows vs.
+  // API-added students). Resolve by stringified id and store the student's own id so every
+  // strict === lookup downstream (renderStudentDetail, print scope) matches the right row.
+  const student = state.students.find(x => String(x.id) === String(studentId));
+  state.selectedStudent = student ? student.id : studentId;
   setCurrentView('student-detail');
   state.detailFilter = 'all';
   state.detailSection = 'curriculum'; // always reset to curriculum tab
-  const student = state.students.find(x => x.id === studentId);
   state.detailYearFilter = student ? student.year_level : 'all';
   // Auto-select first available subject if not yet set
   if (!state.detailSubjectFilter) {
@@ -3439,12 +3443,7 @@ document.addEventListener('click', function(e) {
   if (actionEl) {
     const act = actionEl.dataset.action;
     if (act === 'openStudentDetail' && actionEl.dataset.studentId) {
-      const rawId = actionEl.dataset.studentId;
-      // dataset values are always strings; coerce to number if state.students uses numeric IDs
-      // so the strict === lookup in openStudentDetail/renderStudentDetail does not fail
-      const sid = state.students.length && typeof state.students[0].id === 'number'
-        ? Number(rawId) : rawId;
-      openStudentDetail(sid);
+      openStudentDetail(actionEl.dataset.studentId);
       return;
     }
   }
