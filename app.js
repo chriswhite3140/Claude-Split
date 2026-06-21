@@ -10,7 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
- * v1.13.7  - Fix: Bulk Assess ratings can now be cleared by clicking the active button again
+ * v1.13.7  - Fix: Bulk Assess ratings can now be cleared by clicking the active button again; toggling off an unsaved change reverts to the saved rating rather than clearing it (no silent loss of existing assessment data)
  * v1.13.7  - Fix: clicking a student card in Students view now opens the student detail view
  * v1.13.6  - Year 2 Science IC review: linked AC9S2U01-IC8 to AC9S2H01; linked AC9S2H01-IC2 to AC9S2U01
  * v1.13.5  - IC skill rollup fix: Coverage Gaps now rolls up linked ICs with OR per student (any one tethered got_it = met) instead of counting each tethered IC as required — removes false gaps on multi-context Science inquiry descriptors; shared rollUpICStatuses helper keeps the coverage bar and Bulk Assess badge in step
@@ -3412,10 +3412,13 @@ function setBulkMastery(key, mastery) {
   // Clicking the already-active rating toggles it off. 'Not taught' is an explicit
   // value (not a toggle target) so re-clicking it just keeps it set.
   if (current === mastery && mastery !== 'Not taught') {
-    if (saved && saved !== 'Not taught') {
-      state.bulkAssess.pendingChanges[key] = null; // null = clear the saved rating on save
+    if (pending !== undefined) {
+      // Undo an unsaved pending change — revert to the saved baseline. Never overwrite
+      // a saved rating here; that would silently clear existing assessment data.
+      delete state.bulkAssess.pendingChanges[key];
     } else {
-      delete state.bulkAssess.pendingChanges[key]; // no saved rating — just drop the pending entry
+      // No pending change: the saved rating itself is active — clear it on save.
+      state.bulkAssess.pendingChanges[key] = null; // null = clear saved rating on save
     }
   } else {
     state.bulkAssess.pendingChanges[key] = mastery;
