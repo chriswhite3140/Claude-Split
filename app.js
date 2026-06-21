@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.10
+ * THIS FILE IS VERSION: 1.13.11
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.11 - Fix: opening the student detail view no longer crashes with "subjectColours is not defined" — renderStudentDetail subject tabs and the coverage tooltip now use the subjectCol() helper (SUBJECT_COLOURS); this ReferenceError was the actual cause of student cards appearing to do nothing / bounce back to Students
  * v1.13.10 - Fix: student card click reliably opens student detail — openStudentDetail now resolves the student by matching String(id) and selects that student's own id, covering all call sites and any mix of numeric/string IDs (no more redirect back to Students)
  * v1.13.7  - Fix: Bulk Assess ratings can now be cleared by clicking the active button again; toggling off an unsaved change reverts to the saved rating rather than clearing it (no silent loss of existing assessment data)
  * v1.13.7  - Fix: clicking a student card in Students view now opens the student detail view
@@ -72,7 +73,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.10';
+const APP_VERSION = '1.13.11';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -2386,7 +2387,7 @@ function renderStudentDetail(main) {
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text3)">Subject</span>
         ${availableSubjects.map(subj => {
-          const col = subjectColours[subj] || 'var(--blue)';
+          const col = subjectCol(subj);
           const active = subjectFilter === subj;
           return `<button onclick="setDetailSubject('${subj}')"
             style="padding:4px 10px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?col+'22':'none'};color:${active?col:'var(--text3)'};font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;transition:all 0.15s;font-weight:${active?'700':'400'}">
@@ -4533,7 +4534,7 @@ function showCoverageTooltip(event, code, descriptor, subject, strand) {
   hideCoverageTooltip();
   const tip = document.createElement('div');
   tip.id = 'cv-tooltip';
-  const col = subjectColours[subject] || 'var(--blue)';
+  const col = subjectCol(subject);
   tip.style.cssText = `position:fixed;z-index:999;max-width:320px;background:var(--surface);border:1px solid var(--border2);border-radius:8px;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,0.4);pointer-events:none;animation:fadeIn 0.1s ease`;
   tip.innerHTML = `
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
