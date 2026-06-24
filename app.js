@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.11
+ * THIS FILE IS VERSION: 1.13.12
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.12 - Import Maths ICs for Foundation, Y1, Y3–Y6 across all strands (Number, Algebra, Measurement, Space, Statistics, Probability); Y2 Maths ICs already present; ~550 ICs total now loaded on init
  * v1.13.11 - Fix: opening the student detail view no longer crashes with "subjectColours is not defined" — renderStudentDetail subject tabs and the coverage tooltip now use the subjectCol() helper (SUBJECT_COLOURS); this ReferenceError was the actual cause of student cards appearing to do nothing / bounce back to Students
  * v1.13.10 - Fix: student card click reliably opens student detail — openStudentDetail now resolves the student by matching String(id) and selects that student's own id, covering all call sites and any mix of numeric/string IDs (no more redirect back to Students)
  * v1.13.7  - Fix: Bulk Assess ratings can now be cleared by clicking the active button again; toggling off an unsaved change reverts to the saved rating rather than clearing it (no silent loss of existing assessment data)
@@ -73,7 +74,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.11';
+const APP_VERSION = '1.13.12';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -276,11 +277,45 @@ const CSV_FILES = {
   progressions:    { file: 'literacy progressions.csv',                         iconId: 'icon-pr', navId: 'nav-load-pr' },
   numeracyProgressions: { file: 'Numeracy_Progressions_v9_MASTER_Level_Aligned.csv', iconId: 'icon-np', navId: 'nav-load-np' },
   elaborations:    { file: 'acara_maths_f6_elaborations_v3.csv',               iconId: 'icon-el', navId: 'nav-load-el' },
+  ics_foundation_maths_number:      { file: 'ics_foundation_maths_number.csv' },
+  ics_foundation_maths_algebra:     { file: 'ics_foundation_maths_algebra.csv' },
+  ics_foundation_maths_measurement: { file: 'ics_foundation_maths_measurement.csv' },
+  ics_foundation_maths_space:       { file: 'ics_foundation_maths_space.csv' },
+  ics_foundation_maths_statistics:  { file: 'ics_foundation_maths_statistics.csv' },
+  ics_year1_maths_number:      { file: 'ics_year1_maths_number.csv' },
+  ics_year1_maths_algebra:     { file: 'ics_year1_maths_algebra.csv' },
+  ics_year1_maths_measurement: { file: 'ics_year1_maths_measurement.csv' },
+  ics_year1_maths_space:       { file: 'ics_year1_maths_space.csv' },
+  ics_year1_maths_statistics:  { file: 'ics_year1_maths_statistics.csv' },
   ics_year2_maths_number:      { file: 'ics_year2_maths_number.csv' },
   ics_year2_maths_algebra:     { file: 'ics_year2_maths_algebra.csv' },
   ics_year2_maths_measurement: { file: 'ics_year2_maths_measurement.csv' },
   ics_year2_maths_space:       { file: 'ics_year2_maths_space.csv' },
   ics_year2_maths_statistics:  { file: 'ics_year2_maths_statistics.csv' },
+  ics_year3_maths_number:      { file: 'ics_year3_maths_number.csv' },
+  ics_year3_maths_algebra:     { file: 'ics_year3_maths_algebra.csv' },
+  ics_year3_maths_measurement: { file: 'ics_year3_maths_measurement.csv' },
+  ics_year3_maths_space:       { file: 'ics_year3_maths_space.csv' },
+  ics_year3_maths_statistics:  { file: 'ics_year3_maths_statistics.csv' },
+  ics_year3_maths_probability: { file: 'ics_year3_maths_probability.csv' },
+  ics_year4_maths_number:      { file: 'ics_year4_maths_number.csv' },
+  ics_year4_maths_algebra:     { file: 'ics_year4_maths_algebra.csv' },
+  ics_year4_maths_measurement: { file: 'ics_year4_maths_measurement.csv' },
+  ics_year4_maths_space:       { file: 'ics_year4_maths_space.csv' },
+  ics_year4_maths_statistics:  { file: 'ics_year4_maths_statistics.csv' },
+  ics_year4_maths_probability: { file: 'ics_year4_maths_probability.csv' },
+  ics_year5_maths_number:      { file: 'ics_year5_maths_number.csv' },
+  ics_year5_maths_algebra:     { file: 'ics_year5_maths_algebra.csv' },
+  ics_year5_maths_measurement: { file: 'ics_year5_maths_measurement.csv' },
+  ics_year5_maths_space:       { file: 'ics_year5_maths_space.csv' },
+  ics_year5_maths_statistics:  { file: 'ics_year5_maths_statistics.csv' },
+  ics_year5_maths_probability: { file: 'ics_year5_maths_probability.csv' },
+  ics_year6_maths_number:      { file: 'ics_year6_maths_number.csv' },
+  ics_year6_maths_algebra:     { file: 'ics_year6_maths_algebra.csv' },
+  ics_year6_maths_measurement: { file: 'ics_year6_maths_measurement.csv' },
+  ics_year6_maths_space:       { file: 'ics_year6_maths_space.csv' },
+  ics_year6_maths_statistics:  { file: 'ics_year6_maths_statistics.csv' },
+  ics_year6_maths_probability: { file: 'ics_year6_maths_probability.csv' },
   ics_year2_english_language:    { file: 'ics_year2_english_language.csv' },
   ics_year2_english_literature:  { file: 'ics_year2_english_literature.csv' },
   ics_year2_english_literacy:    { file: 'ics_year2_english_literacy.csv' },
@@ -4423,11 +4458,45 @@ async function fetchAllCSVs() {
     fetchCSVFromGitHub('progressions'),
     fetchCSVFromGitHub('numeracyProgressions'),
     fetchCSVFromGitHub('elaborations'),
+    fetchICsCSVFromGitHub('ics_foundation_maths_number'),
+    fetchICsCSVFromGitHub('ics_foundation_maths_algebra'),
+    fetchICsCSVFromGitHub('ics_foundation_maths_measurement'),
+    fetchICsCSVFromGitHub('ics_foundation_maths_space'),
+    fetchICsCSVFromGitHub('ics_foundation_maths_statistics'),
+    fetchICsCSVFromGitHub('ics_year1_maths_number'),
+    fetchICsCSVFromGitHub('ics_year1_maths_algebra'),
+    fetchICsCSVFromGitHub('ics_year1_maths_measurement'),
+    fetchICsCSVFromGitHub('ics_year1_maths_space'),
+    fetchICsCSVFromGitHub('ics_year1_maths_statistics'),
     fetchICsCSVFromGitHub('ics_year2_maths_number'),
     fetchICsCSVFromGitHub('ics_year2_maths_algebra'),
     fetchICsCSVFromGitHub('ics_year2_maths_measurement'),
     fetchICsCSVFromGitHub('ics_year2_maths_space'),
     fetchICsCSVFromGitHub('ics_year2_maths_statistics'),
+    fetchICsCSVFromGitHub('ics_year3_maths_number'),
+    fetchICsCSVFromGitHub('ics_year3_maths_algebra'),
+    fetchICsCSVFromGitHub('ics_year3_maths_measurement'),
+    fetchICsCSVFromGitHub('ics_year3_maths_space'),
+    fetchICsCSVFromGitHub('ics_year3_maths_statistics'),
+    fetchICsCSVFromGitHub('ics_year3_maths_probability'),
+    fetchICsCSVFromGitHub('ics_year4_maths_number'),
+    fetchICsCSVFromGitHub('ics_year4_maths_algebra'),
+    fetchICsCSVFromGitHub('ics_year4_maths_measurement'),
+    fetchICsCSVFromGitHub('ics_year4_maths_space'),
+    fetchICsCSVFromGitHub('ics_year4_maths_statistics'),
+    fetchICsCSVFromGitHub('ics_year4_maths_probability'),
+    fetchICsCSVFromGitHub('ics_year5_maths_number'),
+    fetchICsCSVFromGitHub('ics_year5_maths_algebra'),
+    fetchICsCSVFromGitHub('ics_year5_maths_measurement'),
+    fetchICsCSVFromGitHub('ics_year5_maths_space'),
+    fetchICsCSVFromGitHub('ics_year5_maths_statistics'),
+    fetchICsCSVFromGitHub('ics_year5_maths_probability'),
+    fetchICsCSVFromGitHub('ics_year6_maths_number'),
+    fetchICsCSVFromGitHub('ics_year6_maths_algebra'),
+    fetchICsCSVFromGitHub('ics_year6_maths_measurement'),
+    fetchICsCSVFromGitHub('ics_year6_maths_space'),
+    fetchICsCSVFromGitHub('ics_year6_maths_statistics'),
+    fetchICsCSVFromGitHub('ics_year6_maths_probability'),
     fetchICsCSVFromGitHub('ics_year2_english_language'),
     fetchICsCSVFromGitHub('ics_year2_english_literature'),
     fetchICsCSVFromGitHub('ics_year2_english_literacy'),
