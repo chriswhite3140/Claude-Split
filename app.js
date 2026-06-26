@@ -8388,16 +8388,16 @@ function checkStubBanner() {
   const n = oldStubs.length;
   const banner = document.createElement('div');
   banner.id = 'stub-nudge-banner';
-  banner.style.cssText = "background:#1A73E8;color:#ffffff;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;";
+  banner.style.cssText = "background:var(--banner-bg);color:var(--banner-text);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;";
   banner.innerHTML = `
     <span>You have ${n} draft IC${n !== 1 ? 's' : ''} that need review — click to open the descriptor.</span>
     <div style="display:flex;align-items:center;gap:12px">
       <button onclick="openStubReview()"
-        style="padding:4px 12px;border-radius:4px;border:1px solid rgba(255,255,255,0.4);background:rgba(255,255,255,0.15);color:#ffffff;font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
+        style="padding:4px 12px;border-radius:4px;border:1px solid rgba(255,255,255,0.4);background:rgba(255,255,255,0.15);color:var(--banner-text);font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
         Review now
       </button>
       <button onclick="document.getElementById('stub-nudge-banner').remove()"
-        style="background:none;border:none;color:#ffffff;font-size:18px;cursor:pointer;padding:0;line-height:1;opacity:0.7">✕</button>
+        style="background:none;border:none;color:var(--banner-text);font-size:18px;cursor:pointer;padding:0;line-height:1;opacity:0.7">✕</button>
     </div>`;
   const app = document.querySelector('.app');
   if (app) {
