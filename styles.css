@@ -74,6 +74,9 @@
   --status-purple-text: var(--purple);
   --status-purple-bg: var(--purple-dim);
   --status-purple-border: #c4b5fd;
+
+  --banner-bg: #1A73E8;
+  --banner-text: #ffffff;
 }
 
 body[data-theme="dark"] {
@@ -129,6 +132,9 @@ body[data-theme="dark"] {
   --status-purple-text: var(--purple);
   --status-purple-bg: var(--purple-dim);
   --status-purple-border: #4a3a72;
+
+  --banner-bg: #1A73E8;
+  --banner-text: #ffffff;
 }
 
 body {
@@ -152,7 +158,7 @@ body[data-text-size="large"] {
 }
 
 /* ── LAYOUT ── */
-.app { display: flex; height: 100vh; overflow: hidden; }
+.app { display: flex; flex: 1; overflow: hidden; }
 
 .sidebar {
   width: 220px;
