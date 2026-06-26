@@ -8399,7 +8399,12 @@ function checkStubBanner() {
       <button onclick="document.getElementById('stub-nudge-banner').remove()"
         style="background:none;border:none;color:#ffffff;font-size:18px;cursor:pointer;padding:0;line-height:1;opacity:0.7">✕</button>
     </div>`;
-  document.body.insertBefore(banner, document.body.firstChild);
+  const app = document.querySelector('.app');
+  if (app) {
+    app.insertBefore(banner, app.firstChild);
+  } else {
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
 }
 
 init();
