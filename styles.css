@@ -1764,7 +1764,9 @@ body[data-text-size="large"] {
 
   .sidebar-footer { display: none; }
 
-  .main { height: calc(100vh - 56px); overflow-y: auto; }
+  /* flex:1 + min-height:0 (mirrors desktop) so the optional draft-IC banner
+     above .app is absorbed by the flex column instead of overflowing 100vh */
+  .main { flex: 1; min-height: 0; overflow-y: auto; }
 
   /* Daily log wizard — full screen on mobile */
   #dl-overlay > div {

@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.14
+ * THIS FILE IS VERSION: 1.13.17
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,9 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.17 - Fix mobile outer-scroll from draft IC banner: mobile .main used a fixed height:calc(100vh - 56px) that didn't account for the banner above .app; switched to flex:1 + min-height:0 (matching desktop) so the banner is absorbed by the flex column
+ * v1.13.16 - Fix "Review now" banner button doing nothing: openStubReview() still had the 3-day age gate (removed from the banner in v1.13.14), so recently-created draft stubs were filtered out and the click silently returned; age gate now removed to match the banner filter
+ * v1.13.15 - Fix draft IC banner rendering as a full-height block down the left side: insert it into body (flex column) instead of .app (flex row), so it sits as a slim full-width bar at the top with .app filling the space below
  * v1.13.14 - Remove 3-day age gate from draft IC banner; banner now shows immediately for any draft stub IC
  * v1.13.13 - Draft IC review banner: now pushes content down instead of overlaying; colour changed to blue (#1A73E8); draft ICs sort to top of IC list in descriptor side panel
  * v1.13.12 - Import Maths ICs for Foundation, Y1, Y3–Y6 across all strands (Number, Algebra, Measurement, Space, Statistics, Probability); Y2 Maths ICs already present; ~550 ICs total now loaded on init
@@ -76,7 +79,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.14';
+const APP_VERSION = '1.13.17';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -8349,13 +8352,10 @@ function openStubReview() {
   const banner = document.getElementById('stub-nudge-banner');
   if (banner) banner.remove();
 
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const stubs = state.instructionalComponents.filter(ic =>
     ic.ownerTier === 'teacher_stub' &&
-    ic.icReadinessStatus === 'draft' &&
-    ic.createdAt &&
-    ic.createdAt < threeDaysAgo
-  ).sort((a, b) => a.createdAt < b.createdAt ? -1 : 1);
+    ic.icReadinessStatus === 'draft'
+  ).sort((a, b) => (a.createdAt || '') < (b.createdAt || '') ? -1 : 1);
   if (!stubs.length) return;
 
   const firstStub = stubs[0];
@@ -8397,12 +8397,10 @@ function checkStubBanner() {
       <button onclick="document.getElementById('stub-nudge-banner').remove()"
         style="background:none;border:none;color:var(--banner-text);font-size:18px;cursor:pointer;padding:0;line-height:1;opacity:0.7">✕</button>
     </div>`;
-  const app = document.querySelector('.app');
-  if (app) {
-    app.insertBefore(banner, app.firstChild);
-  } else {
-    document.body.insertBefore(banner, document.body.firstChild);
-  }
+  // Insert into body (a flex column) so the banner sits as a slim full-width
+  // bar at the top and .app flexes to fill the rest. Inserting into .app (a
+  // flex row) would stretch the banner to full height down the left edge.
+  document.body.insertBefore(banner, document.body.firstChild);
 }
 
 init();
