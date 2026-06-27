@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.13
+ * THIS FILE IS VERSION: 1.13.14
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.14 - Remove 3-day age gate from draft IC banner; banner now shows immediately for any draft stub IC
  * v1.13.13 - Draft IC review banner: now pushes content down instead of overlaying; colour changed to blue (#1A73E8); draft ICs sort to top of IC list in descriptor side panel
  * v1.13.12 - Import Maths ICs for Foundation, Y1, Y3–Y6 across all strands (Number, Algebra, Measurement, Space, Statistics, Probability); Y2 Maths ICs already present; ~550 ICs total now loaded on init
  * v1.13.11 - Fix: opening the student detail view no longer crashes with "subjectColours is not defined" — renderStudentDetail subject tabs and the coverage tooltip now use the subjectCol() helper (SUBJECT_COLOURS); this ReferenceError was the actual cause of student cards appearing to do nothing / bounce back to Students
@@ -75,7 +76,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.13';
+const APP_VERSION = '1.13.14';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -8377,12 +8378,9 @@ function openStubReview() {
 
 function checkStubBanner() {
   if (document.getElementById('stub-nudge-banner')) return;
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const oldStubs = state.instructionalComponents.filter(ic =>
     ic.ownerTier === 'teacher_stub' &&
-    ic.icReadinessStatus === 'draft' &&
-    ic.createdAt &&
-    ic.createdAt < threeDaysAgo
+    ic.icReadinessStatus === 'draft'
   );
   if (!oldStubs.length) return;
   const n = oldStubs.length;
