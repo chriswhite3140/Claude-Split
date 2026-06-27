@@ -5060,7 +5060,7 @@ function renderCoverage(main) {
       entries.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       const st = entries[0].status;
       if (st === 'got_it' || st === 'mastered')      return { bg: 'var(--green)',    title: 'Got it' };
-      if (st === 'needs_review' || st === 'not_yet') return { bg: 'var(--gold)',     title: 'Needs review' };
+      if (st === 'needs_review' || st === 'not_yet') return { bg: 'var(--rust)',     title: 'Needs review' };
       if (st === 'taught')                           return { bg: 'var(--blue-dim)', title: 'Taught · no outcome recorded' };
       return { bg: 'transparent', title: 'Not taught' };
     }
