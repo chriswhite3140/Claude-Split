@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.21
+ * THIS FILE IS VERSION: 1.13.24
  * Last updated: 2026-06-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.24 - Unit Plans (PR1): new Unit Plans layer above the Weekly Planner; unit data model, unit list + detail views, lesson sequence (add/reorder/delete) reusing the planner IC-linking drawer, teaching-status badges, linked CDs and assessment notes
  * v1.13.21 - localStorage caching for all GitHub raw CSV fetches; cache keyed by app version so auto-invalidates on update; eliminates rate limit 400 errors on repeated loads
  * v1.13.20 - Bulk Assess: student sort toggle button added to header (Last/First name), matching Students view
  * v1.13.19 - Coverage Gaps: legend moved above table so it stays visible when ICs are expanded; expand/collapse all button visually distinct from filter buttons
@@ -83,15 +84,16 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.23';
+const APP_VERSION = '1.13.24';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
+const UNIT_PLANS_STORAGE_KEY = 'ct_unit_plans_v1';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
 const APP_UI_STATE_STORAGE_KEY = 'ct_ui_state_v1';
 const RESTORABLE_VIEWS = new Set([
-  'dashboard', 'students', 'overview', 'bulk-assess', 'daily-log', 'planner',
+  'dashboard', 'students', 'overview', 'bulk-assess', 'daily-log', 'unit-plans', 'planner',
   'coverage', 'standards-judgments', 'progression-placement', 'admin', 'curriculum', 'standards', 'progressions'
 ]);
 let systemThemeMediaQuery = null;
@@ -367,6 +369,8 @@ let state = {
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
   plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
+  unitPlans: loadUnitPlansState(),
+  unitPlansUi: { openUnitId: null, cdSearch: '', draggingLessonId: null },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -1009,6 +1013,7 @@ function renderView() {
     case 'overview':                renderClassOverview(main); break;
     case 'bulk-assess':             renderBulkAssess(main); break;
     case 'daily-log':               renderDailyLog(main); break;
+    case 'unit-plans':              renderUnitPlans(main); break;
     case 'planner':                 renderPlanner(main); break;
     case 'coverage':                renderCoverage(main); break;
     case 'standards-judgments':     renderStandardsJudgments(main); break;
@@ -1050,7 +1055,9 @@ function renderPlanner(main) {
   plannerEnsureUiState();
 
   const weekKey = plannerSelectedWeekKey();
-  const weekLessons = state.lessonPlans.filter(lesson => lesson.weekKey === weekKey);
+  // Exclude lessons that belong to a unit — those are scheduled into the weekly
+  // board via scheduledSlots in PR2, not by their legacy weekKey/dayKey.
+  const weekLessons = state.lessonPlans.filter(lesson => lesson.weekKey === weekKey && !lesson.unitId);
 
   // Scope the selected lesson to the displayed week so navigating weeks doesn't
   // leave the drawer editing a now-hidden lesson from another week.
@@ -1700,6 +1707,10 @@ function normalizeLessonPlan(raw = {}) {
     linkedICIds,
     status,
     position: Number.isFinite(raw.position) ? raw.position : 0,
+    // ── Unit Plans (PR1) ──
+    unitId: String(raw.unitId || ''),         // which unit this lesson belongs to (empty = standalone)
+    scheduledSlots: Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots : [],  // [{weekKey, dayKey}] — wired up in PR2
+    teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : 'planned',
   };
 }
 
@@ -1719,6 +1730,540 @@ function saveLessonPlansState() {
     const lessons = Array.isArray(state.lessonPlans) ? state.lessonPlans.map(normalizeLessonPlan) : [];
     localStorage.setItem(LESSON_PLANS_STORAGE_KEY, JSON.stringify(lessons));
   } catch (e) {}
+}
+
+// ── UNIT PLANS persistence (mirrors loadLessonPlansState / saveLessonPlansState) ──
+function normalizeUnitPlan(raw = {}) {
+  const linkedCDIds = Array.isArray(raw.linkedCDIds) ? raw.linkedCDIds.map(String) : [];
+  const lessonIds = Array.isArray(raw.lessonIds) ? raw.lessonIds.map(String) : [];
+  return {
+    id: String(raw.id || `unit_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`),
+    title: String(raw.title || ''),
+    subject: String(raw.subject || ''),
+    yearLevel: String(raw.yearLevel || ''),
+    term: String(raw.term || ''),
+    linkedCDIds,
+    assessmentNotes: String(raw.assessmentNotes || ''),
+    lessonIds,
+    createdAt: String(raw.createdAt || new Date().toISOString()),
+  };
+}
+
+function loadUnitPlansState() {
+  try {
+    const raw = localStorage.getItem(UNIT_PLANS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeUnitPlan) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveUnitPlansState() {
+  try {
+    const units = Array.isArray(state.unitPlans) ? state.unitPlans.map(normalizeUnitPlan) : [];
+    localStorage.setItem(UNIT_PLANS_STORAGE_KEY, JSON.stringify(units));
+  } catch (e) {}
+}
+
+// ════════════════════════════════════════════════════
+// ── UNIT PLANS (PR1) ──
+// A planning layer above the Weekly Planner. A unit groups an ordered sequence of
+// lessons (lessons live in state.lessonPlans, tagged with unitId). This PR covers
+// the data model, unit list/detail views, and lesson-sequence management. Weekly
+// planner integration (scheduledSlots, drag-to-schedule) is deferred to PR2.
+// ════════════════════════════════════════════════════
+
+const UNIT_TEACHING_STATUSES = [
+  { key: 'planned',          label: 'Planned',          token: 'var(--text3)' },
+  { key: 'taught',           label: 'Taught',           token: 'var(--green)' },
+  { key: 'partially-taught', label: 'Partially taught', token: 'var(--gold)' },
+  { key: 'needs-review',     label: 'Needs review',     token: 'var(--blue)' },
+  { key: 'reteach',          label: 'Reteach',          token: 'var(--rust)' },
+];
+
+function unitPlansEnsureUiState() {
+  if (!state.unitPlansUi || typeof state.unitPlansUi !== 'object') state.unitPlansUi = {};
+  if (typeof state.unitPlansUi.openUnitId === 'undefined') state.unitPlansUi.openUnitId = null;
+  if (typeof state.unitPlansUi.cdSearch !== 'string') state.unitPlansUi.cdSearch = '';
+  if (typeof state.unitPlansUi.draggingLessonId === 'undefined') state.unitPlansUi.draggingLessonId = null;
+  if (!Array.isArray(state.unitPlans)) state.unitPlans = [];
+}
+
+// Lessons belonging to a unit, in unit.lessonIds order, dropping any dangling ids.
+function unitGetLessons(unit) {
+  const byId = new Map((state.lessonPlans || []).map(l => [l.id, l]));
+  return (unit.lessonIds || []).map(id => byId.get(id)).filter(Boolean);
+}
+
+function unitLessonStats(unit) {
+  const lessons = unitGetLessons(unit);
+  return { total: lessons.length, taught: lessons.filter(l => l.teachingStatus === 'taught').length };
+}
+
+function unitTeachingStatusMeta(status) {
+  return UNIT_TEACHING_STATUSES.find(s => s.key === status) || UNIT_TEACHING_STATUSES[0];
+}
+
+function unitTeachingStatusBadgeHtml(status) {
+  const meta = unitTeachingStatusMeta(status);
+  return `<span class="unit-status-badge" style="color:${meta.token};border-color:${meta.token}">${meta.label}</span>`;
+}
+
+// ── Routing: list vs detail ──
+function renderUnitPlans(main) {
+  unitPlansEnsureUiState();
+  const openId = state.unitPlansUi.openUnitId;
+  const openUnit = openId ? state.unitPlans.find(u => u.id === openId) : null;
+  if (openId && !openUnit) state.unitPlansUi.openUnitId = null;
+  if (openUnit) { renderUnitDetail(main, openUnit); return; }
+  renderUnitList(main);
+}
+
+function showUnitDetail(unitId) {
+  unitPlansEnsureUiState();
+  if (!state.unitPlans.some(u => u.id === unitId)) return;
+  state.unitPlansUi.openUnitId = unitId;
+  state.unitPlansUi.cdSearch = '';
+  // Reset any lesson drawer carried over from another unit / the weekly planner.
+  plannerEnsureUiState();
+  state.plannerUi.selectedLessonId = null;
+  state.plannerUi.drawerOpen = false;
+  renderView();
+}
+
+function unitBackToList() {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.openUnitId = null;
+  plannerEnsureUiState();
+  state.plannerUi.selectedLessonId = null;
+  state.plannerUi.drawerOpen = false;
+  renderView();
+}
+
+function unitCreateNew() {
+  unitPlansEnsureUiState();
+  const unit = normalizeUnitPlan({
+    title: 'New Unit',
+    createdAt: new Date().toISOString(),
+  });
+  state.unitPlans.push(unit);
+  saveUnitPlansState();
+  state.unitPlansUi.openUnitId = unit.id;
+  state.unitPlansUi.cdSearch = '';
+  renderView();
+}
+
+function unitDelete(unitId) {
+  const unit = state.unitPlans.find(u => u.id === unitId);
+  if (!unit) return;
+  const stats = unitLessonStats(unit);
+  const lessonNote = stats.total ? ` Its ${stats.total} lesson${stats.total === 1 ? '' : 's'} will also be deleted.` : '';
+  if (!confirm(`Delete unit "${unit.title || 'Untitled unit'}"?${lessonNote}`)) return;
+  const lessonIds = new Set(unit.lessonIds || []);
+  state.lessonPlans = state.lessonPlans.filter(l => !lessonIds.has(l.id));
+  state.unitPlans = state.unitPlans.filter(u => u.id !== unitId);
+  if (state.unitPlansUi && state.unitPlansUi.openUnitId === unitId) state.unitPlansUi.openUnitId = null;
+  if (state.plannerUi && lessonIds.has(state.plannerUi.selectedLessonId)) {
+    state.plannerUi.selectedLessonId = null;
+    state.plannerUi.drawerOpen = false;
+  }
+  saveLessonPlansState();
+  saveUnitPlansState();
+  renderView();
+}
+
+function unitUpdateField(unitId, field, value) {
+  const editable = new Set(['title', 'subject', 'yearLevel', 'term', 'assessmentNotes']);
+  if (!editable.has(field)) return;
+  const idx = state.unitPlans.findIndex(u => u.id === unitId);
+  if (idx < 0) return;
+  state.unitPlans[idx] = { ...state.unitPlans[idx], [field]: String(value) };
+  saveUnitPlansState();
+  // Subject re-scopes the CD picker; re-render. Text fields update silently so the
+  // input keeps focus while typing.
+  if (field === 'subject') { state.unitPlansUi.cdSearch = ''; renderView(); }
+}
+
+// ── LIST VIEW ──
+function renderUnitList(main) {
+  const units = [...state.unitPlans].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+  const cards = units.map(unit => {
+    const stats = unitLessonStats(unit);
+    const pct = stats.total ? Math.round((stats.taught / stats.total) * 100) : 0;
+    const metaBits = [unit.subject, unit.yearLevel, unit.term].filter(Boolean).join(' · ');
+    return `
+      <div class="unit-card" role="button" tabindex="0"
+        onclick="showUnitDetail('${plannerJsStr(unit.id)}')"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showUnitDetail('${plannerJsStr(unit.id)}')}">
+        <div class="unit-card-head">
+          <div class="unit-card-title">${escapeHtml(unit.title || 'Untitled unit')}</div>
+          <button class="unit-card-delete" type="button" title="Delete unit"
+            onclick="event.stopPropagation();unitDelete('${plannerJsStr(unit.id)}')">Delete</button>
+        </div>
+        <div class="unit-card-meta">${metaBits ? escapeHtml(metaBits) : 'No subject set'}</div>
+        <div class="unit-card-stats">${stats.total} lesson${stats.total === 1 ? '' : 's'} · ${stats.taught} taught</div>
+        <div class="unit-progress"><div class="unit-progress-fill" style="width:${pct}%"></div></div>
+      </div>
+    `;
+  }).join('');
+
+  main.innerHTML = `
+    <div class="topbar" style="padding:14px 24px">
+      <div>
+        <div class="topbar-title">Unit Plans</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:2px">Group lessons into teaching units</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" type="button" onclick="unitCreateNew()">+ New Unit</button>
+      </div>
+    </div>
+    <div class="content">
+      ${units.length === 0
+        ? `<div class="card" style="padding:32px;text-align:center">
+             <div style="font-size:15px;font-weight:600;margin-bottom:6px">No units yet</div>
+             <div style="font-size:13px;color:var(--text3);margin-bottom:16px">Create your first unit to start grouping lessons into a teaching sequence.</div>
+             <button class="btn btn-primary" type="button" onclick="unitCreateNew()">+ New Unit</button>
+           </div>`
+        : `<div class="unit-card-grid">${cards}</div>`}
+    </div>
+  `;
+}
+
+// ── DETAIL VIEW ──
+function renderUnitDetail(main, unit) {
+  plannerEnsureUiState();
+  unitPlansEnsureUiState();
+
+  const lessons = unitGetLessons(unit);
+  // Drawer only opens for a lesson that belongs to this unit.
+  let drawerLesson = (state.plannerUi.drawerOpen && state.plannerUi.selectedLessonId)
+    ? lessons.find(l => l.id === state.plannerUi.selectedLessonId) : null;
+  if (state.plannerUi.drawerOpen && !drawerLesson) {
+    state.plannerUi.selectedLessonId = null;
+    state.plannerUi.drawerOpen = false;
+  }
+  const hasDrawer = !!drawerLesson;
+
+  const sequenceBody = lessons.length === 0
+    ? `<div class="unit-seq-empty">No lessons yet. Use <strong>+ Add lesson</strong> to build the sequence.</div>`
+    : lessons.map(lesson => unitLessonRowHtml(unit, lesson)).join('');
+
+  main.innerHTML = `
+    <div class="topbar" style="padding:14px 24px;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:200px">
+        <button class="btn" type="button" onclick="unitBackToList()">‹ Units</button>
+        <input class="unit-title-input" type="text" value="${escapeHtml(unit.title || '')}" placeholder="Unit title"
+          oninput="unitUpdateField('${plannerJsStr(unit.id)}','title',this.value)">
+      </div>
+      <div class="topbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select class="form-input unit-field-sm" onchange="unitUpdateField('${plannerJsStr(unit.id)}','subject',this.value)">
+          <option value="">— subject —</option>
+          ${PLANNER_SUBJECTS.map(s => `<option value="${s}" ${unit.subject === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+        <input class="form-input unit-field-sm" type="text" value="${escapeHtml(unit.yearLevel || '')}" placeholder="Year level"
+          oninput="unitUpdateField('${plannerJsStr(unit.id)}','yearLevel',this.value)">
+        <input class="form-input unit-field-sm" type="text" value="${escapeHtml(unit.term || '')}" placeholder="Term"
+          oninput="unitUpdateField('${plannerJsStr(unit.id)}','term',this.value)">
+      </div>
+    </div>
+    <div class="content">
+      <div class="unit-detail-grid ${hasDrawer ? 'has-drawer' : ''}">
+        <section class="card unit-seq-col">
+          <div class="card-head">
+            <div class="card-title">Lesson sequence</div>
+            <div style="font-size:12px;color:var(--text3)">${lessons.length} lesson${lessons.length === 1 ? '' : 's'} · drag to reorder</div>
+          </div>
+          <div class="unit-seq-body">
+            ${sequenceBody}
+            <button class="unit-seq-add" type="button" onclick="unitAddLesson('${plannerJsStr(unit.id)}')">+ Add lesson</button>
+          </div>
+        </section>
+        ${hasDrawer
+          ? `<aside class="card unit-drawer-col">
+               <div class="card-head">
+                 <div class="card-title">Edit lesson</div>
+                 <button class="btn" type="button" onclick="unitCloseLessonDrawer()">Close</button>
+               </div>
+               ${unitLessonDrawerHtml(drawerLesson)}
+             </aside>`
+          : ''}
+        <aside class="card unit-side-col">
+          <div class="card-head"><div class="card-title">Unit details</div></div>
+          <div class="unit-side-body">
+            <div class="form-group">
+              <label class="form-label">Linked curriculum descriptors</label>
+              ${unit.subject
+                ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>
+                   <input class="form-input" id="unit-cd-search" type="text" placeholder="Search ${escapeHtml(unit.subject)} codes or descriptors"
+                     value="${escapeHtml(state.unitPlansUi.cdSearch || '')}" oninput="unitHandleCDSearch('${plannerJsStr(unit.id)}',this.value)">
+                   <div id="unit-cd-results" class="unit-cd-results">${unitCDResultsHtml(unit)}</div>`
+                : `<div class="unit-cd-hint">Choose a subject above to link curriculum descriptors.</div>
+                   ${unit.linkedCDIds && unit.linkedCDIds.length ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>` : ''}`}
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">Assessment notes</label>
+              <textarea class="form-input" rows="6" placeholder="How will this unit be assessed?"
+                onblur="unitUpdateField('${plannerJsStr(unit.id)}','assessmentNotes',this.value)">${escapeHtml(unit.assessmentNotes || '')}</textarea>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  `;
+}
+
+function unitLessonRowHtml(unit, lesson) {
+  const isOpen = state.plannerUi && state.plannerUi.selectedLessonId === lesson.id && state.plannerUi.drawerOpen;
+  const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
+  const slotCount = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots.length : 0;
+  const intention = (lesson.intention || '').trim();
+  const intentionShort = intention.length > 90 ? intention.slice(0, 90).trimEnd() + '…' : intention;
+  return `
+    <div class="unit-lesson-row ${isOpen ? 'is-open' : ''}" draggable="true"
+      ondragstart="unitStartLessonDrag(event,'${plannerJsStr(lesson.id)}')"
+      ondragend="unitEndLessonDrag(event)"
+      ondragover="unitAllowLessonDrop(event)"
+      ondragleave="unitLessonDropLeave(event)"
+      ondrop="unitDropLesson(event,'${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')"
+      onclick="plannerOpenLessonDrawer('${plannerJsStr(lesson.id)}')">
+      <span class="unit-lesson-drag" title="Drag to reorder" aria-hidden="true">⠿</span>
+      <div class="unit-lesson-main">
+        <div class="unit-lesson-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+        ${intentionShort ? `<div class="unit-lesson-intention">${escapeHtml(intentionShort)}</div>` : ''}
+        <div class="unit-lesson-tags">
+          <span class="unit-lesson-chip">${icCount} IC${icCount === 1 ? '' : 's'}</span>
+          ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
+          <span class="unit-lesson-chip">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+      <button class="unit-lesson-delete" type="button" title="Remove lesson from unit"
+        onclick="event.stopPropagation();unitDeleteLesson('${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')">✕</button>
+    </div>
+  `;
+}
+
+// Lesson drawer within a unit. Reuses the planner's IC-linking engine (same element
+// ids, same handlers) plus the shared lesson-field updater, so search / suggest /
+// expand / create-IC all work unchanged. Adds a teaching-status selector (a PR1
+// data-model field) in place of the weekly planner's day/taught controls.
+function unitLessonDrawerHtml(lesson) {
+  const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
+  return `
+    <div style="padding:16px">
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <input class="form-input" type="text" value="${escapeHtml(lesson.title || '')}" oninput="plannerUpdateSelectedLessonField('title', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Subject</label>
+        <select class="form-input" onchange="plannerUpdateSelectedLessonField('subject', this.value)">
+          <option value="">— select subject —</option>
+          ${PLANNER_SUBJECTS.map(s => `<option value="${s}" ${lesson.subject === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Teaching status</label>
+        <select class="form-input" onchange="unitSetLessonTeachingStatus(this.value)">
+          ${UNIT_TEACHING_STATUSES.map(s => `<option value="${s.key}" ${lesson.teachingStatus === s.key ? 'selected' : ''}>${s.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Learning intention</label>
+        <textarea class="form-input" rows="3" placeholder="What am I trying to get kids to do or learn?" oninput="plannerUpdateSelectedLessonField('intention', this.value)">${escapeHtml(lesson.intention || '')}</textarea>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Instructional Components (1–3) · ${icCount}/3 selected</label>
+        ${icCount === 0 ? `<div class="planner-incomplete-note">This lesson has no ICs linked yet — a lesson should target at least one IC.</div>` : ''}
+        <div class="planner-selected-ics">${plannerSelectedICsHtml(lesson)}</div>
+        <div class="planner-ic-controls">
+          <input class="form-input" id="planner-ic-search" type="text" placeholder="Search ICs by name or code" value="${escapeHtml(state.plannerUi.icSearch || '')}" oninput="plannerHandleICSearchInput(this.value)">
+          <button class="btn" type="button" onclick="plannerSuggestICsFromIntention()">Suggest from intention</button>
+        </div>
+        <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function unitCloseLessonDrawer() {
+  plannerEnsureUiState();
+  state.plannerUi.selectedLessonId = null;
+  state.plannerUi.drawerOpen = false;
+  renderView();
+}
+
+// Set teachingStatus on the lesson currently open in the unit drawer.
+function unitSetLessonTeachingStatus(value) {
+  if (!UNIT_TEACHING_STATUSES.some(s => s.key === value)) return;
+  const id = state.plannerUi && state.plannerUi.selectedLessonId;
+  if (!id) return;
+  const idx = state.lessonPlans.findIndex(l => l.id === id);
+  if (idx < 0) return;
+  state.lessonPlans[idx] = { ...state.lessonPlans[idx], teachingStatus: value };
+  saveLessonPlansState();
+  renderView();
+}
+
+// ── Lesson sequence mutations ──
+function unitAddLesson(unitId) {
+  plannerEnsureUiState();
+  const idx = state.unitPlans.findIndex(u => u.id === unitId);
+  if (idx < 0) return;
+  const unit = state.unitPlans[idx];
+  const lesson = normalizeLessonPlan({
+    title: 'New Lesson',
+    subject: unit.subject || '',
+    unitId: unit.id,
+    teachingStatus: 'planned',
+    linkedICIds: [],
+  });
+  state.lessonPlans.push(lesson);
+  const lessonIds = Array.isArray(unit.lessonIds) ? [...unit.lessonIds, lesson.id] : [lesson.id];
+  state.unitPlans[idx] = { ...unit, lessonIds };
+  saveLessonPlansState();
+  saveUnitPlansState();
+  state.plannerUi.selectedLessonId = lesson.id;
+  state.plannerUi.drawerOpen = true;
+  state.plannerUi.icSearch = '';
+  state.plannerUi.suggestedICIds = [];
+  state.plannerUi.expandedICId = null;
+  renderView();
+}
+
+function unitDeleteLesson(unitId, lessonId) {
+  const lesson = state.lessonPlans.find(l => l.id === lessonId);
+  if (!confirm(`Delete lesson "${(lesson && lesson.title) || 'Untitled lesson'}" from this unit?`)) return;
+  const idx = state.unitPlans.findIndex(u => u.id === unitId);
+  if (idx >= 0) {
+    const unit = state.unitPlans[idx];
+    state.unitPlans[idx] = { ...unit, lessonIds: (unit.lessonIds || []).filter(id => id !== lessonId) };
+  }
+  state.lessonPlans = state.lessonPlans.filter(l => l.id !== lessonId);
+  if (state.plannerUi && state.plannerUi.selectedLessonId === lessonId) {
+    state.plannerUi.selectedLessonId = null;
+    state.plannerUi.drawerOpen = false;
+  }
+  saveLessonPlansState();
+  saveUnitPlansState();
+  renderView();
+}
+
+// ── Lesson sequence drag-to-reorder ──
+function unitStartLessonDrag(ev, lessonId) {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.draggingLessonId = lessonId;
+  if (ev && ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', lessonId);
+  }
+}
+
+function unitAllowLessonDrop(ev) {
+  ev.preventDefault();
+  const row = ev.currentTarget;
+  if (row) row.classList.add('drop-over');
+}
+
+function unitLessonDropLeave(ev) {
+  const row = ev.currentTarget;
+  if (row) row.classList.remove('drop-over');
+}
+
+function unitEndLessonDrag() {
+  if (state.unitPlansUi) state.unitPlansUi.draggingLessonId = null;
+  document.querySelectorAll('.unit-lesson-row.drop-over').forEach(el => el.classList.remove('drop-over'));
+}
+
+function unitDropLesson(ev, unitId, targetLessonId) {
+  ev.preventDefault();
+  const row = ev.currentTarget;
+  if (row) row.classList.remove('drop-over');
+  const dragId = (ev && ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || (state.unitPlansUi && state.unitPlansUi.draggingLessonId);
+  if (state.unitPlansUi) state.unitPlansUi.draggingLessonId = null;
+  if (!dragId || dragId === targetLessonId) return;
+  const idx = state.unitPlans.findIndex(u => u.id === unitId);
+  if (idx < 0) return;
+  const ids = [...(state.unitPlans[idx].lessonIds || [])];
+  const from = ids.indexOf(dragId);
+  if (from < 0) return;
+  ids.splice(from, 1);
+  let to = ids.indexOf(targetLessonId);
+  if (to < 0) to = ids.length;
+  ids.splice(to, 0, dragId);
+  state.unitPlans[idx] = { ...state.unitPlans[idx], lessonIds: ids };
+  saveUnitPlansState();
+  renderView();
+}
+
+// ── Linked curriculum descriptors (unit-scoped multi-select) ──
+function unitCDLabel(row) {
+  return row.Descriptor || row.Aspect || row.Description || '';
+}
+
+function unitSelectedCDsHtml(unit) {
+  const ids = Array.isArray(unit.linkedCDIds) ? unit.linkedCDIds : [];
+  if (!ids.length) return `<div class="unit-cd-hint">No descriptors linked yet.</div>`;
+  return ids.map(code => {
+    const row = state.curriculumCodes.find(c => c.Code === code);
+    const title = row ? unitCDLabel(row) : '';
+    return `<span class="unit-cd-chip" title="${escapeHtml(title)}">
+      <span class="unit-cd-chip-code">${escapeHtml(code)}</span>
+      <button class="unit-cd-remove" type="button" title="Remove" onclick="unitToggleCD('${plannerJsStr(unit.id)}','${plannerJsStr(code)}')">×</button>
+    </span>`;
+  }).join('');
+}
+
+function unitCDResultsHtml(unit) {
+  if (!unit.subject) return '';
+  const search = (state.unitPlansUi.cdSearch || '').trim().toLowerCase();
+  const selected = new Set(Array.isArray(unit.linkedCDIds) ? unit.linkedCDIds : []);
+  let pool = state.curriculumCodes.filter(c => c.Subject === unit.subject && isCurriculumCodeEnabled(c));
+  if (search) {
+    pool = pool.filter(c =>
+      (c.Code || '').toLowerCase().includes(search) ||
+      unitCDLabel(c).toLowerCase().includes(search) ||
+      (c.Strand || '').toLowerCase().includes(search)
+    );
+  }
+  pool = pool.slice(0, 40);
+  if (!pool.length) {
+    return `<div class="unit-cd-empty">${search ? 'No matching descriptors.' : 'No descriptors for this subject.'}</div>`;
+  }
+  return pool.map(c => {
+    const on = selected.has(c.Code);
+    const label = unitCDLabel(c);
+    return `<button class="unit-cd-option ${on ? 'is-on' : ''}" type="button" onclick="unitToggleCD('${plannerJsStr(unit.id)}','${plannerJsStr(c.Code)}')">
+      <span class="unit-cd-option-tick">${on ? '✓' : '+'}</span>
+      <span class="unit-cd-option-body">
+        <span class="unit-cd-option-code">${escapeHtml(c.Code)}${c.Strand ? ` · ${escapeHtml(c.Strand)}` : ''}</span>
+        ${label ? `<span class="unit-cd-option-desc">${escapeHtml(label)}</span>` : ''}
+      </span>
+    </button>`;
+  }).join('');
+}
+
+function unitToggleCD(unitId, code) {
+  const idx = state.unitPlans.findIndex(u => u.id === unitId);
+  if (idx < 0) return;
+  const current = Array.isArray(state.unitPlans[idx].linkedCDIds) ? [...state.unitPlans[idx].linkedCDIds] : [];
+  const at = current.indexOf(code);
+  if (at >= 0) current.splice(at, 1); else current.push(code);
+  state.unitPlans[idx] = { ...state.unitPlans[idx], linkedCDIds: current };
+  saveUnitPlansState();
+  renderView();
+}
+
+// Search input updates only the results container so the field keeps focus.
+function unitHandleCDSearch(unitId, value) {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.cdSearch = value;
+  const unit = state.unitPlans.find(u => u.id === unitId);
+  const container = document.getElementById('unit-cd-results');
+  if (unit && container) container.innerHTML = unitCDResultsHtml(unit);
 }
 
 // ── DASHBOARD ──
@@ -7269,7 +7814,7 @@ function saveStubIC() {
         toast(`Draft IC "${name}" created and linked to the lesson`, 'success');
       }
     }
-    if (state.currentView === 'planner') renderView();
+    if (state.currentView === 'planner' || state.currentView === 'unit-plans') renderView();
     return;
   }
 
