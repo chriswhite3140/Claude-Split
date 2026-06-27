@@ -1775,12 +1775,14 @@ function saveUnitPlansState() {
 // planner integration (scheduledSlots, drag-to-schedule) is deferred to PR2.
 // ════════════════════════════════════════════════════
 
+// Each status maps to a CSS modifier (.unit-status-badge.is-<key>) that applies the
+// project's status-token triad (text + background tint + border) — see styles.css.
 const UNIT_TEACHING_STATUSES = [
-  { key: 'planned',          label: 'Planned',          token: 'var(--text3)' },
-  { key: 'taught',           label: 'Taught',           token: 'var(--green)' },
-  { key: 'partially-taught', label: 'Partially taught', token: 'var(--gold)' },
-  { key: 'needs-review',     label: 'Needs review',     token: 'var(--blue)' },
-  { key: 'reteach',          label: 'Reteach',          token: 'var(--rust)' },
+  { key: 'planned',          label: 'Planned' },
+  { key: 'taught',           label: 'Taught' },
+  { key: 'partially-taught', label: 'Partially taught' },
+  { key: 'needs-review',     label: 'Needs review' },
+  { key: 'reteach',          label: 'Reteach' },
 ];
 
 function unitPlansEnsureUiState() {
@@ -1808,7 +1810,7 @@ function unitTeachingStatusMeta(status) {
 
 function unitTeachingStatusBadgeHtml(status) {
   const meta = unitTeachingStatusMeta(status);
-  return `<span class="unit-status-badge" style="color:${meta.token};border-color:${meta.token}">${meta.label}</span>`;
+  return `<span class="unit-status-badge is-${meta.key}">${meta.label}</span>`;
 }
 
 // ── Routing: list vs detail ──
@@ -2189,10 +2191,15 @@ function unitDropLesson(ev, unitId, targetLessonId) {
   if (idx < 0) return;
   const ids = [...(state.unitPlans[idx].lessonIds || [])];
   const from = ids.indexOf(dragId);
-  if (from < 0) return;
+  const targetIdx = ids.indexOf(targetLessonId);
+  if (from < 0 || targetIdx < 0) return;
   ids.splice(from, 1);
+  // Drop relative to the hovered row: dragging downward lands after the target,
+  // dragging upward lands before it. (Without the +1, an item can never move past
+  // an adjacent later row — dragging B onto C in [A,B,C] would be a no-op.)
   let to = ids.indexOf(targetLessonId);
   if (to < 0) to = ids.length;
+  else if (from < targetIdx) to += 1;
   ids.splice(to, 0, dragId);
   state.unitPlans[idx] = { ...state.unitPlans[idx], lessonIds: ids };
   saveUnitPlansState();

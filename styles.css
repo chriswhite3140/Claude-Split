@@ -1952,8 +1952,30 @@ body[data-text-size="large"] {
   letter-spacing: 0.04em;
   padding: 1px 6px;
   border-radius: 8px;
-  background: var(--surface);
-  border: 1px solid currentColor;
+  /* planned (default): neutral grey — text + tint + border, per AGENTS.md */
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text3);
+}
+.unit-status-badge.is-taught {
+  background: var(--status-success-bg);
+  border-color: var(--status-success-border);
+  color: var(--status-success-text);
+}
+.unit-status-badge.is-partially-taught {
+  background: var(--status-warning-bg);
+  border-color: var(--status-warning-border);
+  color: var(--status-warning-text);
+}
+.unit-status-badge.is-needs-review {
+  background: var(--status-info-bg);
+  border-color: var(--status-info-border);
+  color: var(--status-info-text);
+}
+.unit-status-badge.is-reteach {
+  background: var(--status-danger-bg);
+  border-color: var(--status-danger-border);
+  color: var(--status-danger-text);
 }
 .unit-lesson-delete {
   border: none;
