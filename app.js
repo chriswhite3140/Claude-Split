@@ -3563,11 +3563,13 @@ document.addEventListener('click', function(e) {
     else if (action === 'expandAllICs') {
       if (!state.icCoverageOpen) state.icCoverageOpen = {};
       state.coverageExpandAll = !state.coverageExpandAll;
-      (state._coverageVisibleCodes || []).forEach(code => {
-        const k = `covgap|desc|${code}`;
-        if (state.coverageExpandAll) state.icCoverageOpen[k] = true;
-        else delete state.icCoverageOpen[k];
-      });
+      if (state.coverageExpandAll) {
+        (state._coverageVisibleCodes || []).forEach(code => { state.icCoverageOpen[`covgap|desc|${code}`] = true; });
+      } else {
+        // Collapse: clear every descriptor key, not just visible ones, so rows
+        // expanded under another filter don't linger when the user navigates back.
+        Object.keys(state.icCoverageOpen).forEach(k => { if (k.startsWith('covgap|desc|')) delete state.icCoverageOpen[k]; });
+      }
     }
     else if (action === 'toggleDescIC') {
       if (!state.icCoverageOpen) state.icCoverageOpen = {};
