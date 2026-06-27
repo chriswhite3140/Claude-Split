@@ -5055,7 +5055,7 @@ function renderCoverage(main) {
     // an empty/cleared status (toggleICStatus stores '' since the backend can't delete)
     // is treated as not taught, same as the rest of the app.
     function icCellStyle(s, ic) {
-      const entries = state.taughtICs.filter(t => t.ic_id === ic.id && t.student_id === s.id);
+      const entries = state.taughtICs.filter(t => t.ic_id === ic.id && String(t.student_id) === String(s.id));
       if (!entries.length) return { bg: 'transparent', title: 'Not taught' };
       entries.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       const st = entries[0].status;
