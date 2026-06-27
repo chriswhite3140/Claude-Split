@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.17
+ * THIS FILE IS VERSION: 1.13.19
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,8 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.19 - Coverage Gaps: legend moved above table so it stays visible when ICs are expanded; expand/collapse all button visually distinct from filter buttons
+ * v1.13.18 - Coverage Gaps: expandable IC sub-rows per descriptor; global expand all / collapse all toggle and per-descriptor chevron toggle
  * v1.13.17 - Fix mobile outer-scroll from draft IC banner: mobile .main used a fixed height:calc(100vh - 56px) that didn't account for the banner above .app; switched to flex:1 + min-height:0 (matching desktop) so the banner is absorbed by the flex column
  * v1.13.16 - Fix "Review now" banner button doing nothing: openStubReview() still had the 3-day age gate (removed from the banner in v1.13.14), so recently-created draft stubs were filtered out and the click silently returned; age gate now removed to match the banner filter
  * v1.13.15 - Fix draft IC banner rendering as a full-height block down the left side: insert it into body (flex column) instead of .app (flex row), so it sits as a slim full-width bar at the top with .app filling the space below
@@ -79,7 +81,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.17';
+const APP_VERSION = '1.13.19';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -3558,6 +3560,22 @@ document.addEventListener('click', function(e) {
     } else if (action === 'year')   { state.coverageFilter.year   = value; }
     else if (action === 'strand')   { state.coverageFilter.strand = value; }
     else if (action === 'mode')     { state.coverageFilter.mode   = value; }
+    else if (action === 'expandAllICs') {
+      if (!state.icCoverageOpen) state.icCoverageOpen = {};
+      state.coverageExpandAll = !state.coverageExpandAll;
+      if (state.coverageExpandAll) {
+        (state._coverageVisibleCodes || []).forEach(code => { state.icCoverageOpen[`covgap|desc|${code}`] = true; });
+      } else {
+        // Collapse: clear every descriptor key, not just visible ones, so rows
+        // expanded under another filter don't linger when the user navigates back.
+        Object.keys(state.icCoverageOpen).forEach(k => { if (k.startsWith('covgap|desc|')) delete state.icCoverageOpen[k]; });
+      }
+    }
+    else if (action === 'toggleDescIC') {
+      if (!state.icCoverageOpen) state.icCoverageOpen = {};
+      const k = `covgap|desc|${value}`;
+      state.icCoverageOpen[k] = !state.icCoverageOpen[k];
+    }
     showView('coverage');
     return;
   }
@@ -4976,6 +4994,23 @@ function renderCoverage(main) {
     codes = codes.filter(c => !students.some(s => wasCodeTaughtToStudent(s.id, c.Code)));
   }
 
+  // Cache the currently-visible descriptor codes so the global "expand all ICs"
+  // toggle (handled in the delegated click listener) can set every per-descriptor key.
+  state._coverageVisibleCodes = codes.map(c => c.Code);
+
+  // Keep the global toggle in sync after a filter change: while "expand all" is on,
+  // any newly-visible descriptor must also be opened, otherwise the button reads
+  // "Collapse all ICs" while the rows below stay collapsed. Only default keys that
+  // have never been set — an explicit per-descriptor chevron collapse stores `false`
+  // and must survive the re-render, so individual rows can still be collapsed.
+  if (state.coverageExpandAll) {
+    if (!state.icCoverageOpen) state.icCoverageOpen = {};
+    state._coverageVisibleCodes.forEach(code => {
+      const k = `covgap|desc|${code}`;
+      if (state.icCoverageOpen[k] === undefined) state.icCoverageOpen[k] = true;
+    });
+  }
+
   // Summary stats
   const totalCells     = codes.length * students.length;
   const taughtCells    = codes.reduce((n,c) => n + students.filter(s => wasCodeTaughtToStudent(s.id,c.Code)).length, 0);
@@ -5014,6 +5049,22 @@ function renderCoverage(main) {
       return 'background:var(--surface-alt);title=Not taught yet';
     }
 
+    // IC sub-row cell colour: most-recent taughtICs record for this IC + student.
+    // Mirrors the canonical status semantics used elsewhere: 'taught' = taught with no
+    // outcome; got_it/mastered and needs_review/not_yet are the (legacy-aware) outcomes;
+    // an empty/cleared status (toggleICStatus stores '' since the backend can't delete)
+    // is treated as not taught, same as the rest of the app.
+    function icCellStyle(s, ic) {
+      const entries = state.taughtICs.filter(t => t.ic_id === ic.id && String(t.student_id) === String(s.id));
+      if (!entries.length) return { bg: 'transparent', title: 'Not taught' };
+      entries.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+      const st = entries[0].status;
+      if (st === 'got_it' || st === 'mastered')      return { bg: 'var(--green)',    title: 'Got it' };
+      if (st === 'needs_review' || st === 'not_yet') return { bg: 'var(--rust)',     title: 'Needs review' };
+      if (st === 'taught')                           return { bg: 'var(--blue-dim)', title: 'Taught · no outcome recorded' };
+      return { bg: 'transparent', title: 'Not taught' };
+    }
+
     const studentHeaders = students.map(s =>
       `<th style="padding:6px 8px;text-align:center;border-bottom:1px solid var(--border);writing-mode:vertical-rl;transform:rotate(180deg);height:92px;vertical-align:bottom;font-size:11px;color:var(--text-muted);font-weight:600;cursor:pointer;white-space:nowrap" onclick="openStudentDetail('${s.id}')" title="${s.first_name} ${s.last_name}">
         ${s.first_name} ${s.last_name[0]}.
@@ -5040,6 +5091,8 @@ function renderCoverage(main) {
         const taughtCount = students.filter(s => wasCodeTaughtToStudent(s.id, c.Code)).length;
         const gapCount    = students.length - taughtCount;
         const fullDesc    = (c.Descriptor || c.Aspect || '').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        const descKey     = `covgap|desc|${c.Code}`;
+        const descOpen    = !!state.icCoverageOpen[descKey];
         const cells = students.map(s => {
           const taught   = wasCodeTaughtToStudent(s.id, c.Code);
           const mastery  = getMasteryForCode(s.id, c.Code);
@@ -5056,36 +5109,59 @@ function renderCoverage(main) {
           </td>`;
         }).join('');
 
-        return `<tr style="background:${getStripedRowSurface(ci)}"
+        const descRow = `<tr style="background:${getStripedRowSurface(ci)}"
           onmouseenter="showCoverageTooltip(event,'${c.Code}','${fullDesc}','${c.Subject||''}','${c.Strand||''}')"
           onmouseleave="hideCoverageTooltip()">
           <td style="padding:7px 10px;border-bottom:1px solid var(--border);position:sticky;left:0;background:${getStripedRowSurface(ci)}">
-            <div style="font-family:'DM Mono',monospace;font-size:10px;color:${col}">${c.Code}</div>
-            <div style="font-size:11px;color:var(--text3);max-width:220px">${truncateWithTooltip(c.Descriptor||c.Aspect||'—', 42, '', true)}</div>
+            <div style="display:flex;align-items:flex-start;gap:6px">
+              <span data-cv-action="toggleDescIC" data-cv-value="${c.Code}" title="${descOpen?'Hide':'Show'} ICs"
+                style="cursor:pointer;color:var(--text3);font-size:9px;line-height:1.7;user-select:none;flex-shrink:0">${descOpen?'▼':'▶'}</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-family:'DM Mono',monospace;font-size:10px;color:${col}">${c.Code}</div>
+                <div style="font-size:11px;color:var(--text3);max-width:220px">${truncateWithTooltip(c.Descriptor||c.Aspect||'—', 42, '', true)}</div>
+              </div>
+            </div>
           </td>
           ${cells}
           <td style="padding:4px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
             <span style="font-family:'DM Mono',monospace;font-size:9px;color:${gapCount>0?'var(--rust)':'var(--green)'}">${taughtCount}/${students.length}</span>
           </td>
         </tr>`;
+
+        // IC sub-rows — one per IC belonging to this descriptor, shown when expanded
+        let icRows = '';
+        if (descOpen) {
+          const dICs = getICsForDescriptor(c.Code);
+          if (!dICs.length) {
+            icRows = `<tr style="background:${getStripedRowSurface(ci)}">
+              <td colspan="${students.length + 2}" style="padding:4px 10px 4px 30px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);font-style:italic">No ICs for this descriptor</td>
+            </tr>`;
+          } else {
+            icRows = dICs.map(ic => {
+              const icCells = students.map(s => {
+                const cs = icCellStyle(s, ic);
+                return `<td style="padding:3px;text-align:center;border-bottom:1px solid var(--border);border-right:1px solid var(--border)" title="${s.first_name} ${s.last_name} · ${cs.title}">
+                  <div style="width:22px;height:22px;border-radius:4px;background:${cs.bg};margin:auto"></div>
+                </td>`;
+              }).join('');
+              return `<tr style="background:${getStripedRowSurface(ci)}">
+                <td style="padding:4px 10px 4px 30px;border-bottom:1px solid var(--border);position:sticky;left:0;background:${getStripedRowSurface(ci)}">
+                  <div style="font-size:10px;color:var(--text-muted);max-width:220px">${escapeHtml(ic.name || ic.id)}</div>
+                </td>
+                ${icCells}
+                <td style="border-bottom:1px solid var(--border)"></td>
+              </tr>`;
+            }).join('');
+          }
+        }
+
+        return descRow + icRows;
       }).join('');
       return strandRow + codeRows;
     }).join('');
 
-    return `<div style="overflow:auto;max-height:calc(100vh - 200px)">
-      <table style="border-collapse:collapse;min-width:${250+students.length*26}px">
-        <thead style="position:sticky;top:0;z-index:5;background:var(--surface)">
-          <tr>
-            <th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:6;min-width:220px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase">Code</th>
-            ${studentHeaders}
-            <th style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;text-align:right">Taught</th>
-          </tr>
-        </thead>
-        <tbody>${bodyRows}</tbody>
-      </table>
-    </div>
-    <!-- Legend -->
-    <div style="display:flex;gap:16px;padding:10px 16px;border-top:1px solid var(--border);flex-wrap:wrap;align-items:center">
+    // Legend — rendered above the table so it stays visible when IC sub-rows are expanded
+    const legend = `<div style="display:flex;gap:16px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center">
       <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em">Legend</span>
       ${[
         ['●','var(--green)','Achieved'],
@@ -5097,6 +5173,20 @@ function renderCoverage(main) {
         <div style="width:18px;height:18px;border-radius:3px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:10px;color:${bg==='var(--surface-alt)'?'var(--text3)':'var(--primary-contrast)'}">${dot}</div>
         <span style="font-size:11px;color:var(--text3)">${label}</span>
       </div>`).join('')}
+    </div>`;
+
+    return `${legend}
+    <div style="overflow:auto;max-height:calc(100vh - 200px)">
+      <table style="border-collapse:collapse;min-width:${250+students.length*26}px">
+        <thead style="position:sticky;top:0;z-index:5;background:var(--surface)">
+          <tr>
+            <th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:6;min-width:220px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase">Code</th>
+            ${studentHeaders}
+            <th style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;text-align:right">Taught</th>
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
     </div>`;
   }
 
@@ -5130,6 +5220,13 @@ function renderCoverage(main) {
         <!-- Mode -->
         ${fBtn('All codes',    cf.mode==='all',        'mode', 'all')}
         ${fBtn('⚠ Gaps only', cf.mode==='not-taught', 'mode', 'not-taught')}
+        <div style="width:1px;height:18px;background:var(--border2)"></div>
+        <!-- Global IC drill-down toggle — distinct action-button styling, not a filter -->
+        <button data-cv-action="expandAllICs" data-cv-value="toggle"
+          title="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'}" aria-label="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'}"
+          style="padding:5px 12px;border-radius:4px;cursor:pointer;font-family:'DM Mono',monospace;font-size:10px;white-space:nowrap;${state.coverageExpandAll
+            ? `background:${col};border:1px solid ${col};color:#fff`
+            : 'background:none;border:1px solid var(--blue);color:var(--blue)'}">${state.coverageExpandAll ? '▼ Collapse all ICs' : '▶ Expand all ICs'}</button>
       </div>
       <!-- Strand filter row — only shown when a subject is selected -->
       ${availStrands.length > 0 ? `
