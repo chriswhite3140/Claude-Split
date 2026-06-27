@@ -4432,6 +4432,15 @@ function csvCacheSet(filename, text) {
 
 // Returns the raw CSV text, served from cache when present, otherwise fetched
 // from GitHub raw and cached before returning.
+//
+// Intentional staleness tradeoff: a cache hit is returned without revalidating
+// against GitHub (no TTL/ETag), so the cache lives for the entire lifetime of
+// the current CSV_CACHE_VERSION (= APP_VERSION). This is deliberate — it is what
+// eliminates the repeated GitHub-raw requests that were causing rate-limit 400s.
+// Consequence: a data-only commit to a CSV on main does NOT reach users until
+// APP_VERSION is bumped (which invalidates every ct_csv_ key). Per project
+// convention, bump APP_VERSION whenever curriculum/IC CSV data changes so the
+// updated data propagates to users.
 async function fetchCSVTextCached(filename, url) {
   const cached = csvCacheGet(filename);
   if (cached !== null) return cached;
