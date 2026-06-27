@@ -4997,10 +4997,15 @@ function renderCoverage(main) {
 
   // Keep the global toggle in sync after a filter change: while "expand all" is on,
   // any newly-visible descriptor must also be opened, otherwise the button reads
-  // "Collapse all ICs" while the rows below stay collapsed.
+  // "Collapse all ICs" while the rows below stay collapsed. Only default keys that
+  // have never been set — an explicit per-descriptor chevron collapse stores `false`
+  // and must survive the re-render, so individual rows can still be collapsed.
   if (state.coverageExpandAll) {
     if (!state.icCoverageOpen) state.icCoverageOpen = {};
-    state._coverageVisibleCodes.forEach(code => { state.icCoverageOpen[`covgap|desc|${code}`] = true; });
+    state._coverageVisibleCodes.forEach(code => {
+      const k = `covgap|desc|${code}`;
+      if (state.icCoverageOpen[k] === undefined) state.icCoverageOpen[k] = true;
+    });
   }
 
   // Summary stats
