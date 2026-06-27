@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.18
+ * THIS FILE IS VERSION: 1.13.19
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.19 - Coverage Gaps: legend moved above table so it stays visible when ICs are expanded; expand/collapse all button visually distinct from filter buttons
  * v1.13.18 - Coverage Gaps: expandable IC sub-rows per descriptor; global expand all / collapse all toggle and per-descriptor chevron toggle
  * v1.13.17 - Fix mobile outer-scroll from draft IC banner: mobile .main used a fixed height:calc(100vh - 56px) that didn't account for the banner above .app; switched to flex:1 + min-height:0 (matching desktop) so the banner is absorbed by the flex column
  * v1.13.16 - Fix "Review now" banner button doing nothing: openStubReview() still had the 3-day age gate (removed from the banner in v1.13.14), so recently-created draft stubs were filtered out and the click silently returned; age gate now removed to match the banner filter
@@ -80,7 +81,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.18';
+const APP_VERSION = '1.13.19';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -5157,20 +5158,8 @@ function renderCoverage(main) {
       return strandRow + codeRows;
     }).join('');
 
-    return `<div style="overflow:auto;max-height:calc(100vh - 200px)">
-      <table style="border-collapse:collapse;min-width:${250+students.length*26}px">
-        <thead style="position:sticky;top:0;z-index:5;background:var(--surface)">
-          <tr>
-            <th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:6;min-width:220px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase">Code</th>
-            ${studentHeaders}
-            <th style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;text-align:right">Taught</th>
-          </tr>
-        </thead>
-        <tbody>${bodyRows}</tbody>
-      </table>
-    </div>
-    <!-- Legend -->
-    <div style="display:flex;gap:16px;padding:10px 16px;border-top:1px solid var(--border);flex-wrap:wrap;align-items:center">
+    // Legend — rendered above the table so it stays visible when IC sub-rows are expanded
+    const legend = `<div style="display:flex;gap:16px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center">
       <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em">Legend</span>
       ${[
         ['●','var(--green)','Achieved'],
@@ -5182,6 +5171,20 @@ function renderCoverage(main) {
         <div style="width:18px;height:18px;border-radius:3px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:10px;color:${bg==='var(--surface-alt)'?'var(--text3)':'var(--primary-contrast)'}">${dot}</div>
         <span style="font-size:11px;color:var(--text3)">${label}</span>
       </div>`).join('')}
+    </div>`;
+
+    return `${legend}
+    <div style="overflow:auto;max-height:calc(100vh - 200px)">
+      <table style="border-collapse:collapse;min-width:${250+students.length*26}px">
+        <thead style="position:sticky;top:0;z-index:5;background:var(--surface)">
+          <tr>
+            <th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:6;min-width:220px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase">Code</th>
+            ${studentHeaders}
+            <th style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;text-align:right">Taught</th>
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
     </div>`;
   }
 
@@ -5216,8 +5219,12 @@ function renderCoverage(main) {
         ${fBtn('All codes',    cf.mode==='all',        'mode', 'all')}
         ${fBtn('⚠ Gaps only', cf.mode==='not-taught', 'mode', 'not-taught')}
         <div style="width:1px;height:18px;background:var(--border2)"></div>
-        <!-- Global IC drill-down toggle -->
-        ${fBtn(state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs', !!state.coverageExpandAll, 'expandAllICs', 'toggle')}
+        <!-- Global IC drill-down toggle — distinct action-button styling, not a filter -->
+        <button data-cv-action="expandAllICs" data-cv-value="toggle"
+          title="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'}" aria-label="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'}"
+          style="padding:5px 12px;border-radius:4px;cursor:pointer;font-family:'DM Mono',monospace;font-size:10px;white-space:nowrap;${state.coverageExpandAll
+            ? `background:${col};border:1px solid ${col};color:#fff`
+            : 'background:none;border:1px solid var(--blue);color:var(--blue)'}">${state.coverageExpandAll ? '▼ Collapse all ICs' : '▶ Expand all ICs'}</button>
       </div>
       <!-- Strand filter row — only shown when a subject is selected -->
       ${availStrands.length > 0 ? `
