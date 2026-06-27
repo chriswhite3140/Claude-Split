@@ -83,7 +83,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.21';
+const APP_VERSION = '1.13.23';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -366,7 +366,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, weekKey: null, pendingStubForLessonId: null },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -1264,52 +1264,108 @@ function plannerICResultsHtml(lesson) {
   const scores = state.plannerUi.suggestionScores || {};
   const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
 
-  const byDescriptor = {};
-  resultIcs.forEach(ic => {
-    const key = ic.homeDescriptorId || '—';
-    (byDescriptor[key] = byDescriptor[key] || []).push(ic);
-  });
-
-  // Normalise confidence against the descriptors that actually render. Some
-  // ranked descriptors have no loaded ICs and never appear in the list;
-  // including their scores here would deflate the tier of every visible match.
+  // Per-IC confidence inherits the score of its home descriptor. Normalise against
+  // the descriptors that actually render — some ranked descriptors have no loaded
+  // ICs and never appear, and including their scores would deflate every tier.
   const maxScore = showConfidence
-    ? Math.max(1, ...Object.keys(byDescriptor).map(code => scores[code] || 0))
+    ? Math.max(1, ...resultIcs.map(ic => scores[ic.homeDescriptorId] || 0))
     : 0;
 
-  const groups = Object.entries(byDescriptor).map(([code, ics]) => {
-    const cd = state.curriculumCodes.find(c => c.Code === code);
-    const descText = cd ? (cd.Descriptor || cd.Aspect || '') : '';
-    const score = scores[code] || 0;
-    const conf = showConfidence ? plannerConfidenceTier(score, maxScore) : null;
-    const html = `
-      <div class="planner-ic-group">
-        <div class="planner-ic-group-head">
-          <span class="planner-ic-group-code">${escapeHtml(code)}</span>
-          ${descText ? `<span class="planner-ic-group-desc">${escapeHtml(descText.slice(0, 70))}${descText.length > 70 ? '…' : ''}</span>` : ''}
+  const expandedId = state.plannerUi.expandedICId;
+
+  // Render a single IC as a flat row: a clickable body (toggles expand) plus an
+  // always-functional tick button that never toggles the expand state.
+  const rowHtml = (ic, conf) => {
+    const on = selected.has(ic.id);
+    const expanded = ic.id === expandedId;
+    const code = ic.homeDescriptorId || '';
+    const detail = expanded ? plannerICDetailHtml(ic) : '';
+    return `<div class="planner-ic-option ${on ? 'is-on' : ''} ${expanded ? 'is-expanded' : ''}">
+      <div class="planner-ic-option-body" role="button" tabindex="0" aria-expanded="${expanded ? 'true' : 'false'}" data-ic-id="${escapeHtml(ic.id)}" onclick="plannerToggleICExpand('${plannerJsStr(ic.id)}')" onkeydown="plannerICBodyKeydown(event, '${plannerJsStr(ic.id)}')">
+        <div class="planner-ic-option-head">
+          <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
+          ${code ? `<span class="planner-ic-option-code">${escapeHtml(code)}</span>` : ''}
+          ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
         </div>
-        ${ics.map(ic => {
-          const on = selected.has(ic.id);
-          return `<button class="planner-ic-option ${on ? 'is-on' : ''}" type="button" onclick="plannerToggleLessonIC('${plannerJsStr(ic.id)}')">
-            <span class="planner-ic-tick">${on ? '✓' : '+'}</span>
-            <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
-            ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
-          </button>`;
-        }).join('')}
+        ${detail}
       </div>
-    `;
-    return { score, tier: conf ? conf.key : null, html };
-  });
+      <button class="planner-ic-tick-btn ${on ? 'is-on' : ''}" type="button" title="${on ? 'Remove from lesson' : 'Add to lesson'}" onclick="plannerToggleLessonIC('${plannerJsStr(ic.id)}')">
+        <span class="planner-ic-tick">${on ? '✓' : '+'}</span>
+      </button>
+    </div>`;
+  };
 
-  if (!showConfidence) return groups.map(g => g.html).join('') + createRow;
+  if (!showConfidence) {
+    // Manual search/browse: alphabetical by IC name, create action at the bottom.
+    const rows = resultIcs
+      .slice()
+      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
+      .map(ic => rowHtml(ic, null))
+      .join('');
+    return rows + createRow;
+  }
 
-  // Flatten by confidence across the whole result set: sort descriptor groups by
-  // score (so strong groups, then partial), put the create action after the last
-  // non-weak group, then weak matches at the very bottom — below create.
-  const ordered = groups.slice().sort((a, b) => b.score - a.score);
-  const nonWeak = ordered.filter(g => g.tier !== 'weak').map(g => g.html).join('');
-  const weak = ordered.filter(g => g.tier === 'weak').map(g => g.html).join('');
+  // Suggestion path: strong → partial → Create new IC → weak. Within each band,
+  // order by raw score so the closest matches surface first.
+  const ranked = resultIcs
+    .map(ic => ({ ic, score: scores[ic.homeDescriptorId] || 0 }))
+    .map(item => ({ ...item, conf: plannerConfidenceTier(item.score, maxScore) }))
+    .sort((a, b) => b.score - a.score);
+  const nonWeak = ranked.filter(item => !item.conf || item.conf.key !== 'weak')
+    .map(item => rowHtml(item.ic, item.conf)).join('');
+  const weak = ranked.filter(item => item.conf && item.conf.key === 'weak')
+    .map(item => rowHtml(item.ic, item.conf)).join('');
   return nonWeak + createRow + weak;
+}
+
+// Expanded IC detail: description, example of success (green), common error
+// (rust). Only renders fields that are populated.
+function plannerICDetailHtml(ic) {
+  const parts = [];
+  if (ic.description) {
+    parts.push(`<div class="planner-ic-detail-desc">${escapeHtml(ic.description)}</div>`);
+  }
+  if (ic.exampleOfSuccess) {
+    parts.push(`<div class="planner-ic-detail-field">
+      <div class="planner-ic-detail-label is-success">Example of success</div>
+      <div class="planner-ic-detail-text">${escapeHtml(ic.exampleOfSuccess)}</div>
+    </div>`);
+  }
+  if (ic.commonError) {
+    parts.push(`<div class="planner-ic-detail-field">
+      <div class="planner-ic-detail-label is-error">Common error</div>
+      <div class="planner-ic-detail-text">${escapeHtml(ic.commonError)}</div>
+    </div>`);
+  }
+  if (!parts.length) return '';
+  return `<div class="planner-ic-detail">${parts.join('')}</div>`;
+}
+
+// Activate the expandable IC body from the keyboard (it carries role="button",
+// so Enter and Space must toggle it the way a real button would).
+function plannerICBodyKeydown(ev, icId) {
+  if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+    ev.preventDefault();
+    plannerToggleICExpand(icId);
+  }
+}
+
+// Toggle expanded IC detail. Only one IC is expanded at a time; expanding a new
+// row collapses the previous. Re-render only the results container to preserve
+// the search field's focus. The innerHTML rebuild resets the scroller and drops
+// focus, so capture/restore scrollTop and re-focus the toggled row afterwards.
+function plannerToggleICExpand(icId) {
+  plannerEnsureUiState();
+  state.plannerUi.expandedICId = state.plannerUi.expandedICId === icId ? null : icId;
+  const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
+  const container = document.getElementById('planner-ic-results');
+  if (!lesson || !container) return;
+  const scrollTop = container.scrollTop;
+  container.innerHTML = plannerICResultsHtml(lesson);
+  container.scrollTop = scrollTop;
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(icId) : icId;
+  const body = container.querySelector('[data-ic-id="' + sel + '"]');
+  if (body && typeof body.focus === 'function') body.focus();
 }
 
 // Bucket a descriptor's intention-match score into a three-tier confidence label,
@@ -1332,6 +1388,7 @@ function plannerEnsureUiState() {
   if (typeof state.plannerUi.icSearch !== 'string') state.plannerUi.icSearch = '';
   if (!Array.isArray(state.plannerUi.suggestedICIds)) state.plannerUi.suggestedICIds = [];
   if (!state.plannerUi.suggestionScores || typeof state.plannerUi.suggestionScores !== 'object') state.plannerUi.suggestionScores = {};
+  if (typeof state.plannerUi.expandedICId === 'undefined') state.plannerUi.expandedICId = null;
   if (typeof state.plannerUi.pendingStubForLessonId === 'undefined') state.plannerUi.pendingStubForLessonId = null;
   if (!isValidIsoDate(state.plannerUi.weekKey)) state.plannerUi.weekKey = plannerNormalizeWeekStart(loadPlannerWeek());
 }
@@ -1382,6 +1439,7 @@ function plannerOpenLessonDrawer(lessonId) {
   state.plannerUi.drawerOpen = true;
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
+  state.plannerUi.expandedICId = null;
   renderView();
 }
 
@@ -1456,6 +1514,7 @@ function plannerAddLesson(dayKey) {
   state.plannerUi.drawerOpen = true;
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
+  state.plannerUi.expandedICId = null;
   renderView();
 }
 
