@@ -1339,22 +1339,6 @@ body[data-text-size="large"] {
   color: var(--text3);
   padding: 6px 2px;
 }
-.planner-ic-group-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 5px;
-  flex-wrap: wrap;
-}
-.planner-ic-group-code {
-  font-family: 'DM Mono', monospace;
-  font-size: 9px;
-  color: var(--status-info-text);
-}
-.planner-ic-group-desc {
-  font-size: 10px;
-  color: var(--text3);
-}
 .planner-ic-option {
   display: flex;
   align-items: flex-start;
@@ -1367,7 +1351,6 @@ body[data-text-size="large"] {
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
-  cursor: pointer;
 }
 .planner-ic-option:hover {
   border-color: var(--status-info-border);
@@ -1377,25 +1360,84 @@ body[data-text-size="large"] {
   border-color: var(--status-success-border);
   background: var(--status-success-bg);
 }
+.planner-ic-option-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+}
+.planner-ic-option-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.planner-ic-option-code {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  color: var(--status-info-text);
+}
+.planner-ic-tick-btn {
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
 .planner-ic-tick {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: 1px solid var(--border2);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text3);
+}
+.planner-ic-tick-btn:hover .planner-ic-tick {
+  border-color: var(--status-success-border);
 }
 .planner-ic-option.is-on .planner-ic-tick {
   border-color: var(--status-success-border);
+  background: var(--status-success-bg);
   color: var(--status-success-text);
 }
 .planner-ic-option-label {
   font-size: 12px;
   line-height: 1.3;
+}
+
+/* Expanded IC detail */
+.planner-ic-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+.planner-ic-detail-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.planner-ic-detail-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  margin-bottom: 2px;
+}
+.planner-ic-detail-label.is-success {
+  color: var(--green);
+}
+.planner-ic-detail-label.is-error {
+  color: var(--rust);
+}
+.planner-ic-detail-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
 }
 
 /* Three-tier intention-match confidence (relative to the top suggestion) */
