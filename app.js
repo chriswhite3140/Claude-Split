@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.20
- * Last updated: 2026-06-21
+ * THIS FILE IS VERSION: 1.13.21
+ * Last updated: 2026-06-27
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.21 - localStorage caching for all GitHub raw CSV fetches; cache keyed by app version so auto-invalidates on update; eliminates rate limit 400 errors on repeated loads
  * v1.13.20 - Bulk Assess: student sort toggle button added to header (Last/First name), matching Students view
  * v1.13.19 - Coverage Gaps: legend moved above table so it stays visible when ICs are expanded; expand/collapse all button visually distinct from filter buttons
  * v1.13.18 - Coverage Gaps: expandable IC sub-rows per descriptor; global expand all / collapse all toggle and per-descriptor chevron toggle
@@ -82,7 +83,9 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.20';
+const APP_VERSION = '1.13.21';
+// Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
+const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -4408,13 +4411,57 @@ const CURRICULUM_CODE_KEYS = new Set([
   'curriculumCodesVisualArts',
 ]);
 
+// ── CSV localStorage cache ──
+// Key format: ct_csv_${CSV_CACHE_VERSION}_${filename}. Cache stores the raw CSV
+// text so existing parsing logic is unchanged. All cache ops fail silently.
+function csvCacheGet(filename) {
+  try {
+    return localStorage.getItem(`ct_csv_${CSV_CACHE_VERSION}_${filename}`);
+  } catch(e) {
+    return null;
+  }
+}
+
+function csvCacheSet(filename, text) {
+  try {
+    localStorage.setItem(`ct_csv_${CSV_CACHE_VERSION}_${filename}`, text);
+  } catch(e) {
+    // localStorage full or unavailable — continue without caching.
+  }
+}
+
+// Returns the raw CSV text, served from cache when present, otherwise fetched
+// from GitHub raw and cached before returning.
+async function fetchCSVTextCached(filename, url) {
+  const cached = csvCacheGet(filename);
+  if (cached !== null) return cached;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const text = await resp.text();
+  csvCacheSet(filename, text);
+  return text;
+}
+
+// Removes any ct_csv_ cache entries from a different app version (stale cache cleanup).
+function clearStaleCSVCache() {
+  try {
+    const keep = `ct_csv_${CSV_CACHE_VERSION}_`;
+    const stale = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('ct_csv_') && !k.startsWith(keep)) stale.push(k);
+    }
+    stale.forEach(k => localStorage.removeItem(k));
+  } catch(e) {
+    // localStorage unavailable — nothing to clean up.
+  }
+}
+
 async function fetchCSVFromGitHub(key) {
   const { file, iconId, navId } = CSV_FILES[key];
   try {
     const url = GITHUB_RAW + file.split(' ').join('%20');
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const text = await resp.text();
+    const text = await fetchCSVTextCached(key, url);
     const parsed = parseCSV(text);
     if (CURRICULUM_CODE_KEYS.has(key)) {
       state.curriculumCodes = [...state.curriculumCodes, ...parsed];
@@ -4433,9 +4480,7 @@ async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
   const file = CSV_FILES[key].file;
   try {
     const url = GITHUB_RAW + file;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const rows = parseCSV(await resp.text());
+    const rows = parseCSV(await fetchCSVTextCached(key, url));
     const ics = rows.map(row => {
       const rawLinked = (row.linkedDescriptorIds || '').replace(/^\[|\]$/g, '').trim();
       return createIC({
@@ -4469,6 +4514,9 @@ async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
 }
 
 async function fetchAllCSVs() {
+  // Drop CSV cache entries left over from older app versions before fetching.
+  clearStaleCSVCache();
+
   // ── Descriptor CSVs: sequential to avoid race condition on state.curriculumCodes ──
   const count1  = await fetchCSVFromGitHub('curriculumCodes');           // Maths (sets)
   const count2  = await fetchCSVFromGitHub('curriculumCodesEnglish');   // appends
