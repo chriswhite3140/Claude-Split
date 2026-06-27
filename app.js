@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.15
+ * THIS FILE IS VERSION: 1.13.16
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.16 - Fix "Review now" banner button doing nothing: openStubReview() still had the 3-day age gate (removed from the banner in v1.13.14), so recently-created draft stubs were filtered out and the click silently returned; age gate now removed to match the banner filter
  * v1.13.15 - Fix draft IC banner rendering as a full-height block down the left side: insert it into body (flex column) instead of .app (flex row), so it sits as a slim full-width bar at the top with .app filling the space below
  * v1.13.14 - Remove 3-day age gate from draft IC banner; banner now shows immediately for any draft stub IC
  * v1.13.13 - Draft IC review banner: now pushes content down instead of overlaying; colour changed to blue (#1A73E8); draft ICs sort to top of IC list in descriptor side panel
@@ -77,7 +78,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.15';
+const APP_VERSION = '1.13.16';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -8350,13 +8351,10 @@ function openStubReview() {
   const banner = document.getElementById('stub-nudge-banner');
   if (banner) banner.remove();
 
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const stubs = state.instructionalComponents.filter(ic =>
     ic.ownerTier === 'teacher_stub' &&
-    ic.icReadinessStatus === 'draft' &&
-    ic.createdAt &&
-    ic.createdAt < threeDaysAgo
-  ).sort((a, b) => a.createdAt < b.createdAt ? -1 : 1);
+    ic.icReadinessStatus === 'draft'
+  ).sort((a, b) => (a.createdAt || '') < (b.createdAt || '') ? -1 : 1);
   if (!stubs.length) return;
 
   const firstStub = stubs[0];
