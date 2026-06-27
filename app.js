@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.19
+ * THIS FILE IS VERSION: 1.13.20
  * Last updated: 2026-06-21
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.20 - Bulk Assess: student sort toggle button added to header (Last/First name), matching Students view
  * v1.13.19 - Coverage Gaps: legend moved above table so it stays visible when ICs are expanded; expand/collapse all button visually distinct from filter buttons
  * v1.13.18 - Coverage Gaps: expandable IC sub-rows per descriptor; global expand all / collapse all toggle and per-descriptor chevron toggle
  * v1.13.17 - Fix mobile outer-scroll from draft IC banner: mobile .main used a fixed height:calc(100vh - 56px) that didn't account for the banner above .app; switched to flex:1 + min-height:0 (matching desktop) so the banner is absorbed by the flex column
@@ -81,7 +82,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.19';
+const APP_VERSION = '1.13.20';
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
@@ -3787,6 +3788,8 @@ function renderBulkAssess(main) {
       ${['all','F','1','2','3','4','5','6'].map(yr => filterBtn(yr==='all'?'All':'Yr '+yr, ba.yearFilter===yr, 'setBulkYear', yr)).join('')}
       <div style="width:1px;height:18px;background:var(--border2);margin:0 3px"></div>
       ${availStrands.map(st => filterBtn(st==='all'?'All strands':st, ba.strandFilter===st, 'setBulkStrand', st)).join('')}
+      <div style="width:1px;height:18px;background:var(--border2);margin:0 3px"></div>
+      <button onclick="toggleStudentSort();renderBulkAssess(document.getElementById('main-content'))" title="Toggle name sort order" style="padding:4px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;white-space:nowrap">${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}</button>
       <div style="width:1px;height:18px;background:var(--border2);margin:0 3px;margin-left:auto"></div>
       <input type="date" value="${ba.date}" onchange="state.bulkAssess.date=this.value" style="background:var(--surface-alt);border:1px solid var(--border2);border-radius:5px;padding:4px 8px;color:var(--text-muted);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;outline:none">
       ${pendingCount > 0 ? `
