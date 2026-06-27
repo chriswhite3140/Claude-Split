@@ -5033,15 +5033,20 @@ function renderCoverage(main) {
       return 'background:var(--surface-alt);title=Not taught yet';
     }
 
-    // IC sub-row cell colour: most-recent taughtICs record for this IC + student
+    // IC sub-row cell colour: most-recent taughtICs record for this IC + student.
+    // Mirrors the canonical status semantics used elsewhere: 'taught' = taught with no
+    // outcome; got_it/mastered and needs_review/not_yet are the (legacy-aware) outcomes;
+    // an empty/cleared status (toggleICStatus stores '' since the backend can't delete)
+    // is treated as not taught, same as the rest of the app.
     function icCellStyle(s, ic) {
       const entries = state.taughtICs.filter(t => t.ic_id === ic.id && t.student_id === s.id);
       if (!entries.length) return { bg: 'transparent', title: 'Not taught' };
       entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       const st = entries[0].status;
-      if (st === 'got_it')       return { bg: 'var(--green)',    title: 'Got it' };
-      if (st === 'needs_review') return { bg: 'var(--gold)',     title: 'Needs review' };
-      return { bg: 'var(--blue-dim)', title: 'Taught · no outcome recorded' };
+      if (st === 'got_it' || st === 'mastered')      return { bg: 'var(--green)',    title: 'Got it' };
+      if (st === 'needs_review' || st === 'not_yet') return { bg: 'var(--gold)',     title: 'Needs review' };
+      if (st === 'taught')                           return { bg: 'var(--blue-dim)', title: 'Taught · no outcome recorded' };
+      return { bg: 'transparent', title: 'Not taught' };
     }
 
     const studentHeaders = students.map(s =>
