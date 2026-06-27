@@ -1710,7 +1710,7 @@ function normalizeLessonPlan(raw = {}) {
     // ── Unit Plans (PR1) ──
     unitId: String(raw.unitId || ''),         // which unit this lesson belongs to (empty = standalone)
     scheduledSlots: Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots : [],  // [{weekKey, dayKey}] — wired up in PR2
-    teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : 'planned',
+    teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned'),
   };
 }
 
