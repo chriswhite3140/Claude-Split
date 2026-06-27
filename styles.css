@@ -1368,6 +1368,11 @@ body[data-text-size="large"] {
   gap: 6px;
   cursor: pointer;
 }
+.planner-ic-option-body:focus-visible {
+  outline: 2px solid var(--status-info-border);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 .planner-ic-option-head {
   display: flex;
   align-items: center;

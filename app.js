@@ -83,7 +83,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.22';
+const APP_VERSION = '1.13.23';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1281,7 +1281,7 @@ function plannerICResultsHtml(lesson) {
     const code = ic.homeDescriptorId || '';
     const detail = expanded ? plannerICDetailHtml(ic) : '';
     return `<div class="planner-ic-option ${on ? 'is-on' : ''} ${expanded ? 'is-expanded' : ''}">
-      <div class="planner-ic-option-body" onclick="plannerToggleICExpand('${plannerJsStr(ic.id)}')">
+      <div class="planner-ic-option-body" role="button" tabindex="0" aria-expanded="${expanded ? 'true' : 'false'}" data-ic-id="${escapeHtml(ic.id)}" onclick="plannerToggleICExpand('${plannerJsStr(ic.id)}')" onkeydown="plannerICBodyKeydown(event, '${plannerJsStr(ic.id)}')">
         <div class="planner-ic-option-head">
           <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
           ${code ? `<span class="planner-ic-option-code">${escapeHtml(code)}</span>` : ''}
@@ -1341,15 +1341,31 @@ function plannerICDetailHtml(ic) {
   return `<div class="planner-ic-detail">${parts.join('')}</div>`;
 }
 
+// Activate the expandable IC body from the keyboard (it carries role="button",
+// so Enter and Space must toggle it the way a real button would).
+function plannerICBodyKeydown(ev, icId) {
+  if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+    ev.preventDefault();
+    plannerToggleICExpand(icId);
+  }
+}
+
 // Toggle expanded IC detail. Only one IC is expanded at a time; expanding a new
 // row collapses the previous. Re-render only the results container to preserve
-// the search field's focus and the list's scroll position.
+// the search field's focus. The innerHTML rebuild resets the scroller and drops
+// focus, so capture/restore scrollTop and re-focus the toggled row afterwards.
 function plannerToggleICExpand(icId) {
   plannerEnsureUiState();
   state.plannerUi.expandedICId = state.plannerUi.expandedICId === icId ? null : icId;
   const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
   const container = document.getElementById('planner-ic-results');
-  if (lesson && container) container.innerHTML = plannerICResultsHtml(lesson);
+  if (!lesson || !container) return;
+  const scrollTop = container.scrollTop;
+  container.innerHTML = plannerICResultsHtml(lesson);
+  container.scrollTop = scrollTop;
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(icId) : icId;
+  const body = container.querySelector('[data-ic-id="' + sel + '"]');
+  if (body && typeof body.focus === 'function') body.focus();
 }
 
 // Bucket a descriptor's intention-match score into a three-tier confidence label,
