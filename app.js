@@ -4995,6 +4995,14 @@ function renderCoverage(main) {
   // toggle (handled in the delegated click listener) can set every per-descriptor key.
   state._coverageVisibleCodes = codes.map(c => c.Code);
 
+  // Keep the global toggle in sync after a filter change: while "expand all" is on,
+  // any newly-visible descriptor must also be opened, otherwise the button reads
+  // "Collapse all ICs" while the rows below stay collapsed.
+  if (state.coverageExpandAll) {
+    if (!state.icCoverageOpen) state.icCoverageOpen = {};
+    state._coverageVisibleCodes.forEach(code => { state.icCoverageOpen[`covgap|desc|${code}`] = true; });
+  }
+
   // Summary stats
   const totalCells     = codes.length * students.length;
   const taughtCells    = codes.reduce((n,c) => n + students.filter(s => wasCodeTaughtToStudent(s.id,c.Code)).length, 0);
