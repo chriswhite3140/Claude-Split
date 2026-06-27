@@ -5055,7 +5055,7 @@ function renderCoverage(main) {
     function icCellStyle(s, ic) {
       const entries = state.taughtICs.filter(t => t.ic_id === ic.id && t.student_id === s.id);
       if (!entries.length) return { bg: 'transparent', title: 'Not taught' };
-      entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      entries.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       const st = entries[0].status;
       if (st === 'got_it' || st === 'mastered')      return { bg: 'var(--green)',    title: 'Got it' };
       if (st === 'needs_review' || st === 'not_yet') return { bg: 'var(--gold)',     title: 'Needs review' };
