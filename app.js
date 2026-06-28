@@ -1887,9 +1887,17 @@ function unitUpdateField(unitId, field, value) {
   if (idx < 0) return;
   state.unitPlans[idx] = { ...state.unitPlans[idx], [field]: String(value) };
   saveUnitPlansState();
-  // Subject re-scopes the CD picker; re-render. Text fields update silently so the
-  // input keeps focus while typing.
-  if (field === 'subject') { state.unitPlansUi.cdSearch = ''; renderView(); }
+  // Subject re-scopes the CD picker; re-render. Other text fields update silently so
+  // the input keeps focus while typing.
+  if (field === 'subject') { state.unitPlansUi.cdSearch = ''; state.unitPlansUi.cdShowAllYears = false; renderView(); return; }
+  // Year level drives the CD picker's default filter. Refresh just that panel (it
+  // lives in the sidebar, while the year input is in the topbar) so the new default
+  // takes effect immediately without stealing focus from the year field.
+  if (field === 'yearLevel') {
+    state.unitPlansUi.cdShowAllYears = false;
+    const panel = document.getElementById('unit-cd-panel');
+    if (panel) panel.innerHTML = unitCDPanelHtml(state.unitPlans[idx]);
+  }
 }
 
 // ── LIST VIEW ──
@@ -2001,19 +2009,7 @@ function renderUnitDetail(main, unit) {
           <div class="unit-side-body">
             <div class="form-group">
               <label class="form-label">Linked curriculum descriptors</label>
-              ${unit.subject
-                ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>
-                   <input class="form-input" id="unit-cd-search" type="text" placeholder="Search ${escapeHtml(unit.subject)} codes or descriptors"
-                     value="${escapeHtml(state.unitPlansUi.cdSearch || '')}" oninput="unitHandleCDSearch('${plannerJsStr(unit.id)}',this.value)">
-                   ${normaliseYear(unit.yearLevel)
-                     ? `<div class="unit-cd-yearfilter">
-                          <span class="unit-cd-yearfilter-label">${state.unitPlansUi.cdShowAllYears ? 'Showing all year levels' : `Showing ${escapeHtml(unitYearLabel(unit))} only`}</span>
-                          <button class="unit-cd-yeartoggle" type="button" onclick="unitToggleCDShowAllYears()">${state.unitPlansUi.cdShowAllYears ? `Show ${escapeHtml(unitYearLabel(unit))} only` : 'Show all years'}</button>
-                        </div>`
-                     : ''}
-                   <div id="unit-cd-results" class="unit-cd-results">${unitCDResultsHtml(unit)}</div>`
-                : `<div class="unit-cd-hint">Choose a subject above to link curriculum descriptors.</div>
-                   ${unit.linkedCDIds && unit.linkedCDIds.length ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>` : ''}`}
+              <div id="unit-cd-panel">${unitCDPanelHtml(unit)}</div>
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">Assessment notes</label>
@@ -2241,16 +2237,40 @@ function unitYearLabel(unit) {
   return YLM[key] || unit.yearLevel;
 }
 
-// Whether a curriculum descriptor matches the unit's single year level. Matches the
-// exact year, or the banded equivalent (so banded subjects whose codes carry a band
-// year level — e.g. The Arts / Technologies — aren't all hidden by the filter).
+// Whether a curriculum descriptor matches the unit's single year level. Banded
+// subjects (The Arts / Technologies / HPE) label descriptors with a band-
+// representative year (Foundation / Year 2 / Year 4 / Year 6), so those match the
+// unit's banded equivalent; non-banded subjects (English, Maths, Science, HASS)
+// must match the exact year. The banded check keys off the descriptor's own
+// Subject — the same signal Class Overview uses — so a non-banded Year 3 unit no
+// longer wrongly pulls in Year 4 descriptors.
 function unitCDMatchesYear(unit, c) {
   const target = normaliseYear(unit.yearLevel);
   if (!target) return true; // no year set on the unit -> match all (current behaviour)
   const cdYear = normaliseYear(c['Year Level']);
-  if (cdYear === target) return true;
-  const band = normaliseYear(bandYearLevel(YLM[target] || unit.yearLevel));
-  return cdYear === band;
+  if (BANDED_SUBJECTS.has(c.Subject)) {
+    return cdYear === normaliseYear(bandYearLevel(YLM[target] || unit.yearLevel));
+  }
+  return cdYear === target;
+}
+
+// The whole linked-CD picker panel (selected chips + search + year toggle + results).
+// Rendered into #unit-cd-panel so it can be refreshed in place when the year changes.
+function unitCDPanelHtml(unit) {
+  if (!unit.subject) {
+    return `<div class="unit-cd-hint">Choose a subject above to link curriculum descriptors.</div>
+            ${unit.linkedCDIds && unit.linkedCDIds.length ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>` : ''}`;
+  }
+  return `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>
+    <input class="form-input" id="unit-cd-search" type="text" placeholder="Search ${escapeHtml(unit.subject)} codes or descriptors"
+      value="${escapeHtml(state.unitPlansUi.cdSearch || '')}" oninput="unitHandleCDSearch('${plannerJsStr(unit.id)}',this.value)">
+    ${normaliseYear(unit.yearLevel)
+      ? `<div class="unit-cd-yearfilter">
+           <span class="unit-cd-yearfilter-label">${state.unitPlansUi.cdShowAllYears ? 'Showing all year levels' : `Showing ${escapeHtml(unitYearLabel(unit))} only`}</span>
+           <button class="unit-cd-yeartoggle" type="button" onclick="unitToggleCDShowAllYears()">${state.unitPlansUi.cdShowAllYears ? `Show ${escapeHtml(unitYearLabel(unit))} only` : 'Show all years'}</button>
+         </div>`
+      : ''}
+    <div id="unit-cd-results" class="unit-cd-results">${unitCDResultsHtml(unit)}</div>`;
 }
 
 function unitCDResultsHtml(unit) {
