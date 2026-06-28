@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.24
- * Last updated: 2026-06-27
+ * THIS FILE IS VERSION: 1.13.25
+ * Last updated: 2026-06-28
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.25 - Unit Plans: linked-CD picker defaults to the unit's year level (banded-subject aware); "Show all years" toggle broadens it; no filter when the unit has no year level set
  * v1.13.24 - Unit Plans (PR1): new Unit Plans layer above the Weekly Planner; unit data model, unit list + detail views, lesson sequence (add/reorder/delete) reusing the planner IC-linking drawer, teaching-status badges, linked CDs and assessment notes
  * v1.13.21 - localStorage caching for all GitHub raw CSV fetches; cache keyed by app version so auto-invalidates on update; eliminates rate limit 400 errors on repeated loads
  * v1.13.20 - Bulk Assess: student sort toggle button added to header (Last/First name), matching Students view
@@ -84,7 +85,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.24';
+const APP_VERSION = '1.13.25';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -370,7 +371,7 @@ let state = {
   lessonPlans: loadLessonPlansState(),
   plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
   unitPlans: loadUnitPlansState(),
-  unitPlansUi: { openUnitId: null, cdSearch: '', draggingLessonId: null },
+  unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -1789,6 +1790,7 @@ function unitPlansEnsureUiState() {
   if (!state.unitPlansUi || typeof state.unitPlansUi !== 'object') state.unitPlansUi = {};
   if (typeof state.unitPlansUi.openUnitId === 'undefined') state.unitPlansUi.openUnitId = null;
   if (typeof state.unitPlansUi.cdSearch !== 'string') state.unitPlansUi.cdSearch = '';
+  if (typeof state.unitPlansUi.cdShowAllYears !== 'boolean') state.unitPlansUi.cdShowAllYears = false;
   if (typeof state.unitPlansUi.draggingLessonId === 'undefined') state.unitPlansUi.draggingLessonId = null;
   if (!Array.isArray(state.unitPlans)) state.unitPlans = [];
 }
@@ -1828,6 +1830,8 @@ function showUnitDetail(unitId) {
   if (!state.unitPlans.some(u => u.id === unitId)) return;
   state.unitPlansUi.openUnitId = unitId;
   state.unitPlansUi.cdSearch = '';
+  // Default the CD picker to the unit's own year level each time it opens.
+  state.unitPlansUi.cdShowAllYears = false;
   // Reset any lesson drawer carried over from another unit / the weekly planner.
   plannerEnsureUiState();
   state.plannerUi.selectedLessonId = null;
@@ -2001,6 +2005,12 @@ function renderUnitDetail(main, unit) {
                 ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>
                    <input class="form-input" id="unit-cd-search" type="text" placeholder="Search ${escapeHtml(unit.subject)} codes or descriptors"
                      value="${escapeHtml(state.unitPlansUi.cdSearch || '')}" oninput="unitHandleCDSearch('${plannerJsStr(unit.id)}',this.value)">
+                   ${normaliseYear(unit.yearLevel)
+                     ? `<div class="unit-cd-yearfilter">
+                          <span class="unit-cd-yearfilter-label">${state.unitPlansUi.cdShowAllYears ? 'Showing all year levels' : `Showing ${escapeHtml(unitYearLabel(unit))} only`}</span>
+                          <button class="unit-cd-yeartoggle" type="button" onclick="unitToggleCDShowAllYears()">${state.unitPlansUi.cdShowAllYears ? `Show ${escapeHtml(unitYearLabel(unit))} only` : 'Show all years'}</button>
+                        </div>`
+                     : ''}
                    <div id="unit-cd-results" class="unit-cd-results">${unitCDResultsHtml(unit)}</div>`
                 : `<div class="unit-cd-hint">Choose a subject above to link curriculum descriptors.</div>
                    ${unit.linkedCDIds && unit.linkedCDIds.length ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>` : ''}`}
@@ -2224,11 +2234,35 @@ function unitSelectedCDsHtml(unit) {
   }).join('');
 }
 
+// Human-readable form of the unit's year level (e.g. "2" or "Year 2" -> "Year 2").
+function unitYearLabel(unit) {
+  const key = normaliseYear(unit.yearLevel);
+  if (!key) return '';
+  return YLM[key] || unit.yearLevel;
+}
+
+// Whether a curriculum descriptor matches the unit's single year level. Matches the
+// exact year, or the banded equivalent (so banded subjects whose codes carry a band
+// year level — e.g. The Arts / Technologies — aren't all hidden by the filter).
+function unitCDMatchesYear(unit, c) {
+  const target = normaliseYear(unit.yearLevel);
+  if (!target) return true; // no year set on the unit -> match all (current behaviour)
+  const cdYear = normaliseYear(c['Year Level']);
+  if (cdYear === target) return true;
+  const band = normaliseYear(bandYearLevel(YLM[target] || unit.yearLevel));
+  return cdYear === band;
+}
+
 function unitCDResultsHtml(unit) {
   if (!unit.subject) return '';
   const search = (state.unitPlansUi.cdSearch || '').trim().toLowerCase();
   const selected = new Set(Array.isArray(unit.linkedCDIds) ? unit.linkedCDIds : []);
   let pool = state.curriculumCodes.filter(c => c.Subject === unit.subject && isCurriculumCodeEnabled(c));
+  // Default to the unit's own year level; the "Show all years" toggle lifts this.
+  const yearFiltered = !!normaliseYear(unit.yearLevel) && !state.unitPlansUi.cdShowAllYears;
+  if (yearFiltered) {
+    pool = pool.filter(c => unitCDMatchesYear(unit, c));
+  }
   if (search) {
     pool = pool.filter(c =>
       (c.Code || '').toLowerCase().includes(search) ||
@@ -2238,7 +2272,10 @@ function unitCDResultsHtml(unit) {
   }
   pool = pool.slice(0, 40);
   if (!pool.length) {
-    return `<div class="unit-cd-empty">${search ? 'No matching descriptors.' : 'No descriptors for this subject.'}</div>`;
+    const msg = search
+      ? (yearFiltered ? `No matching descriptors for ${escapeHtml(unitYearLabel(unit))}. Try “Show all years”.` : 'No matching descriptors.')
+      : (yearFiltered ? `No ${escapeHtml(unitYearLabel(unit))} descriptors for this subject. Try “Show all years”.` : 'No descriptors for this subject.');
+    return `<div class="unit-cd-empty">${msg}</div>`;
   }
   return pool.map(c => {
     const on = selected.has(c.Code);
@@ -2271,6 +2308,13 @@ function unitHandleCDSearch(unitId, value) {
   const unit = state.unitPlans.find(u => u.id === unitId);
   const container = document.getElementById('unit-cd-results');
   if (unit && container) container.innerHTML = unitCDResultsHtml(unit);
+}
+
+// Broaden the CD picker from the unit's year level to all years (and back).
+function unitToggleCDShowAllYears() {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.cdShowAllYears = !state.unitPlansUi.cdShowAllYears;
+  renderView();
 }
 
 // ── DASHBOARD ──

@@ -2031,6 +2031,28 @@ body[data-text-size="large"] {
   padding: 0 2px;
 }
 .unit-cd-remove:hover { color: var(--status-danger-text); }
+.unit-cd-yearfilter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.unit-cd-yearfilter-label {
+  font-size: var(--helper-size);
+  color: var(--text3);
+}
+.unit-cd-yeartoggle {
+  border: none;
+  background: transparent;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: var(--helper-size);
+  padding: 2px 4px;
+  text-decoration: underline;
+  flex-shrink: 0;
+}
+.unit-cd-yeartoggle:hover { color: var(--status-info-text); }
 .unit-cd-results {
   margin-top: 8px;
   max-height: 320px;
