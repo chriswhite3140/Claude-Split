@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.24
- * Last updated: 2026-06-27
+ * THIS FILE IS VERSION: 1.13.26
+ * Last updated: 2026-06-28
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.26 - Unit Plans: unit title in the detail view now reads as a clearly-editable field (persistent border + pencil affordance) so it's obviously renameable after creation, including on touch devices
  * v1.13.24 - Unit Plans (PR1): new Unit Plans layer above the Weekly Planner; unit data model, unit list + detail views, lesson sequence (add/reorder/delete) reusing the planner IC-linking drawer, teaching-status badges, linked CDs and assessment notes
  * v1.13.21 - localStorage caching for all GitHub raw CSV fetches; cache keyed by app version so auto-invalidates on update; eliminates rate limit 400 errors on repeated loads
  * v1.13.20 - Bulk Assess: student sort toggle button added to header (Last/First name), matching Students view
@@ -84,7 +85,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.24';
+const APP_VERSION = '1.13.26';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1957,8 +1958,11 @@ function renderUnitDetail(main, unit) {
     <div class="topbar" style="padding:14px 24px;gap:12px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:200px">
         <button class="btn" type="button" onclick="unitBackToList()">‹ Units</button>
-        <input class="unit-title-input" type="text" value="${escapeHtml(unit.title || '')}" placeholder="Unit title"
-          oninput="unitUpdateField('${plannerJsStr(unit.id)}','title',this.value)">
+        <label class="unit-title-edit" title="Rename this unit">
+          <input class="unit-title-input" type="text" value="${escapeHtml(unit.title || '')}" placeholder="Untitled unit" aria-label="Unit title"
+            oninput="unitUpdateField('${plannerJsStr(unit.id)}','title',this.value)">
+          <span class="unit-title-edit-icon" aria-hidden="true">✎</span>
+        </label>
       </div>
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select class="form-input unit-field-sm" onchange="unitUpdateField('${plannerJsStr(unit.id)}','subject',this.value)">
