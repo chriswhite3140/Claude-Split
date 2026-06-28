@@ -1819,6 +1819,25 @@ body[data-text-size="large"] {
 }
 
 /* ── Unit detail: top bar fields ── */
+/* Title renders as a clearly-editable field: a persistent border + pencil icon so
+   it reads as editable at rest (important on touch devices, which have no :hover). */
+.unit-title-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding-right: 8px;
+  cursor: text;
+}
+.unit-title-edit:hover { border-color: var(--border2); }
+.unit-title-edit:focus-within {
+  border-color: var(--status-info-border);
+  box-shadow: 0 0 0 1px var(--status-info-border);
+}
 .unit-title-input {
   flex: 1;
   min-width: 0;
@@ -1826,15 +1845,17 @@ body[data-text-size="large"] {
   font-weight: 700;
   color: var(--text);
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 6px;
   padding: 4px 8px;
+  cursor: text;
 }
-.unit-title-input:hover { border-color: var(--border); }
-.unit-title-input:focus {
-  border-color: var(--status-info-border);
-  background: var(--surface);
-  outline: none;
+.unit-title-input:focus { outline: none; }
+.unit-title-edit-icon {
+  color: var(--text3);
+  font-size: 13px;
+  flex-shrink: 0;
+  pointer-events: none;
 }
 .unit-field-sm {
   width: auto;
