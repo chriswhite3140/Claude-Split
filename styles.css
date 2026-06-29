@@ -1339,6 +1339,21 @@ body[data-text-size="large"] {
   color: var(--text3);
   padding: 6px 2px;
 }
+/* Group headings in the unit lesson-drawer IC picker (From this unit's CDs / Other). */
+.planner-ic-group-heading {
+  font-family: 'DM Mono', monospace;
+  font-size: var(--label-size);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text3);
+  padding: 6px 2px 2px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.planner-ic-results > .planner-ic-group-heading:first-child {
+  margin-top: 0;
+  border-top: none;
+}
 .planner-ic-option {
   display: flex;
   align-items: flex-start;

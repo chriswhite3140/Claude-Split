@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.27
+ * THIS FILE IS VERSION: 1.13.28
  * Last updated: 2026-06-28
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.28 - Unit Plans: IC picker in the unit lesson drawer surfaces ICs parented to the unit's linked CDs first ("From this unit's CDs" / "Other Year X ICs"); flat list when the unit has no linked CDs; Weekly Planner unchanged
  * v1.13.27 - Unit Plans: IC picker in the unit lesson drawer defaults to the unit's year level (banded-subject aware) with a "Show all years" toggle, matching the CD picker; Weekly Planner IC picker unchanged
  * v1.13.26 - Unit Plans: unit title in the detail view now reads as a clearly-editable field (persistent border + pencil affordance) so it's obviously renameable after creation, including on touch devices
  * v1.13.25 - Unit Plans: linked-CD picker defaults to the unit's year level (banded-subject aware); "Show all years" toggle broadens it; no filter when the unit has no year level set
@@ -87,7 +88,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.27';
+const APP_VERSION = '1.13.28';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1327,12 +1328,26 @@ function plannerICResultsHtml(lesson) {
 
   if (!showConfidence) {
     // Manual search/browse: alphabetical by IC name, create action at the bottom.
-    const rows = resultIcs
-      .slice()
-      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
-      .map(ic => rowHtml(ic, null))
-      .join('');
-    return rows + createRow;
+    const sorted = resultIcs.slice().sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+
+    // Unit context (Issue 3): surface ICs parented to the unit's linked CDs first,
+    // since lesson ICs primarily exist to cover the unit's focus CDs. Only group when
+    // at least one visible IC is CD-parented; otherwise (or for standalone lessons)
+    // fall back to a flat list with no headings. Both groups already respect the
+    // year-level filter (the pool was filtered above).
+    const linkedCDs = unit && Array.isArray(unit.linkedCDIds) && unit.linkedCDIds.length
+      ? new Set(unit.linkedCDIds) : null;
+    const fromCDs = linkedCDs ? sorted.filter(ic => linkedCDs.has(ic.homeDescriptorId)) : [];
+    if (fromCDs.length) {
+      const others = sorted.filter(ic => !linkedCDs.has(ic.homeDescriptorId));
+      const heading = txt => `<div class="planner-ic-group-heading">${txt}</div>`;
+      const otherLabel = icYearFiltered ? `Other ${escapeHtml(unitYearLabel(unit))} ICs` : 'Other ICs';
+      let html = heading("From this unit's CDs") + fromCDs.map(ic => rowHtml(ic, null)).join('');
+      if (others.length) html += heading(otherLabel) + others.map(ic => rowHtml(ic, null)).join('');
+      return html + createRow;
+    }
+
+    return sorted.map(ic => rowHtml(ic, null)).join('') + createRow;
   }
 
   // Suggestion path: strong → partial → Create new IC → weak. Within each band,
