@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.32
- * Last updated: 2026-06-28
+ * THIS FILE IS VERSION: 1.13.33
+ * Last updated: 2026-06-29
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.33 - Fix: unit IC picker "Taught" badge now uses the most-recent taughtICs status per student+IC and ignores cleared (empty-status) outcomes, so an IC whose outcome was cleared no longer shows as taught (matches getTaughtICStatus)
  * v1.13.32 - Unit Plans: IC picker cards show an "In lesson N" tag when the IC is already linked to another lesson in the unit, and a "Taught" badge when it has been taught to the class (from existing state.taughtICs — no new fetch); Weekly Planner cards unchanged
  * v1.13.31 - Unit Plans: IC picker cards now show the IC number (sequenceOrder) and the early/middle/late stage tag, matching the Curriculum Codes drawer; Weekly Planner IC cards unchanged
  * v1.13.30 - Fix: unit lesson IC picker excludes teacher-suppressed system-default ICs (matching getICsForDescriptor / Curriculum Codes), so a hidden IC can't reappear in the "From this unit's CDs" or "Other" group; Weekly Planner picker unchanged
@@ -92,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.32';
+const APP_VERSION = '1.13.33';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1358,9 +1359,20 @@ function plannerICResultsHtml(lesson) {
       });
     });
     const classStudentIds = new Set((state.students || []).map(s => String(s.id)));
+    // Mirror getTaughtICStatus: only the most-recent record per student+IC counts, and
+    // a cleared outcome is stored as status:'' (not deleted), so an IC counts as taught
+    // only when some class student's latest record has a non-empty status. A raw row
+    // match would wrongly badge cleared ICs as "Taught".
+    const latestTaught = new Map(); // `${student}|${ic}` -> { date, status, icId }
     (state.taughtICs || []).forEach(t => {
-      if (classStudentIds.has(String(t.student_id))) taughtICIds.add(String(t.ic_id));
+      if (!classStudentIds.has(String(t.student_id))) return;
+      const key = String(t.student_id) + '|' + String(t.ic_id);
+      const prev = latestTaught.get(key);
+      if (!prev || new Date(t.date) > new Date(prev.date)) {
+        latestTaught.set(key, { date: t.date, status: t.status, icId: String(t.ic_id) });
+      }
     });
+    latestTaught.forEach(rec => { if (rec.status) taughtICIds.add(rec.icId); });
   }
 
   // Render a single IC as a flat row: a clickable body (toggles expand) plus an
