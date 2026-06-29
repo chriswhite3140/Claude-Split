@@ -1339,6 +1339,21 @@ body[data-text-size="large"] {
   color: var(--text3);
   padding: 6px 2px;
 }
+/* Group headings in the unit lesson-drawer IC picker (From this unit's CDs / Other). */
+.planner-ic-group-heading {
+  font-family: 'DM Mono', monospace;
+  font-size: var(--label-size);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text3);
+  padding: 6px 2px 2px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.planner-ic-results > .planner-ic-group-heading:first-child {
+  margin-top: 0;
+  border-top: none;
+}
 .planner-ic-option {
   display: flex;
   align-items: flex-start;
@@ -1414,6 +1429,43 @@ body[data-text-size="large"] {
 .planner-ic-option-label {
   font-size: 12px;
   line-height: 1.3;
+}
+.planner-ic-option-seq {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  color: var(--text3);
+}
+/* early/middle/late stage tag — matches the Curriculum Codes drawer tag */
+.planner-ic-stage {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.planner-ic-stage.is-early  { background: var(--green-dim); color: var(--green); }
+.planner-ic-stage.is-middle { background: var(--gold-dim);  color: var(--gold); }
+.planner-ic-stage.is-late   { background: var(--rust-dim);  color: var(--rust); }
+/* "In lesson N" — neutral, informational (already used elsewhere in this unit). */
+.planner-ic-alloc {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-text);
+  border: 1px solid var(--status-neutral-border);
+}
+/* "Taught" — blue, matching the app's taught status colour. */
+.planner-ic-taught {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--status-info-bg);
+  color: var(--status-info-text);
+  border: 1px solid var(--status-info-border);
 }
 
 /* Expanded IC detail */
@@ -1819,6 +1871,25 @@ body[data-text-size="large"] {
 }
 
 /* ── Unit detail: top bar fields ── */
+/* Title renders as a clearly-editable field: a persistent border + pencil icon so
+   it reads as editable at rest (important on touch devices, which have no :hover). */
+.unit-title-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding-right: 8px;
+  cursor: text;
+}
+.unit-title-edit:hover { border-color: var(--border2); }
+.unit-title-edit:focus-within {
+  border-color: var(--status-info-border);
+  box-shadow: 0 0 0 1px var(--status-info-border);
+}
 .unit-title-input {
   flex: 1;
   min-width: 0;
@@ -1826,15 +1897,17 @@ body[data-text-size="large"] {
   font-weight: 700;
   color: var(--text);
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 6px;
   padding: 4px 8px;
+  cursor: text;
 }
-.unit-title-input:hover { border-color: var(--border); }
-.unit-title-input:focus {
-  border-color: var(--status-info-border);
-  background: var(--surface);
-  outline: none;
+.unit-title-input:focus { outline: none; }
+.unit-title-edit-icon {
+  color: var(--text3);
+  font-size: 13px;
+  flex-shrink: 0;
+  pointer-events: none;
 }
 .unit-field-sm {
   width: auto;
@@ -2031,6 +2104,28 @@ body[data-text-size="large"] {
   padding: 0 2px;
 }
 .unit-cd-remove:hover { color: var(--status-danger-text); }
+.unit-cd-yearfilter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.unit-cd-yearfilter-label {
+  font-size: var(--helper-size);
+  color: var(--text3);
+}
+.unit-cd-yeartoggle {
+  border: none;
+  background: transparent;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: var(--helper-size);
+  padding: 2px 4px;
+  text-decoration: underline;
+  flex-shrink: 0;
+}
+.unit-cd-yeartoggle:hover { color: var(--status-info-text); }
 .unit-cd-results {
   margin-top: 8px;
   max-height: 320px;

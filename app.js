@@ -2,14 +2,22 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.24
- * Last updated: 2026-06-27
+ * THIS FILE IS VERSION: 1.13.32
+ * Last updated: 2026-06-28
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.32 - Unit Plans: IC picker cards show an "In lesson N" tag when the IC is already linked to another lesson in the unit, and a "Taught" badge when it has been taught to the class (from existing state.taughtICs — no new fetch); Weekly Planner cards unchanged
+ * v1.13.31 - Unit Plans: IC picker cards now show the IC number (sequenceOrder) and the early/middle/late stage tag, matching the Curriculum Codes drawer; Weekly Planner IC cards unchanged
+ * v1.13.30 - Fix: unit lesson IC picker excludes teacher-suppressed system-default ICs (matching getICsForDescriptor / Curriculum Codes), so a hidden IC can't reappear in the "From this unit's CDs" or "Other" group; Weekly Planner picker unchanged
+ * v1.13.29 - Fix: "From this unit's CDs" IC group now includes ICs tethered to a linked CD (via linkedDescriptorIds), not just home-owned ones, and is no longer hidden by the year filter — so all ICs the Curriculum Codes view shows for a linked CD appear in the group
+ * v1.13.28 - Unit Plans: IC picker in the unit lesson drawer surfaces ICs parented to the unit's linked CDs first ("From this unit's CDs" / "Other Year X ICs"); flat list when the unit has no linked CDs; Weekly Planner unchanged
+ * v1.13.27 - Unit Plans: IC picker in the unit lesson drawer defaults to the unit's year level (banded-subject aware) with a "Show all years" toggle, matching the CD picker; Weekly Planner IC picker unchanged
+ * v1.13.26 - Unit Plans: unit title in the detail view now reads as a clearly-editable field (persistent border + pencil affordance) so it's obviously renameable after creation, including on touch devices
+ * v1.13.25 - Unit Plans: linked-CD picker defaults to the unit's year level (banded-subject aware); "Show all years" toggle broadens it; no filter when the unit has no year level set
  * v1.13.24 - Unit Plans (PR1): new Unit Plans layer above the Weekly Planner; unit data model, unit list + detail views, lesson sequence (add/reorder/delete) reusing the planner IC-linking drawer, teaching-status badges, linked CDs and assessment notes
  * v1.13.21 - localStorage caching for all GitHub raw CSV fetches; cache keyed by app version so auto-invalidates on update; eliminates rate limit 400 errors on repeated loads
  * v1.13.20 - Bulk Assess: student sort toggle button added to header (Last/First name), matching Students view
@@ -84,7 +92,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.24';
+const APP_VERSION = '1.13.32';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -370,7 +378,7 @@ let state = {
   lessonPlans: loadLessonPlansState(),
   plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
   unitPlans: loadUnitPlansState(),
-  unitPlansUi: { openUnitId: null, cdSearch: '', draggingLessonId: null },
+  unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -1228,28 +1236,66 @@ function plannerSelectedICsHtml(lesson) {
   }).join('');
 }
 
-// Suggestion/search results for the IC picker, grouped by descriptor.
+// The unit a lesson belongs to, or null for standalone (Weekly Planner) lessons.
+function unitForLesson(lesson) {
+  if (!lesson || !lesson.unitId) return null;
+  return (state.unitPlans || []).find(u => u.id === lesson.unitId) || null;
+}
+
+// Whether an IC is parented to any of the given CDs — homed on one, or tethered to
+// one via linkedDescriptorIds. Mirrors getICsForDescriptor's membership test so the
+// "From this unit's CDs" group matches what the Curriculum Codes view shows.
+function icBelongsToCDs(ic, cdSet) {
+  if (cdSet.has(ic.homeDescriptorId)) return true;
+  const linked = Array.isArray(ic.linkedDescriptorIds) ? ic.linkedDescriptorIds : [];
+  return linked.some(id => cdSet.has(id));
+}
+
+// Suggestion/search results for the IC picker (unit lessons additionally group ICs
+// that cover the unit's linked CDs at the top).
 function plannerICResultsHtml(lesson) {
   const subject = lesson.subject || '';
   const search = (state.plannerUi.icSearch || '').trim().toLowerCase();
   const selected = new Set(Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : []);
 
+  const unit = unitForLesson(lesson);
+
   // Candidate pool: active ICs, scoped to the lesson's subject when one is chosen.
-  let pool = state.instructionalComponents.filter(ic => !ic.isArchived);
-  if (subject) {
-    pool = pool.filter(ic => {
+  // Kept un-year-filtered so the unit's focus-CD ICs can be surfaced in full (below)
+  // even when the year filter is hiding other years. In a unit lesson, teacher-
+  // suppressed system-default ICs are excluded the same way getICsForDescriptor and
+  // the Curriculum Codes view exclude them, so a hidden IC can't reappear in either
+  // group; the Weekly Planner picker (no unit) keeps its existing behaviour.
+  const subjectPool = state.instructionalComponents.filter(ic => {
+    if (ic.isArchived) return false;
+    if (unit && ic.ownerTier === 'system_default' && ic.suppressedByTeacher) return false;
+    if (!subject) return true;
+    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+    return cd && cd.Subject === subject;
+  });
+
+  // Unit context (Issue 2): a lesson inside a unit defaults its IC picker to the
+  // unit's year level (banded-subject aware, via the IC's home descriptor), with a
+  // "Show all years" toggle. Standalone Weekly Planner lessons have no unit, so this
+  // is a no-op there.
+  const icYearFiltered = !!unit && !!normaliseYear(unit.yearLevel) && !state.plannerUi.icShowAllYears;
+  let pool = subjectPool;
+  if (icYearFiltered) {
+    pool = subjectPool.filter(ic => {
       const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
-      return cd && cd.Subject === subject;
+      return cd && unitCDMatchesYear(unit, cd);
     });
   }
 
+  const matchesICSearch = ic => (
+    (ic.name || '').toLowerCase().includes(search) ||
+    (ic.description || '').toLowerCase().includes(search) ||
+    (ic.homeDescriptorId || '').toLowerCase().includes(search)
+  );
+
   let resultIcs;
   if (search) {
-    resultIcs = pool.filter(ic =>
-      (ic.name || '').toLowerCase().includes(search) ||
-      (ic.description || '').toLowerCase().includes(search) ||
-      (ic.homeDescriptorId || '').toLowerCase().includes(search)
-    ).slice(0, 30);
+    resultIcs = pool.filter(matchesICSearch).slice(0, 30);
   } else if (Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length) {
     const sugg = new Set(state.plannerUi.suggestedICIds);
     resultIcs = pool.filter(ic => sugg.has(ic.id));
@@ -1260,16 +1306,30 @@ function plannerICResultsHtml(lesson) {
   // Always-visible create action, pinned to the bottom of the results list.
   const createRow = `<button class="planner-ic-create" type="button" onclick="plannerOpenCreateICModal()">+ Create new IC</button>`;
 
-  if (!resultIcs.length) {
-    const msg = subject
-      ? 'No matching ICs. Try the search box, or write the intention and tap Suggest.'
-      : 'Choose a subject to see its ICs, or type the learning intention and tap Suggest.';
-    return `<div class="planner-ic-empty">${msg}</div>${createRow}`;
-  }
-
   // Confidence is meaningful only for intention suggestions (not text search/browse).
   const scores = state.plannerUi.suggestionScores || {};
   const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
+
+  // Unit context (Issue 3): ICs covering the unit's linked CDs are the lesson's
+  // primary focus, so they get their own group (in browse/search, not the suggestion
+  // path). Membership matches getICsForDescriptor — homed on a linked CD OR tethered
+  // via linkedDescriptorIds — and is deliberately NOT year-gated, so every IC parented
+  // to a linked CD appears here even if its home descriptor belongs to another year.
+  const linkedCDs = unit && Array.isArray(unit.linkedCDIds) && unit.linkedCDIds.length
+    ? new Set(unit.linkedCDIds) : null;
+  const fromCDs = (!showConfidence && linkedCDs)
+    ? subjectPool
+        .filter(ic => icBelongsToCDs(ic, linkedCDs) && (!search || matchesICSearch(ic)))
+        .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
+    : [];
+
+  if (!resultIcs.length && !fromCDs.length) {
+    let msg;
+    if (!subject) msg = 'Choose a subject to see its ICs, or type the learning intention and tap Suggest.';
+    else if (icYearFiltered) msg = `No ${escapeHtml(unitYearLabel(unit))} ICs here. Try “Show all years”, the search box, or tap Suggest.`;
+    else msg = 'No matching ICs. Try the search box, or write the intention and tap Suggest.';
+    return `<div class="planner-ic-empty">${msg}</div>${createRow}`;
+  }
 
   // Per-IC confidence inherits the score of its home descriptor. Normalise against
   // the descriptors that actually render — some ranked descriptors have no loaded
@@ -1280,6 +1340,29 @@ function plannerICResultsHtml(lesson) {
 
   const expandedId = state.plannerUi.expandedICId;
 
+  // Unit picker only: per-IC status tags. (a) Which OTHER lessons in this unit already
+  // link the IC (so the teacher sees it's in use in the sequence); (b) whether the IC
+  // has been taught to the class — derived from state.taughtICs, already loaded at app
+  // init, so no extra fetch. Both maps are empty for standalone Weekly Planner lessons.
+  const currentLessonId = state.plannerUi.selectedLessonId;
+  const icAllocMap = new Map(); // ic_id -> [{ num, title }] for other lessons in this unit
+  const taughtICIds = new Set();
+  if (unit) {
+    (unit.lessonIds || []).forEach((lid, idx) => {
+      if (lid === currentLessonId) return; // skip the lesson being edited
+      const l = state.lessonPlans.find(x => x.id === lid);
+      if (!l || !Array.isArray(l.linkedICIds)) return;
+      l.linkedICIds.forEach(icId => {
+        if (!icAllocMap.has(icId)) icAllocMap.set(icId, []);
+        icAllocMap.get(icId).push({ num: idx + 1, title: l.title || `Lesson ${idx + 1}` });
+      });
+    });
+    const classStudentIds = new Set((state.students || []).map(s => String(s.id)));
+    (state.taughtICs || []).forEach(t => {
+      if (classStudentIds.has(String(t.student_id))) taughtICIds.add(String(t.ic_id));
+    });
+  }
+
   // Render a single IC as a flat row: a clickable body (toggles expand) plus an
   // always-functional tick button that never toggles the expand state.
   const rowHtml = (ic, conf) => {
@@ -1287,11 +1370,32 @@ function plannerICResultsHtml(lesson) {
     const expanded = ic.id === expandedId;
     const code = ic.homeDescriptorId || '';
     const detail = expanded ? plannerICDetailHtml(ic) : '';
+    // Unit picker only: show the IC number + early/middle/late stage tag, matching the
+    // Curriculum Codes drawer. Gated on unit context so the Weekly Planner card is
+    // unchanged. (sequenceOrder / difficultyStage already live on every IC.)
+    const seqPrefix = (unit && Number.isFinite(ic.sequenceOrder))
+      ? `<span class="planner-ic-option-seq">${ic.sequenceOrder}.</span> `
+      : '';
+    const stageRaw = ic.difficultyStage || '';
+    const stageKey = stageRaw === 'early' ? 'early' : stageRaw === 'late' ? 'late' : 'middle';
+    const stageTag = unit && stageRaw
+      ? `<span class="planner-ic-stage is-${stageKey}">${escapeHtml(stageRaw)}</span>`
+      : '';
+    const allocEntries = unit ? (icAllocMap.get(ic.id) || []) : [];
+    const allocTag = allocEntries.length
+      ? `<span class="planner-ic-alloc" title="${escapeHtml(allocEntries.map(e => e.title).join(' · '))}">In lesson${allocEntries.length > 1 ? 's' : ''} ${allocEntries.map(e => e.num).join(', ')}</span>`
+      : '';
+    const taughtTag = (unit && taughtICIds.has(String(ic.id)))
+      ? `<span class="planner-ic-taught" title="Already taught to this class">Taught</span>`
+      : '';
     return `<div class="planner-ic-option ${on ? 'is-on' : ''} ${expanded ? 'is-expanded' : ''}">
       <div class="planner-ic-option-body" role="button" tabindex="0" aria-expanded="${expanded ? 'true' : 'false'}" data-ic-id="${escapeHtml(ic.id)}" onclick="plannerToggleICExpand('${plannerJsStr(ic.id)}')" onkeydown="plannerICBodyKeydown(event, '${plannerJsStr(ic.id)}')">
         <div class="planner-ic-option-head">
-          <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
+          <span class="planner-ic-option-label">${seqPrefix}${escapeHtml(ic.name || ic.id)}</span>
           ${code ? `<span class="planner-ic-option-code">${escapeHtml(code)}</span>` : ''}
+          ${stageTag}
+          ${allocTag}
+          ${taughtTag}
           ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
         </div>
         ${detail}
@@ -1304,12 +1408,23 @@ function plannerICResultsHtml(lesson) {
 
   if (!showConfidence) {
     // Manual search/browse: alphabetical by IC name, create action at the bottom.
-    const rows = resultIcs
-      .slice()
-      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
-      .map(ic => rowHtml(ic, null))
-      .join('');
-    return rows + createRow;
+    const byName = arr => arr.slice().sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+
+    // Unit context (Issue 3): surface the unit's focus-CD ICs (computed above, not
+    // year-gated) first; everything else falls under the year-scoped "Other" group,
+    // de-duped against the focus group. Standalone lessons / units with no linked CDs
+    // (fromCDs empty) fall back to a flat list with no headings.
+    if (fromCDs.length) {
+      const fromIds = new Set(fromCDs.map(ic => ic.id));
+      const others = byName(resultIcs.filter(ic => !fromIds.has(ic.id)));
+      const heading = txt => `<div class="planner-ic-group-heading">${txt}</div>`;
+      const otherLabel = icYearFiltered ? `Other ${escapeHtml(unitYearLabel(unit))} ICs` : 'Other ICs';
+      let html = heading("From this unit's CDs") + fromCDs.map(ic => rowHtml(ic, null)).join('');
+      if (others.length) html += heading(otherLabel) + others.map(ic => rowHtml(ic, null)).join('');
+      return html + createRow;
+    }
+
+    return byName(resultIcs).map(ic => rowHtml(ic, null)).join('') + createRow;
   }
 
   // Suggestion path: strong → partial → Create new IC → weak. Within each band,
@@ -1396,6 +1511,7 @@ function plannerEnsureUiState() {
   if (!Array.isArray(state.plannerUi.suggestedICIds)) state.plannerUi.suggestedICIds = [];
   if (!state.plannerUi.suggestionScores || typeof state.plannerUi.suggestionScores !== 'object') state.plannerUi.suggestionScores = {};
   if (typeof state.plannerUi.expandedICId === 'undefined') state.plannerUi.expandedICId = null;
+  if (typeof state.plannerUi.icShowAllYears !== 'boolean') state.plannerUi.icShowAllYears = false;
   if (typeof state.plannerUi.pendingStubForLessonId === 'undefined') state.plannerUi.pendingStubForLessonId = null;
   if (!isValidIsoDate(state.plannerUi.weekKey)) state.plannerUi.weekKey = plannerNormalizeWeekStart(loadPlannerWeek());
 }
@@ -1447,6 +1563,7 @@ function plannerOpenLessonDrawer(lessonId) {
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
   state.plannerUi.expandedICId = null;
+  state.plannerUi.icShowAllYears = false;  // default the IC picker to the unit's year
   renderView();
 }
 
@@ -1789,6 +1906,7 @@ function unitPlansEnsureUiState() {
   if (!state.unitPlansUi || typeof state.unitPlansUi !== 'object') state.unitPlansUi = {};
   if (typeof state.unitPlansUi.openUnitId === 'undefined') state.unitPlansUi.openUnitId = null;
   if (typeof state.unitPlansUi.cdSearch !== 'string') state.unitPlansUi.cdSearch = '';
+  if (typeof state.unitPlansUi.cdShowAllYears !== 'boolean') state.unitPlansUi.cdShowAllYears = false;
   if (typeof state.unitPlansUi.draggingLessonId === 'undefined') state.unitPlansUi.draggingLessonId = null;
   if (!Array.isArray(state.unitPlans)) state.unitPlans = [];
 }
@@ -1828,6 +1946,8 @@ function showUnitDetail(unitId) {
   if (!state.unitPlans.some(u => u.id === unitId)) return;
   state.unitPlansUi.openUnitId = unitId;
   state.unitPlansUi.cdSearch = '';
+  // Default the CD picker to the unit's own year level each time it opens.
+  state.unitPlansUi.cdShowAllYears = false;
   // Reset any lesson drawer carried over from another unit / the weekly planner.
   plannerEnsureUiState();
   state.plannerUi.selectedLessonId = null;
@@ -1883,9 +2003,17 @@ function unitUpdateField(unitId, field, value) {
   if (idx < 0) return;
   state.unitPlans[idx] = { ...state.unitPlans[idx], [field]: String(value) };
   saveUnitPlansState();
-  // Subject re-scopes the CD picker; re-render. Text fields update silently so the
-  // input keeps focus while typing.
-  if (field === 'subject') { state.unitPlansUi.cdSearch = ''; renderView(); }
+  // Subject re-scopes the CD picker; re-render. Other text fields update silently so
+  // the input keeps focus while typing.
+  if (field === 'subject') { state.unitPlansUi.cdSearch = ''; state.unitPlansUi.cdShowAllYears = false; renderView(); return; }
+  // Year level drives the CD picker's default filter. Refresh just that panel (it
+  // lives in the sidebar, while the year input is in the topbar) so the new default
+  // takes effect immediately without stealing focus from the year field.
+  if (field === 'yearLevel') {
+    state.unitPlansUi.cdShowAllYears = false;
+    const panel = document.getElementById('unit-cd-panel');
+    if (panel) panel.innerHTML = unitCDPanelHtml(state.unitPlans[idx]);
+  }
 }
 
 // ── LIST VIEW ──
@@ -1957,8 +2085,11 @@ function renderUnitDetail(main, unit) {
     <div class="topbar" style="padding:14px 24px;gap:12px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:200px">
         <button class="btn" type="button" onclick="unitBackToList()">‹ Units</button>
-        <input class="unit-title-input" type="text" value="${escapeHtml(unit.title || '')}" placeholder="Unit title"
-          oninput="unitUpdateField('${plannerJsStr(unit.id)}','title',this.value)">
+        <label class="unit-title-edit" title="Rename this unit">
+          <input class="unit-title-input" type="text" value="${escapeHtml(unit.title || '')}" placeholder="Untitled unit" aria-label="Unit title"
+            oninput="unitUpdateField('${plannerJsStr(unit.id)}','title',this.value)">
+          <span class="unit-title-edit-icon" aria-hidden="true">✎</span>
+        </label>
       </div>
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select class="form-input unit-field-sm" onchange="unitUpdateField('${plannerJsStr(unit.id)}','subject',this.value)">
@@ -1997,13 +2128,7 @@ function renderUnitDetail(main, unit) {
           <div class="unit-side-body">
             <div class="form-group">
               <label class="form-label">Linked curriculum descriptors</label>
-              ${unit.subject
-                ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>
-                   <input class="form-input" id="unit-cd-search" type="text" placeholder="Search ${escapeHtml(unit.subject)} codes or descriptors"
-                     value="${escapeHtml(state.unitPlansUi.cdSearch || '')}" oninput="unitHandleCDSearch('${plannerJsStr(unit.id)}',this.value)">
-                   <div id="unit-cd-results" class="unit-cd-results">${unitCDResultsHtml(unit)}</div>`
-                : `<div class="unit-cd-hint">Choose a subject above to link curriculum descriptors.</div>
-                   ${unit.linkedCDIds && unit.linkedCDIds.length ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>` : ''}`}
+              <div id="unit-cd-panel">${unitCDPanelHtml(unit)}</div>
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label">Assessment notes</label>
@@ -2053,6 +2178,13 @@ function unitLessonRowHtml(unit, lesson) {
 // data-model field) in place of the weekly planner's day/taught controls.
 function unitLessonDrawerHtml(lesson) {
   const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
+  const unit = unitForLesson(lesson);
+  const icYearToggle = (unit && normaliseYear(unit.yearLevel))
+    ? `<div class="unit-cd-yearfilter">
+         <span class="unit-cd-yearfilter-label">${state.plannerUi.icShowAllYears ? 'Showing all year levels' : `Showing ${escapeHtml(unitYearLabel(unit))} only`}</span>
+         <button class="unit-cd-yeartoggle" type="button" onclick="unitToggleICShowAllYears()">${state.plannerUi.icShowAllYears ? `Show ${escapeHtml(unitYearLabel(unit))} only` : 'Show all years'}</button>
+       </div>`
+    : '';
   return `
     <div style="padding:16px">
       <div class="form-group">
@@ -2085,6 +2217,7 @@ function unitLessonDrawerHtml(lesson) {
           <input class="form-input" id="planner-ic-search" type="text" placeholder="Search ICs by name or code" value="${escapeHtml(state.plannerUi.icSearch || '')}" oninput="plannerHandleICSearchInput(this.value)">
           <button class="btn" type="button" onclick="plannerSuggestICsFromIntention()">Suggest from intention</button>
         </div>
+        ${icYearToggle}
         <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
       </div>
     </div>
@@ -2095,6 +2228,13 @@ function unitCloseLessonDrawer() {
   plannerEnsureUiState();
   state.plannerUi.selectedLessonId = null;
   state.plannerUi.drawerOpen = false;
+  renderView();
+}
+
+// Broaden the unit lesson-drawer IC picker from the unit's year level to all years.
+function unitToggleICShowAllYears() {
+  plannerEnsureUiState();
+  state.plannerUi.icShowAllYears = !state.plannerUi.icShowAllYears;
   renderView();
 }
 
@@ -2133,6 +2273,7 @@ function unitAddLesson(unitId) {
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
   state.plannerUi.expandedICId = null;
+  state.plannerUi.icShowAllYears = false;
   renderView();
 }
 
@@ -2224,11 +2365,59 @@ function unitSelectedCDsHtml(unit) {
   }).join('');
 }
 
+// Human-readable form of the unit's year level (e.g. "2" or "Year 2" -> "Year 2").
+function unitYearLabel(unit) {
+  const key = normaliseYear(unit.yearLevel);
+  if (!key) return '';
+  return YLM[key] || unit.yearLevel;
+}
+
+// Whether a curriculum descriptor matches the unit's single year level. Banded
+// subjects (The Arts / Technologies / HPE) label descriptors with a band-
+// representative year (Foundation / Year 2 / Year 4 / Year 6), so those match the
+// unit's banded equivalent; non-banded subjects (English, Maths, Science, HASS)
+// must match the exact year. The banded check keys off the descriptor's own
+// Subject — the same signal Class Overview uses — so a non-banded Year 3 unit no
+// longer wrongly pulls in Year 4 descriptors.
+function unitCDMatchesYear(unit, c) {
+  const target = normaliseYear(unit.yearLevel);
+  if (!target) return true; // no year set on the unit -> match all (current behaviour)
+  const cdYear = normaliseYear(c['Year Level']);
+  if (BANDED_SUBJECTS.has(c.Subject)) {
+    return cdYear === normaliseYear(bandYearLevel(YLM[target] || unit.yearLevel));
+  }
+  return cdYear === target;
+}
+
+// The whole linked-CD picker panel (selected chips + search + year toggle + results).
+// Rendered into #unit-cd-panel so it can be refreshed in place when the year changes.
+function unitCDPanelHtml(unit) {
+  if (!unit.subject) {
+    return `<div class="unit-cd-hint">Choose a subject above to link curriculum descriptors.</div>
+            ${unit.linkedCDIds && unit.linkedCDIds.length ? `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>` : ''}`;
+  }
+  return `<div class="unit-cd-selected">${unitSelectedCDsHtml(unit)}</div>
+    <input class="form-input" id="unit-cd-search" type="text" placeholder="Search ${escapeHtml(unit.subject)} codes or descriptors"
+      value="${escapeHtml(state.unitPlansUi.cdSearch || '')}" oninput="unitHandleCDSearch('${plannerJsStr(unit.id)}',this.value)">
+    ${normaliseYear(unit.yearLevel)
+      ? `<div class="unit-cd-yearfilter">
+           <span class="unit-cd-yearfilter-label">${state.unitPlansUi.cdShowAllYears ? 'Showing all year levels' : `Showing ${escapeHtml(unitYearLabel(unit))} only`}</span>
+           <button class="unit-cd-yeartoggle" type="button" onclick="unitToggleCDShowAllYears()">${state.unitPlansUi.cdShowAllYears ? `Show ${escapeHtml(unitYearLabel(unit))} only` : 'Show all years'}</button>
+         </div>`
+      : ''}
+    <div id="unit-cd-results" class="unit-cd-results">${unitCDResultsHtml(unit)}</div>`;
+}
+
 function unitCDResultsHtml(unit) {
   if (!unit.subject) return '';
   const search = (state.unitPlansUi.cdSearch || '').trim().toLowerCase();
   const selected = new Set(Array.isArray(unit.linkedCDIds) ? unit.linkedCDIds : []);
   let pool = state.curriculumCodes.filter(c => c.Subject === unit.subject && isCurriculumCodeEnabled(c));
+  // Default to the unit's own year level; the "Show all years" toggle lifts this.
+  const yearFiltered = !!normaliseYear(unit.yearLevel) && !state.unitPlansUi.cdShowAllYears;
+  if (yearFiltered) {
+    pool = pool.filter(c => unitCDMatchesYear(unit, c));
+  }
   if (search) {
     pool = pool.filter(c =>
       (c.Code || '').toLowerCase().includes(search) ||
@@ -2238,7 +2427,10 @@ function unitCDResultsHtml(unit) {
   }
   pool = pool.slice(0, 40);
   if (!pool.length) {
-    return `<div class="unit-cd-empty">${search ? 'No matching descriptors.' : 'No descriptors for this subject.'}</div>`;
+    const msg = search
+      ? (yearFiltered ? `No matching descriptors for ${escapeHtml(unitYearLabel(unit))}. Try “Show all years”.` : 'No matching descriptors.')
+      : (yearFiltered ? `No ${escapeHtml(unitYearLabel(unit))} descriptors for this subject. Try “Show all years”.` : 'No descriptors for this subject.');
+    return `<div class="unit-cd-empty">${msg}</div>`;
   }
   return pool.map(c => {
     const on = selected.has(c.Code);
@@ -2271,6 +2463,13 @@ function unitHandleCDSearch(unitId, value) {
   const unit = state.unitPlans.find(u => u.id === unitId);
   const container = document.getElementById('unit-cd-results');
   if (unit && container) container.innerHTML = unitCDResultsHtml(unit);
+}
+
+// Broaden the CD picker from the unit's year level to all years (and back).
+function unitToggleCDShowAllYears() {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.cdShowAllYears = !state.unitPlansUi.cdShowAllYears;
+  renderView();
 }
 
 // ── DASHBOARD ──
