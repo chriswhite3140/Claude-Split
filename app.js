@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.29
+ * THIS FILE IS VERSION: 1.13.30
  * Last updated: 2026-06-28
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.30 - Fix: unit lesson IC picker excludes teacher-suppressed system-default ICs (matching getICsForDescriptor / Curriculum Codes), so a hidden IC can't reappear in the "From this unit's CDs" or "Other" group; Weekly Planner picker unchanged
  * v1.13.29 - Fix: "From this unit's CDs" IC group now includes ICs tethered to a linked CD (via linkedDescriptorIds), not just home-owned ones, and is no longer hidden by the year filter — so all ICs the Curriculum Codes view shows for a linked CD appear in the group
  * v1.13.28 - Unit Plans: IC picker in the unit lesson drawer surfaces ICs parented to the unit's linked CDs first ("From this unit's CDs" / "Other Year X ICs"); flat list when the unit has no linked CDs; Weekly Planner unchanged
  * v1.13.27 - Unit Plans: IC picker in the unit lesson drawer defaults to the unit's year level (banded-subject aware) with a "Show all years" toggle, matching the CD picker; Weekly Planner IC picker unchanged
@@ -89,7 +90,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.29';
+const APP_VERSION = '1.13.30';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1255,11 +1256,17 @@ function plannerICResultsHtml(lesson) {
   const search = (state.plannerUi.icSearch || '').trim().toLowerCase();
   const selected = new Set(Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : []);
 
+  const unit = unitForLesson(lesson);
+
   // Candidate pool: active ICs, scoped to the lesson's subject when one is chosen.
   // Kept un-year-filtered so the unit's focus-CD ICs can be surfaced in full (below)
-  // even when the year filter is hiding other years.
+  // even when the year filter is hiding other years. In a unit lesson, teacher-
+  // suppressed system-default ICs are excluded the same way getICsForDescriptor and
+  // the Curriculum Codes view exclude them, so a hidden IC can't reappear in either
+  // group; the Weekly Planner picker (no unit) keeps its existing behaviour.
   const subjectPool = state.instructionalComponents.filter(ic => {
     if (ic.isArchived) return false;
+    if (unit && ic.ownerTier === 'system_default' && ic.suppressedByTeacher) return false;
     if (!subject) return true;
     const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
     return cd && cd.Subject === subject;
@@ -1269,7 +1276,6 @@ function plannerICResultsHtml(lesson) {
   // unit's year level (banded-subject aware, via the IC's home descriptor), with a
   // "Show all years" toggle. Standalone Weekly Planner lessons have no unit, so this
   // is a no-op there.
-  const unit = unitForLesson(lesson);
   const icYearFiltered = !!unit && !!normaliseYear(unit.yearLevel) && !state.plannerUi.icShowAllYears;
   let pool = subjectPool;
   if (icYearFiltered) {
