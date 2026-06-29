@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.30
+ * THIS FILE IS VERSION: 1.13.31
  * Last updated: 2026-06-28
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.31 - Unit Plans: IC picker cards now show the IC number (sequenceOrder) and the early/middle/late stage tag, matching the Curriculum Codes drawer; Weekly Planner IC cards unchanged
  * v1.13.30 - Fix: unit lesson IC picker excludes teacher-suppressed system-default ICs (matching getICsForDescriptor / Curriculum Codes), so a hidden IC can't reappear in the "From this unit's CDs" or "Other" group; Weekly Planner picker unchanged
  * v1.13.29 - Fix: "From this unit's CDs" IC group now includes ICs tethered to a linked CD (via linkedDescriptorIds), not just home-owned ones, and is no longer hidden by the year filter — so all ICs the Curriculum Codes view shows for a linked CD appear in the group
  * v1.13.28 - Unit Plans: IC picker in the unit lesson drawer surfaces ICs parented to the unit's linked CDs first ("From this unit's CDs" / "Other Year X ICs"); flat list when the unit has no linked CDs; Weekly Planner unchanged
@@ -90,7 +91,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.30';
+const APP_VERSION = '1.13.31';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1345,11 +1346,23 @@ function plannerICResultsHtml(lesson) {
     const expanded = ic.id === expandedId;
     const code = ic.homeDescriptorId || '';
     const detail = expanded ? plannerICDetailHtml(ic) : '';
+    // Unit picker only: show the IC number + early/middle/late stage tag, matching the
+    // Curriculum Codes drawer. Gated on unit context so the Weekly Planner card is
+    // unchanged. (sequenceOrder / difficultyStage already live on every IC.)
+    const seqPrefix = (unit && Number.isFinite(ic.sequenceOrder))
+      ? `<span class="planner-ic-option-seq">${ic.sequenceOrder}.</span> `
+      : '';
+    const stageRaw = ic.difficultyStage || '';
+    const stageKey = stageRaw === 'early' ? 'early' : stageRaw === 'late' ? 'late' : 'middle';
+    const stageTag = unit && stageRaw
+      ? `<span class="planner-ic-stage is-${stageKey}">${escapeHtml(stageRaw)}</span>`
+      : '';
     return `<div class="planner-ic-option ${on ? 'is-on' : ''} ${expanded ? 'is-expanded' : ''}">
       <div class="planner-ic-option-body" role="button" tabindex="0" aria-expanded="${expanded ? 'true' : 'false'}" data-ic-id="${escapeHtml(ic.id)}" onclick="plannerToggleICExpand('${plannerJsStr(ic.id)}')" onkeydown="plannerICBodyKeydown(event, '${plannerJsStr(ic.id)}')">
         <div class="planner-ic-option-head">
-          <span class="planner-ic-option-label">${escapeHtml(ic.name || ic.id)}</span>
+          <span class="planner-ic-option-label">${seqPrefix}${escapeHtml(ic.name || ic.id)}</span>
           ${code ? `<span class="planner-ic-option-code">${escapeHtml(code)}</span>` : ''}
+          ${stageTag}
           ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
         </div>
         ${detail}
