@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.28
+ * THIS FILE IS VERSION: 1.13.29
  * Last updated: 2026-06-28
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.29 - Fix: "From this unit's CDs" IC group now includes ICs tethered to a linked CD (via linkedDescriptorIds), not just home-owned ones, and is no longer hidden by the year filter — so all ICs the Curriculum Codes view shows for a linked CD appear in the group
  * v1.13.28 - Unit Plans: IC picker in the unit lesson drawer surfaces ICs parented to the unit's linked CDs first ("From this unit's CDs" / "Other Year X ICs"); flat list when the unit has no linked CDs; Weekly Planner unchanged
  * v1.13.27 - Unit Plans: IC picker in the unit lesson drawer defaults to the unit's year level (banded-subject aware) with a "Show all years" toggle, matching the CD picker; Weekly Planner IC picker unchanged
  * v1.13.26 - Unit Plans: unit title in the detail view now reads as a clearly-editable field (persistent border + pencil affordance) so it's obviously renameable after creation, including on touch devices
@@ -88,7 +89,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.28';
+const APP_VERSION = '1.13.29';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1232,26 +1233,37 @@ function plannerSelectedICsHtml(lesson) {
   }).join('');
 }
 
-// Suggestion/search results for the IC picker, grouped by descriptor.
 // The unit a lesson belongs to, or null for standalone (Weekly Planner) lessons.
 function unitForLesson(lesson) {
   if (!lesson || !lesson.unitId) return null;
   return (state.unitPlans || []).find(u => u.id === lesson.unitId) || null;
 }
 
+// Whether an IC is parented to any of the given CDs — homed on one, or tethered to
+// one via linkedDescriptorIds. Mirrors getICsForDescriptor's membership test so the
+// "From this unit's CDs" group matches what the Curriculum Codes view shows.
+function icBelongsToCDs(ic, cdSet) {
+  if (cdSet.has(ic.homeDescriptorId)) return true;
+  const linked = Array.isArray(ic.linkedDescriptorIds) ? ic.linkedDescriptorIds : [];
+  return linked.some(id => cdSet.has(id));
+}
+
+// Suggestion/search results for the IC picker (unit lessons additionally group ICs
+// that cover the unit's linked CDs at the top).
 function plannerICResultsHtml(lesson) {
   const subject = lesson.subject || '';
   const search = (state.plannerUi.icSearch || '').trim().toLowerCase();
   const selected = new Set(Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : []);
 
   // Candidate pool: active ICs, scoped to the lesson's subject when one is chosen.
-  let pool = state.instructionalComponents.filter(ic => !ic.isArchived);
-  if (subject) {
-    pool = pool.filter(ic => {
-      const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
-      return cd && cd.Subject === subject;
-    });
-  }
+  // Kept un-year-filtered so the unit's focus-CD ICs can be surfaced in full (below)
+  // even when the year filter is hiding other years.
+  const subjectPool = state.instructionalComponents.filter(ic => {
+    if (ic.isArchived) return false;
+    if (!subject) return true;
+    const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+    return cd && cd.Subject === subject;
+  });
 
   // Unit context (Issue 2): a lesson inside a unit defaults its IC picker to the
   // unit's year level (banded-subject aware, via the IC's home descriptor), with a
@@ -1259,20 +1271,23 @@ function plannerICResultsHtml(lesson) {
   // is a no-op there.
   const unit = unitForLesson(lesson);
   const icYearFiltered = !!unit && !!normaliseYear(unit.yearLevel) && !state.plannerUi.icShowAllYears;
+  let pool = subjectPool;
   if (icYearFiltered) {
-    pool = pool.filter(ic => {
+    pool = subjectPool.filter(ic => {
       const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
       return cd && unitCDMatchesYear(unit, cd);
     });
   }
 
+  const matchesICSearch = ic => (
+    (ic.name || '').toLowerCase().includes(search) ||
+    (ic.description || '').toLowerCase().includes(search) ||
+    (ic.homeDescriptorId || '').toLowerCase().includes(search)
+  );
+
   let resultIcs;
   if (search) {
-    resultIcs = pool.filter(ic =>
-      (ic.name || '').toLowerCase().includes(search) ||
-      (ic.description || '').toLowerCase().includes(search) ||
-      (ic.homeDescriptorId || '').toLowerCase().includes(search)
-    ).slice(0, 30);
+    resultIcs = pool.filter(matchesICSearch).slice(0, 30);
   } else if (Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length) {
     const sugg = new Set(state.plannerUi.suggestedICIds);
     resultIcs = pool.filter(ic => sugg.has(ic.id));
@@ -1283,17 +1298,30 @@ function plannerICResultsHtml(lesson) {
   // Always-visible create action, pinned to the bottom of the results list.
   const createRow = `<button class="planner-ic-create" type="button" onclick="plannerOpenCreateICModal()">+ Create new IC</button>`;
 
-  if (!resultIcs.length) {
+  // Confidence is meaningful only for intention suggestions (not text search/browse).
+  const scores = state.plannerUi.suggestionScores || {};
+  const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
+
+  // Unit context (Issue 3): ICs covering the unit's linked CDs are the lesson's
+  // primary focus, so they get their own group (in browse/search, not the suggestion
+  // path). Membership matches getICsForDescriptor — homed on a linked CD OR tethered
+  // via linkedDescriptorIds — and is deliberately NOT year-gated, so every IC parented
+  // to a linked CD appears here even if its home descriptor belongs to another year.
+  const linkedCDs = unit && Array.isArray(unit.linkedCDIds) && unit.linkedCDIds.length
+    ? new Set(unit.linkedCDIds) : null;
+  const fromCDs = (!showConfidence && linkedCDs)
+    ? subjectPool
+        .filter(ic => icBelongsToCDs(ic, linkedCDs) && (!search || matchesICSearch(ic)))
+        .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
+    : [];
+
+  if (!resultIcs.length && !fromCDs.length) {
     let msg;
     if (!subject) msg = 'Choose a subject to see its ICs, or type the learning intention and tap Suggest.';
     else if (icYearFiltered) msg = `No ${escapeHtml(unitYearLabel(unit))} ICs here. Try “Show all years”, the search box, or tap Suggest.`;
     else msg = 'No matching ICs. Try the search box, or write the intention and tap Suggest.';
     return `<div class="planner-ic-empty">${msg}</div>${createRow}`;
   }
-
-  // Confidence is meaningful only for intention suggestions (not text search/browse).
-  const scores = state.plannerUi.suggestionScores || {};
-  const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
 
   // Per-IC confidence inherits the score of its home descriptor. Normalise against
   // the descriptors that actually render — some ranked descriptors have no loaded
@@ -1328,18 +1356,15 @@ function plannerICResultsHtml(lesson) {
 
   if (!showConfidence) {
     // Manual search/browse: alphabetical by IC name, create action at the bottom.
-    const sorted = resultIcs.slice().sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+    const byName = arr => arr.slice().sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
 
-    // Unit context (Issue 3): surface ICs parented to the unit's linked CDs first,
-    // since lesson ICs primarily exist to cover the unit's focus CDs. Only group when
-    // at least one visible IC is CD-parented; otherwise (or for standalone lessons)
-    // fall back to a flat list with no headings. Both groups already respect the
-    // year-level filter (the pool was filtered above).
-    const linkedCDs = unit && Array.isArray(unit.linkedCDIds) && unit.linkedCDIds.length
-      ? new Set(unit.linkedCDIds) : null;
-    const fromCDs = linkedCDs ? sorted.filter(ic => linkedCDs.has(ic.homeDescriptorId)) : [];
+    // Unit context (Issue 3): surface the unit's focus-CD ICs (computed above, not
+    // year-gated) first; everything else falls under the year-scoped "Other" group,
+    // de-duped against the focus group. Standalone lessons / units with no linked CDs
+    // (fromCDs empty) fall back to a flat list with no headings.
     if (fromCDs.length) {
-      const others = sorted.filter(ic => !linkedCDs.has(ic.homeDescriptorId));
+      const fromIds = new Set(fromCDs.map(ic => ic.id));
+      const others = byName(resultIcs.filter(ic => !fromIds.has(ic.id)));
       const heading = txt => `<div class="planner-ic-group-heading">${txt}</div>`;
       const otherLabel = icYearFiltered ? `Other ${escapeHtml(unitYearLabel(unit))} ICs` : 'Other ICs';
       let html = heading("From this unit's CDs") + fromCDs.map(ic => rowHtml(ic, null)).join('');
@@ -1347,7 +1372,7 @@ function plannerICResultsHtml(lesson) {
       return html + createRow;
     }
 
-    return sorted.map(ic => rowHtml(ic, null)).join('') + createRow;
+    return byName(resultIcs).map(ic => rowHtml(ic, null)).join('') + createRow;
   }
 
   // Suggestion path: strong → partial → Create new IC → weak. Within each band,
