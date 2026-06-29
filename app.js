@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.31
+ * THIS FILE IS VERSION: 1.13.32
  * Last updated: 2026-06-28
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.32 - Unit Plans: IC picker cards show an "In lesson N" tag when the IC is already linked to another lesson in the unit, and a "Taught" badge when it has been taught to the class (from existing state.taughtICs — no new fetch); Weekly Planner cards unchanged
  * v1.13.31 - Unit Plans: IC picker cards now show the IC number (sequenceOrder) and the early/middle/late stage tag, matching the Curriculum Codes drawer; Weekly Planner IC cards unchanged
  * v1.13.30 - Fix: unit lesson IC picker excludes teacher-suppressed system-default ICs (matching getICsForDescriptor / Curriculum Codes), so a hidden IC can't reappear in the "From this unit's CDs" or "Other" group; Weekly Planner picker unchanged
  * v1.13.29 - Fix: "From this unit's CDs" IC group now includes ICs tethered to a linked CD (via linkedDescriptorIds), not just home-owned ones, and is no longer hidden by the year filter — so all ICs the Curriculum Codes view shows for a linked CD appear in the group
@@ -91,7 +92,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.31';
+const APP_VERSION = '1.13.32';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1339,6 +1340,29 @@ function plannerICResultsHtml(lesson) {
 
   const expandedId = state.plannerUi.expandedICId;
 
+  // Unit picker only: per-IC status tags. (a) Which OTHER lessons in this unit already
+  // link the IC (so the teacher sees it's in use in the sequence); (b) whether the IC
+  // has been taught to the class — derived from state.taughtICs, already loaded at app
+  // init, so no extra fetch. Both maps are empty for standalone Weekly Planner lessons.
+  const currentLessonId = state.plannerUi.selectedLessonId;
+  const icAllocMap = new Map(); // ic_id -> [{ num, title }] for other lessons in this unit
+  const taughtICIds = new Set();
+  if (unit) {
+    (unit.lessonIds || []).forEach((lid, idx) => {
+      if (lid === currentLessonId) return; // skip the lesson being edited
+      const l = state.lessonPlans.find(x => x.id === lid);
+      if (!l || !Array.isArray(l.linkedICIds)) return;
+      l.linkedICIds.forEach(icId => {
+        if (!icAllocMap.has(icId)) icAllocMap.set(icId, []);
+        icAllocMap.get(icId).push({ num: idx + 1, title: l.title || `Lesson ${idx + 1}` });
+      });
+    });
+    const classStudentIds = new Set((state.students || []).map(s => String(s.id)));
+    (state.taughtICs || []).forEach(t => {
+      if (classStudentIds.has(String(t.student_id))) taughtICIds.add(String(t.ic_id));
+    });
+  }
+
   // Render a single IC as a flat row: a clickable body (toggles expand) plus an
   // always-functional tick button that never toggles the expand state.
   const rowHtml = (ic, conf) => {
@@ -1357,12 +1381,21 @@ function plannerICResultsHtml(lesson) {
     const stageTag = unit && stageRaw
       ? `<span class="planner-ic-stage is-${stageKey}">${escapeHtml(stageRaw)}</span>`
       : '';
+    const allocEntries = unit ? (icAllocMap.get(ic.id) || []) : [];
+    const allocTag = allocEntries.length
+      ? `<span class="planner-ic-alloc" title="${escapeHtml(allocEntries.map(e => e.title).join(' · '))}">In lesson${allocEntries.length > 1 ? 's' : ''} ${allocEntries.map(e => e.num).join(', ')}</span>`
+      : '';
+    const taughtTag = (unit && taughtICIds.has(String(ic.id)))
+      ? `<span class="planner-ic-taught" title="Already taught to this class">Taught</span>`
+      : '';
     return `<div class="planner-ic-option ${on ? 'is-on' : ''} ${expanded ? 'is-expanded' : ''}">
       <div class="planner-ic-option-body" role="button" tabindex="0" aria-expanded="${expanded ? 'true' : 'false'}" data-ic-id="${escapeHtml(ic.id)}" onclick="plannerToggleICExpand('${plannerJsStr(ic.id)}')" onkeydown="plannerICBodyKeydown(event, '${plannerJsStr(ic.id)}')">
         <div class="planner-ic-option-head">
           <span class="planner-ic-option-label">${seqPrefix}${escapeHtml(ic.name || ic.id)}</span>
           ${code ? `<span class="planner-ic-option-code">${escapeHtml(code)}</span>` : ''}
           ${stageTag}
+          ${allocTag}
+          ${taughtTag}
           ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
         </div>
         ${detail}

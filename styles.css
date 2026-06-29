@@ -1446,6 +1446,27 @@ body[data-text-size="large"] {
 .planner-ic-stage.is-early  { background: var(--green-dim); color: var(--green); }
 .planner-ic-stage.is-middle { background: var(--gold-dim);  color: var(--gold); }
 .planner-ic-stage.is-late   { background: var(--rust-dim);  color: var(--rust); }
+/* "In lesson N" — neutral, informational (already used elsewhere in this unit). */
+.planner-ic-alloc {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-text);
+  border: 1px solid var(--status-neutral-border);
+}
+/* "Taught" — blue, matching the app's taught status colour. */
+.planner-ic-taught {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--status-info-bg);
+  color: var(--status-info-text);
+  border: 1px solid var(--status-info-border);
+}
 
 /* Expanded IC detail */
 .planner-ic-detail {
