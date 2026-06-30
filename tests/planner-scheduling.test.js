@@ -284,6 +284,18 @@ test('clicking a board occurrence opens that unit lesson in its drawer', () => {
   assert.strictEqual(st.currentView, 'unit-plans', 'should navigate to Unit Plans');
 });
 
+test('normalize de-dupes duplicate scheduledSlots entries', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  // Simulate stale storage with a duplicated (weekKey,dayKey) pair.
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [
+    { weekKey: WEEK_A, dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'wed' },
+  ] };
+  const normalized = sandbox.normalizeLessonPlan(lessonById('ul_1'));
+  eqJson(normalized.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'wed' }]);
+});
+
 // ── Standalone (non-unit) lesson behaviour must be unchanged ────────────────────
 console.log('Standalone lesson behaviour unchanged');
 

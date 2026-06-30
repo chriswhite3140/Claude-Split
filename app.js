@@ -2045,9 +2045,11 @@ function normalizeLessonPlan(raw = {}) {
     position: Number.isFinite(raw.position) ? raw.position : 0,
     // ── Unit Plans (PR1) ──
     unitId: String(raw.unitId || ''),         // which unit this lesson belongs to (empty = standalone)
-    // [{weekKey, dayKey}] — wired up in PR2. Drop malformed entries so stale or hand-
-    // edited localStorage can't break the render or strand a lesson (see isValidScheduledSlot).
-    scheduledSlots: Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots.filter(isValidScheduledSlot) : [],
+    // [{weekKey, dayKey}] — wired up in PR2. Drop malformed entries (see isValidScheduledSlot)
+    // and de-dupe identical (weekKey,dayKey) pairs, so stale/hand-edited localStorage can't strand
+    // a lesson or render the same occurrence twice (where a single ✕ would remove both).
+    scheduledSlots: (Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots.filter(isValidScheduledSlot) : [])
+      .filter((s, i, arr) => arr.findIndex(o => o.weekKey === s.weekKey && o.dayKey === s.dayKey) === i),
     teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned'),
   };
 }
