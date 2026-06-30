@@ -247,6 +247,29 @@ test('unit sidebar lists only unscheduled unit lessons, grouped by unit', () => 
   assert.ok(html.includes('Equivalent fractions'), 'still-unscheduled lesson should remain in the rail');
 });
 
+test('malformed scheduledSlots entries do not crash render or normalize', () => {
+  resetState();
+  const st = getState();
+  // Simulate stale / hand-edited localStorage: null + partial slot entries mixed with a good one.
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [null, { weekKey: WEEK_A }, { weekKey: WEEK_A, dayKey: 'mon' }] };
+
+  // The drawer render must not throw and must show only the well-formed slot.
+  st.plannerUi.selectedLessonId = 'ul_1';
+  let drawerHtml;
+  assert.doesNotThrow(() => { drawerHtml = sandbox.unitLessonScheduleHtml(lessonById('ul_1')); });
+  assert.strictEqual((drawerHtml.match(/planner-slot-chip/g) || []).length, 1, 'only the valid slot should render a chip');
+
+  // The board render must not throw either.
+  st.plannerUi.selectedLessonId = null;
+  st.plannerUi.weekKey = WEEK_A;
+  assert.doesNotThrow(() => realRenderView());
+
+  // normalizeLessonPlan should strip the malformed entries.
+  const normalized = sandbox.normalizeLessonPlan(lessonById('ul_1'));
+  eqJson(normalized.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
+});
+
 // ── Standalone (non-unit) lesson behaviour must be unchanged ────────────────────
 console.log('Standalone lesson behaviour unchanged');
 

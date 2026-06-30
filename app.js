@@ -2018,7 +2018,11 @@ function normalizeLessonPlan(raw = {}) {
     position: Number.isFinite(raw.position) ? raw.position : 0,
     // ── Unit Plans (PR1) ──
     unitId: String(raw.unitId || ''),         // which unit this lesson belongs to (empty = standalone)
-    scheduledSlots: Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots : [],  // [{weekKey, dayKey}] — wired up in PR2
+    // [{weekKey, dayKey}] — wired up in PR2. Drop malformed/null entries so stale or
+    // hand-edited localStorage can't break the board / drawer render (they deref slot fields).
+    scheduledSlots: Array.isArray(raw.scheduledSlots)
+      ? raw.scheduledSlots.filter(s => s && typeof s === 'object' && typeof s.weekKey === 'string' && typeof s.dayKey === 'string')
+      : [],
     teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned'),
   };
 }
@@ -2423,7 +2427,10 @@ function unitLessonDrawerHtml(lesson) {
 // board. Also lists the lesson's current slots, each with a per-slot ✕ remove (not a
 // bulk "clear all"). Mirrors the board: appends to scheduledSlots, leaves teachingStatus alone.
 function unitLessonScheduleHtml(lesson) {
-  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  // Guard against malformed slot entries (mirrors the board render loop) so a single
+  // bad entry can't throw and take down the whole drawer.
+  const slots = (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [])
+    .filter(s => s && s.weekKey && s.dayKey);
   const dayLabels = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' };
   const slotList = slots.length
     ? slots.map(s => `
