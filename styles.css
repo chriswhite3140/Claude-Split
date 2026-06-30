@@ -1250,7 +1250,14 @@ body[data-text-size="large"] {
 .planner-lesson-card.is-unit {
   border-left: 3px solid var(--status-info-border);
 }
+/* Keep the title clear of the absolutely-positioned ✕ in the top-right corner. */
+.planner-lesson-card.is-unit .planner-lesson-card-title {
+  padding-right: 24px;
+}
 .planner-unit-chip {
+  /* inline-block so max-width + ellipsis actually clamp long unit titles
+     (an inline span ignores width/overflow outside a flex/grid context). */
+  display: inline-block;
   font-family: 'DM Mono', monospace;
   font-size: 9px;
   padding: 1px 5px;
@@ -1259,6 +1266,7 @@ body[data-text-size="large"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: bottom;
   background: var(--status-info-bg);
   border: 1px solid var(--status-info-border);
   color: var(--status-info-text);
@@ -1278,10 +1286,11 @@ body[data-text-size="large"] {
   background: var(--surface);
   color: var(--text3);
   border-radius: 4px;
-  width: 18px;
-  height: 18px;
+  /* 24px keeps the tap target touch-friendly (the ✕ glyph stays visually small). */
+  width: 24px;
+  height: 24px;
   line-height: 1;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1389,7 +1398,13 @@ body[data-text-size="large"] {
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  padding: 0 0 0 2px;
+  /* Touch-friendly hit area (the drawer is the tablet/touch scheduling fallback). */
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .planner-slot-remove:hover { color: var(--status-danger-text); }
 .planner-slot-empty {
