@@ -98,6 +98,10 @@ const APP_VERSION = '1.13.34';
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const UNIT_PLANS_STORAGE_KEY = 'ct_unit_plans_v1';
+// Weekday keys a unit lesson can be scheduled onto (the board columns are these +
+// 'unscheduled'). Declared up here so normalizeLessonPlan — which runs during state
+// init, before the planner section executes — can use it without a TDZ error.
+const PLANNER_SCHEDULABLE_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
 const THEME_STORAGE_KEY = 'app_theme';
 const TEXT_SIZE_STORAGE_KEY = 'app_text_size';
 const APP_UI_STATE_STORAGE_KEY = 'ct_ui_state_v1';
@@ -1075,7 +1079,7 @@ function renderPlanner(main) {
   (state.lessonPlans || []).forEach(lesson => {
     if (!lesson.unitId) return;
     (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).forEach(slot => {
-      if (slot && slot.weekKey === weekKey && PLANNER_SCHEDULABLE_DAYS.includes(slot.dayKey)) {
+      if (isValidScheduledSlot(slot) && slot.weekKey === weekKey) {
         unitOccurrences.push({ lesson, dayKey: slot.dayKey });
       }
     });
@@ -1721,7 +1725,18 @@ function plannerEndLessonDrag() {
 // scheduledSlots array. The same lesson can hold several slots (re-teaching / spreading
 // content across days or weeks), so it renders once per slot. Standalone (non-unit)
 // lessons keep using their legacy weekKey/dayKey fields and are never touched here.
-const PLANNER_SCHEDULABLE_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
+// (PLANNER_SCHEDULABLE_DAYS is declared near the top of the file so normalize can use it.)
+
+// A well-formed slot: an ISO-date weekKey and a real weekday dayKey. The single source
+// of truth for slot validity — used by normalize (to drop stale/hand-edited localStorage
+// entries), the drawer, and the board loop. An invalid-but-truthy slot would otherwise
+// count as "scheduled" (hiding the lesson from the rail) yet never match the board,
+// stranding the lesson in the UI.
+function isValidScheduledSlot(s) {
+  return !!s && typeof s === 'object'
+    && typeof s.weekKey === 'string' && isValidIsoDate(s.weekKey)
+    && PLANNER_SCHEDULABLE_DAYS.includes(s.dayKey);
+}
 
 // Append a {weekKey, dayKey} slot to a lesson, de-duping an identical entry so the
 // same lesson cannot stack two cards on one day. Returns a new lesson object.
@@ -2018,11 +2033,9 @@ function normalizeLessonPlan(raw = {}) {
     position: Number.isFinite(raw.position) ? raw.position : 0,
     // ── Unit Plans (PR1) ──
     unitId: String(raw.unitId || ''),         // which unit this lesson belongs to (empty = standalone)
-    // [{weekKey, dayKey}] — wired up in PR2. Drop malformed/null entries so stale or
-    // hand-edited localStorage can't break the board / drawer render (they deref slot fields).
-    scheduledSlots: Array.isArray(raw.scheduledSlots)
-      ? raw.scheduledSlots.filter(s => s && typeof s === 'object' && typeof s.weekKey === 'string' && typeof s.dayKey === 'string')
-      : [],
+    // [{weekKey, dayKey}] — wired up in PR2. Drop malformed entries so stale or hand-
+    // edited localStorage can't break the render or strand a lesson (see isValidScheduledSlot).
+    scheduledSlots: Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots.filter(isValidScheduledSlot) : [],
     teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned'),
   };
 }
@@ -2427,10 +2440,10 @@ function unitLessonDrawerHtml(lesson) {
 // board. Also lists the lesson's current slots, each with a per-slot ✕ remove (not a
 // bulk "clear all"). Mirrors the board: appends to scheduledSlots, leaves teachingStatus alone.
 function unitLessonScheduleHtml(lesson) {
-  // Guard against malformed slot entries (mirrors the board render loop) so a single
-  // bad entry can't throw and take down the whole drawer.
+  // Only render well-formed slots (mirrors normalize + the board loop), so a stale or
+  // malformed entry can't throw or render a broken chip in the drawer.
   const slots = (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [])
-    .filter(s => s && s.weekKey && s.dayKey);
+    .filter(isValidScheduledSlot);
   const dayLabels = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' };
   const slotList = slots.length
     ? slots.map(s => `

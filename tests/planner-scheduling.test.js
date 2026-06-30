@@ -251,8 +251,9 @@ test('malformed scheduledSlots entries do not crash render or normalize', () => 
   resetState();
   const st = getState();
   // Simulate stale / hand-edited localStorage: null + partial slot entries mixed with a good one.
+  // null, partial, and string-but-invalid ({weekKey:'oops', dayKey:'zzz'}) entries mixed with a good one.
   const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
-  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [null, { weekKey: WEEK_A }, { weekKey: WEEK_A, dayKey: 'mon' }] };
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [null, { weekKey: WEEK_A }, { weekKey: 'oops', dayKey: 'zzz' }, { weekKey: WEEK_A, dayKey: 'mon' }] };
 
   // The drawer render must not throw and must show only the well-formed slot.
   st.plannerUi.selectedLessonId = 'ul_1';
