@@ -1092,12 +1092,14 @@ body[data-text-size="large"] {
 /* ── PLANNER SHELL ── */
 .planner-shell-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr) minmax(260px, 320px);
   gap: 14px;
+  align-items: start;
 }
 
 .planner-shell-board,
-.planner-shell-drawer {
+.planner-shell-drawer,
+.planner-unit-rail {
   min-height: 300px;
 }
 
@@ -1242,6 +1244,166 @@ body[data-text-size="large"] {
 .planner-lesson-card.is-incomplete {
   border-left: 3px solid var(--status-warning-border);
 }
+
+/* ── Unit lessons on the weekly board (PR2 scheduling) ── */
+/* Unit-linked card: coloured left border + unit chip to distinguish from standalone. */
+.planner-lesson-card.is-unit {
+  border-left: 3px solid var(--status-info-border);
+}
+.planner-unit-chip {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--status-info-bg);
+  border: 1px solid var(--status-info-border);
+  color: var(--status-info-text);
+}
+
+/* Each board occurrence carries its own ✕ to remove just that slot. */
+.planner-occ-wrap {
+  position: relative;
+  display: grid;
+  gap: 4px;
+}
+.planner-occ-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text3);
+  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.planner-occ-remove:hover {
+  color: var(--status-danger-text);
+  border-color: var(--status-danger-border);
+  background: var(--status-danger-bg);
+}
+
+/* Left rail: each unit's unscheduled lessons, draggable onto a day. */
+.planner-unit-rail-body {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.planner-unit-rail-empty {
+  border: 1px dashed var(--border2);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text3);
+  font-size: var(--helper-size);
+  background: var(--surface-alt);
+}
+.planner-unit-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.planner-unit-group-head {
+  font-family: 'DM Mono', monospace;
+  font-size: var(--label-size);
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-unit-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border2);
+  border-left: 3px solid var(--status-info-border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px 9px;
+  cursor: grab;
+}
+.planner-unit-pill:hover {
+  border-color: var(--status-info-border);
+  background: var(--status-info-bg);
+}
+.planner-unit-drag {
+  color: var(--text3);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.planner-unit-pill-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.planner-unit-pill-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-unit-pill-meta {
+  font-size: 11px;
+  color: var(--text3);
+}
+
+/* Drawer scheduling fallback: current slots + week/day picker. */
+.planner-slot-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.planner-slot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--status-info-bg);
+  border: 1px solid var(--status-info-border);
+  color: var(--status-info-text);
+}
+.planner-slot-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+.planner-slot-remove:hover { color: var(--status-danger-text); }
+.planner-slot-empty {
+  font-size: var(--helper-size);
+  color: var(--text3);
+  margin-bottom: 8px;
+}
+.planner-schedule-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.planner-schedule-controls select { flex: 1; min-width: 120px; }
 
 .planner-ic-chip {
   font-family: 'DM Mono', monospace;

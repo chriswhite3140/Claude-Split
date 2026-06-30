@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.33';
+const APP_VERSION = '1.13.34';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1064,9 +1064,22 @@ function renderPlanner(main) {
   plannerEnsureUiState();
 
   const weekKey = plannerSelectedWeekKey();
-  // Exclude lessons that belong to a unit — those are scheduled into the weekly
-  // board via scheduledSlots in PR2, not by their legacy weekKey/dayKey.
+  // Exclude lessons that belong to a unit — those are placed on the board via
+  // scheduledSlots (below), not by their legacy weekKey/dayKey.
   const weekLessons = state.lessonPlans.filter(lesson => lesson.weekKey === weekKey && !lesson.unitId);
+
+  // Unit lessons appear on the same board as standalone lessons — one card per slot
+  // that targets the displayed week. The same lesson can yield several occurrences
+  // (multi-slot), so it renders once per matching slot.
+  const unitOccurrences = [];
+  (state.lessonPlans || []).forEach(lesson => {
+    if (!lesson.unitId) return;
+    (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).forEach(slot => {
+      if (slot && slot.weekKey === weekKey && PLANNER_SCHEDULABLE_DAYS.includes(slot.dayKey)) {
+        unitOccurrences.push({ lesson, dayKey: slot.dayKey });
+      }
+    });
+  });
 
   // Scope the selected lesson to the displayed week so navigating weeks doesn't
   // leave the drawer editing a now-hidden lesson from another week.
@@ -1077,18 +1090,26 @@ function renderPlanner(main) {
   }
 
   const noICsLoaded = !state.instructionalComponents.some(ic => !ic.isArchived);
+  const boardIsEmpty = weekLessons.length === 0 && unitOccurrences.length === 0;
 
   const boardColumns = plannerDays.map(day => {
     const dayLessons = weekLessons
       .filter(lesson => lesson.dayKey === day.key)
       .sort((a, b) => (a.position || 0) - (b.position || 0));
+    const standaloneCards = dayLessons.map(lesson => plannerLessonCardHtml(lesson)).join('');
+    // Unit occurrences only target real weekdays, so the Unscheduled column shows none.
+    const unitCards = unitOccurrences
+      .filter(occ => occ.dayKey === day.key)
+      .map(occ => plannerUnitOccurrenceCardHtml(occ.lesson, weekKey, day.key))
+      .join('');
+    const isEmpty = dayLessons.length === 0 && !unitCards;
     return `
       <section class="planner-lesson-column">
         <div class="planner-lesson-column-head">${day.label}</div>
         <div class="planner-lesson-column-body" ondragover="plannerAllowLessonDrop(event)" ondrop="plannerDropLessonToDay(event, '${day.key}')" ondragleave="plannerLessonDropLeave(event)">
-          ${dayLessons.length === 0
+          ${isEmpty
             ? `<div class="planner-lesson-empty">No lessons</div>`
-            : dayLessons.map(lesson => plannerLessonCardHtml(lesson)).join('')
+            : standaloneCards + unitCards
           }
           <button class="planner-add-in-column" type="button" onclick="plannerAddLesson('${day.key}')">+ Add</button>
         </div>
@@ -1110,13 +1131,20 @@ function renderPlanner(main) {
       </div>
     </div>
     <div class="content planner-shell-layout">
+      <aside class="card planner-unit-rail">
+        <div class="card-head">
+          <div class="card-title">Unit lessons</div>
+          <div style="font-size:12px;color:var(--text3)">Drag onto a day to schedule</div>
+        </div>
+        <div class="planner-unit-rail-body">${plannerUnitSidebarHtml()}</div>
+      </aside>
       <section class="card planner-shell-board">
         <div class="card-head">
           <div class="card-title">Week Board</div>
           <div style="font-size:12px;color:var(--text3)">Click a lesson card to edit · drag to move between days</div>
         </div>
         ${noICsLoaded ? `<div class="planner-banner">No Instructional Components are loaded yet — lessons need at least one IC. Load curriculum/IC data first.</div>` : ''}
-        ${weekLessons.length === 0 ? `<div class="planner-empty-week">No lessons for this week yet. Use <strong>+ Add Lesson</strong> to create one.</div>` : ''}
+        ${boardIsEmpty ? `<div class="planner-empty-week">No lessons for this week yet. Use <strong>+ Add Lesson</strong> to create one, or drag a unit lesson from the left.</div>` : ''}
         <div class="planner-lesson-board">
           ${boardColumns}
         </div>
@@ -1176,6 +1204,91 @@ function plannerLessonICSummaryHtml(lesson) {
   const shown = codes.slice(0, 2).map(code => `<span class="planner-ic-chip">${escapeHtml(code)}</span>`).join('');
   const extra = codes.length > 2 ? `<span class="planner-ic-chip">+${codes.length - 2}</span>` : '';
   return countChip + shown + extra;
+}
+
+// A unit lesson's card as it appears on the weekly board, scheduled for one slot
+// (weekKey + dayKey). Visually distinct from standalone cards (.is-unit left border
+// + unit chip). Clicking opens the parent unit to edit; each occurrence carries its
+// own ✕ that removes only this slot. Not draggable in this PR — re-scheduling is
+// done by removing the slot and adding a new one (drag from the rail or the drawer).
+function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
+  const unit = unitForLesson(lesson);
+  const unitTitle = unit ? (unit.title || 'Untitled unit') : 'Unit';
+  const isTaught = lesson.teachingStatus === 'taught';
+  return `
+    <div class="planner-occ-wrap" data-occurrence="${escapeHtml(weekKey)}|${escapeHtml(dayKey)}">
+      <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''}"
+        role="button" tabindex="0"
+        onclick="plannerOpenUnitFromBoard('${plannerJsStr(lesson.unitId)}')"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();plannerOpenUnitFromBoard('${plannerJsStr(lesson.unitId)}')}"
+        title="Open unit to edit this lesson">
+        <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+        <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
+        <div class="planner-lesson-card-tags">
+          <span class="planner-unit-chip" title="Unit: ${escapeHtml(unitTitle)}">${escapeHtml(unitTitle)}</span>
+          ${plannerLessonICSummaryHtml(lesson)}
+          ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
+        </div>
+      </div>
+      <button class="planner-occ-remove" type="button" title="Remove from this day"
+        aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
+        onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')">✕</button>
+    </div>
+  `;
+}
+
+// Left rail on the Weekly Planner: each unit's *unscheduled* lessons (those with no
+// scheduledSlots), grouped by unit, ready to drag onto a day. Reuses the standalone
+// drag start/end handlers — plannerDropLessonToDay branches on unitId.
+function plannerUnitSidebarHtml() {
+  const units = state.unitPlans || [];
+  if (!units.length) {
+    return `<div class="planner-unit-rail-empty">No units yet. Create units in <strong>Unit Plans</strong> to schedule their lessons onto the week.</div>`;
+  }
+  const groups = units
+    .map(unit => ({
+      unit,
+      lessons: unitGetLessons(unit).filter(l => !(Array.isArray(l.scheduledSlots) && l.scheduledSlots.length)),
+    }))
+    .filter(g => g.lessons.length);
+  if (!groups.length) {
+    return `<div class="planner-unit-rail-empty">All unit lessons are scheduled. Unscheduled unit lessons will appear here.</div>`;
+  }
+  return groups.map(({ unit, lessons }) => `
+    <div class="planner-unit-group">
+      <div class="planner-unit-group-head" title="${escapeHtml(unit.title || 'Untitled unit')}">${escapeHtml(unit.title || 'Untitled unit')}</div>
+      ${lessons.map(l => plannerUnitSidebarLessonHtml(l)).join('')}
+    </div>
+  `).join('');
+}
+
+function plannerUnitSidebarLessonHtml(lesson) {
+  const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
+  return `
+    <div class="planner-unit-pill" draggable="true"
+      ondragstart="plannerStartLessonDrag(event,'${plannerJsStr(lesson.id)}')"
+      ondragend="plannerEndLessonDrag(event)"
+      title="Drag onto a day to schedule">
+      <span class="planner-unit-drag" aria-hidden="true">⠿</span>
+      <div class="planner-unit-pill-main">
+        <div class="planner-unit-pill-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+        <div class="planner-unit-pill-meta">${escapeHtml(lesson.subject || 'No subject')} · ${icCount} IC${icCount === 1 ? '' : 's'}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Jump from a board occurrence to its parent unit (the place to edit / reschedule it).
+function plannerOpenUnitFromBoard(unitId) {
+  unitPlansEnsureUiState();
+  if (!state.unitPlans.some(u => u.id === unitId)) return;
+  state.unitPlansUi.openUnitId = unitId;
+  state.unitPlansUi.cdSearch = '';
+  state.unitPlansUi.cdShowAllYears = false;
+  plannerEnsureUiState();
+  state.plannerUi.selectedLessonId = null;
+  state.plannerUi.drawerOpen = false;
+  showView('unit-plans');
 }
 
 function plannerDrawerHtml(lesson, plannerDays) {
@@ -1603,26 +1716,93 @@ function plannerEndLessonDrag() {
   document.querySelectorAll('.planner-lesson-column-body.drop-over').forEach(el => el.classList.remove('drop-over'));
 }
 
+// ── Unit lesson scheduling (PR2): scheduledSlots <-> Weekly Planner board ──
+// A unit lesson is placed on the board by appending {weekKey, dayKey} entries to its
+// scheduledSlots array. The same lesson can hold several slots (re-teaching / spreading
+// content across days or weeks), so it renders once per slot. Standalone (non-unit)
+// lessons keep using their legacy weekKey/dayKey fields and are never touched here.
+const PLANNER_SCHEDULABLE_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
+
+// Append a {weekKey, dayKey} slot to a lesson, de-duping an identical entry so the
+// same lesson cannot stack two cards on one day. Returns a new lesson object.
+function lessonWithScheduledSlot(lesson, weekKey, dayKey) {
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  const exists = slots.some(s => s && s.weekKey === weekKey && s.dayKey === dayKey);
+  const next = exists ? slots.slice() : [...slots, { weekKey, dayKey }];
+  return { ...lesson, scheduledSlots: next };
+}
+
+// Remove one {weekKey, dayKey} slot from a lesson (a single board occurrence).
+// De-dupe on add guarantees at most one match, so removing by value is unambiguous.
+function lessonWithoutScheduledSlot(lesson, weekKey, dayKey) {
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  return { ...lesson, scheduledSlots: slots.filter(s => !(s && s.weekKey === weekKey && s.dayKey === dayKey)) };
+}
+
+// Schedule a unit lesson onto a board day (append a slot). Shared by the drag-drop
+// path and the drawer fallback. Only real weekdays are schedulable; teachingStatus is
+// deliberately left untouched (scheduling and teaching status stay independent).
+// Returns true when a new slot was added, false on a no-op (bad day / dupe / missing).
+function plannerScheduleUnitLesson(lessonId, weekKey, dayKey) {
+  if (!PLANNER_SCHEDULABLE_DAYS.includes(dayKey)) {
+    toast('Unit lessons schedule onto a weekday — drop on Mon–Fri', 'info');
+    return false;
+  }
+  if (!isValidIsoDate(weekKey)) return false;
+  const wk = plannerNormalizeWeekStart(weekKey);
+  const idx = state.lessonPlans.findIndex(l => l.id === lessonId);
+  if (idx < 0) return false;
+  const lesson = state.lessonPlans[idx];
+  if (!lesson.unitId) return false; // standalone lessons use the legacy day write
+  const before = (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).length;
+  state.lessonPlans[idx] = lessonWithScheduledSlot(lesson, wk, dayKey);
+  saveLessonPlansState();
+  if (state.lessonPlans[idx].scheduledSlots.length === before) {
+    toast('Already scheduled on that day', 'info');
+    return false;
+  }
+  return true;
+}
+
+// Remove a single board occurrence (one slot) of a unit lesson. teachingStatus is
+// left untouched. Does not offer a bulk "clear all" — removal is always per-slot.
+function plannerUnscheduleSlot(lessonId, weekKey, dayKey) {
+  const idx = state.lessonPlans.findIndex(l => l.id === lessonId);
+  if (idx < 0) return;
+  state.lessonPlans[idx] = lessonWithoutScheduledSlot(state.lessonPlans[idx], weekKey, dayKey);
+  saveLessonPlansState();
+  renderView();
+}
+
 function plannerDropLessonToDay(ev, targetDayKey) {
   ev.preventDefault();
   const zone = ev.currentTarget;
   if (zone) zone.classList.remove('drop-over');
   const lessonId = ev?.dataTransfer?.getData('text/plain') || state.plannerUi.draggingLessonId;
+  state.plannerUi.draggingLessonId = null;
   if (!lessonId) return;
 
   const idx = state.lessonPlans.findIndex(lesson => lesson.id === lessonId);
   if (idx < 0) return;
 
+  const weekKey = plannerSelectedWeekKey();
+
+  // Unit lessons schedule onto the board via scheduledSlots (append a slot for the
+  // displayed week); standalone lessons keep moving via their legacy dayKey/position.
+  if (state.lessonPlans[idx].unitId) {
+    plannerScheduleUnitLesson(lessonId, weekKey, targetDayKey);
+    renderView();
+    return;
+  }
+
   // Drop appends to the end of the target column (covers move-between-days,
   // move-to-unscheduled, and coarse within-day reordering).
-  const weekKey = plannerSelectedWeekKey();
   const maxPos = state.lessonPlans
     .filter(lesson => lesson.weekKey === weekKey && lesson.dayKey === targetDayKey && lesson.id !== lessonId)
     .reduce((max, lesson) => Math.max(max, lesson.position || 0), 0);
 
   state.lessonPlans[idx] = { ...state.lessonPlans[idx], dayKey: targetDayKey, position: maxPos + 1 };
   saveLessonPlansState();
-  state.plannerUi.draggingLessonId = null;
   renderView();
 }
 
@@ -2221,7 +2401,7 @@ function unitLessonDrawerHtml(lesson) {
         <textarea class="form-input" rows="3" placeholder="What am I trying to get kids to do or learn?" oninput="plannerUpdateSelectedLessonField('intention', this.value)">${escapeHtml(lesson.intention || '')}</textarea>
       </div>
 
-      <div class="form-group" style="margin-bottom:0">
+      <div class="form-group">
         <label class="form-label">Instructional Components (1–3) · ${icCount}/3 selected</label>
         ${icCount === 0 ? `<div class="planner-incomplete-note">This lesson has no ICs linked yet — a lesson should target at least one IC.</div>` : ''}
         <div class="planner-selected-ics">${plannerSelectedICsHtml(lesson)}</div>
@@ -2232,8 +2412,65 @@ function unitLessonDrawerHtml(lesson) {
         ${icYearToggle}
         <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
       </div>
+
+      ${unitLessonScheduleHtml(lesson)}
     </div>
   `;
+}
+
+// Non-drag scheduling fallback (for touch / tablet use): pick a week + weekday and add
+// it to this lesson's scheduledSlots, the same result as dragging the lesson onto the
+// board. Also lists the lesson's current slots, each with a per-slot ✕ remove (not a
+// bulk "clear all"). Mirrors the board: appends to scheduledSlots, leaves teachingStatus alone.
+function unitLessonScheduleHtml(lesson) {
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  const dayLabels = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' };
+  const slotList = slots.length
+    ? slots.map(s => `
+        <span class="planner-slot-chip">
+          ${escapeHtml(plannerWeekRangeLabel(s.weekKey))} · ${escapeHtml(dayLabels[s.dayKey] || s.dayKey)}
+          <button class="planner-slot-remove" type="button" title="Remove this slot"
+            aria-label="Remove this scheduled slot"
+            onclick="unitUnscheduleLessonSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(s.weekKey)}','${plannerJsStr(s.dayKey)}')">×</button>
+        </span>`).join('')
+    : `<div class="planner-slot-empty">Not scheduled onto the week yet.</div>`;
+
+  // Week options span a window around the planner's current week (covers a term).
+  const baseWeek = plannerSelectedWeekKey();
+  const weekOptions = [];
+  for (let i = -2; i <= 12; i++) {
+    const wk = plannerNormalizeWeekStart(addDaysToDate(baseWeek, i * 7));
+    weekOptions.push(`<option value="${wk}" ${i === 0 ? 'selected' : ''}>${escapeHtml(plannerWeekRangeLabel(wk))}</option>`);
+  }
+
+  return `
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label">Schedule to week / day</label>
+      <div class="planner-slot-list">${slotList}</div>
+      <div class="planner-schedule-controls">
+        <select class="form-input" id="unit-schedule-week" aria-label="Week to schedule onto">${weekOptions.join('')}</select>
+        <select class="form-input" id="unit-schedule-day" aria-label="Day to schedule onto">
+          ${PLANNER_SCHEDULABLE_DAYS.map(d => `<option value="${d}">${dayLabels[d]}</option>`).join('')}
+        </select>
+        <button class="btn btn-primary" type="button" onclick="unitScheduleLessonFromDrawer('${plannerJsStr(lesson.id)}')">Add to week</button>
+      </div>
+    </div>
+  `;
+}
+
+// Drawer "Add to week" button: read the week/day selects and append a slot.
+function unitScheduleLessonFromDrawer(lessonId) {
+  const weekSel = document.getElementById('unit-schedule-week');
+  const daySel = document.getElementById('unit-schedule-day');
+  const weekKey = weekSel ? weekSel.value : '';
+  const dayKey = daySel ? daySel.value : '';
+  if (plannerScheduleUnitLesson(lessonId, weekKey, dayKey)) toast('Scheduled onto the week', 'success');
+  renderView();
+}
+
+// Drawer per-slot remove (single occurrence; not a bulk clear).
+function unitUnscheduleLessonSlot(lessonId, weekKey, dayKey) {
+  plannerUnscheduleSlot(lessonId, weekKey, dayKey);
 }
 
 function unitCloseLessonDrawer() {

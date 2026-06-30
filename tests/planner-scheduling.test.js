@@ -1,0 +1,294 @@
+// Headless test suite for the Weekly Planner unit-lesson scheduling feature (PR2).
+//
+// There is no build step and the app is a single browser script (app.js). This
+// harness evaluates app.js inside a Node `vm` context with a minimal stubbed DOM,
+// then drives the real handler functions and asserts on the live `state`.
+//
+// Run with:  node tests/planner-scheduling.test.js
+//
+// Covers: scheduling a unit lesson via drag, scheduling via the drawer fallback,
+// multi-slot scheduling (incl. across weeks) of the same lesson, single-slot
+// removal, the board rendering the same lesson once per slot, teachingStatus
+// staying independent, and standalone lesson behaviour being unchanged.
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const assert = require('assert');
+
+process.on('unhandledRejection', () => {}); // init()'s network fetches reject in Node — ignore
+
+// ── Minimal DOM / browser stubs ───────────────────────────────────────────────
+function makeStubEl() {
+  const el = {
+    style: {}, className: '', id: '', innerHTML: '', textContent: '', value: '',
+    dataset: {}, scrollTop: 0, firstChild: null,
+    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+    appendChild() {}, removeChild() {}, remove() {}, insertBefore() {},
+    setAttribute() {}, getAttribute() { return null; }, removeAttribute() {},
+    addEventListener() {}, removeEventListener() {}, focus() {},
+    querySelector() { return null; }, querySelectorAll() { return []; },
+    closest() { return null; }, getBoundingClientRect() { return {}; },
+  };
+  return el;
+}
+
+const elCache = {};
+const documentStub = {
+  addEventListener() {}, removeEventListener() {},
+  getElementById(id) { return elCache[id] || (elCache[id] = makeStubEl()); },
+  querySelector() { return null; },
+  querySelectorAll() { return []; },
+  createElement() { return makeStubEl(); },
+  body: makeStubEl(),
+  documentElement: makeStubEl(),
+};
+
+const store = {};
+const localStorageStub = {
+  getItem(k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+  setItem(k, v) { store[k] = String(v); },
+  removeItem(k) { delete store[k]; },
+  clear() { for (const k of Object.keys(store)) delete store[k]; },
+};
+
+const windowStub = {
+  addEventListener() {}, removeEventListener() {},
+  matchMedia() { return { matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }; },
+  localStorage: localStorageStub,
+  document: documentStub,
+};
+
+const sandbox = {
+  console,
+  document: documentStub,
+  window: windowStub,
+  localStorage: localStorageStub,
+  navigator: { userAgent: 'node-test' },
+  location: { href: '', search: '', hash: '' },
+  setTimeout, clearTimeout, setInterval, clearInterval,
+  // Never resolves: app.js calls init() on load and fetches CSVs/Sheets. A pending
+  // promise leaves that boot work hanging harmlessly instead of logging network errors.
+  fetch: () => new Promise(() => {}),
+  alert() {}, confirm() { return true; }, prompt() { return null; },
+  CSS: { escape: (s) => String(s) },
+  Date, Math, JSON,
+};
+sandbox.globalThis = sandbox;
+vm.createContext(sandbox);
+
+// Evaluate app.js, then expose the lexically-scoped `state` for the harness.
+const appSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+vm.runInContext(appSrc + '\n;globalThis.__getState = function(){ return state; };\n', sandbox, { filename: 'app.js' });
+
+// Quiet the heavy render path and capture toasts (override the global object props).
+let toasts = [];
+const realRenderView = sandbox.renderView;
+sandbox.renderView = function () {};
+sandbox.toast = function (msg, type) { toasts.push({ msg, type }); };
+
+const getState = sandbox.__getState;
+
+// Objects created inside the vm context have a different prototype than this realm,
+// so assert.deepStrictEqual reports them as "not reference-equal". Compare by value.
+function eqJson(actual, expected, msg) {
+  assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected), msg);
+}
+
+// ── Test scaffolding ──────────────────────────────────────────────────────────
+let passed = 0;
+const failures = [];
+function test(name, fn) {
+  toasts = [];
+  try { fn(); passed++; console.log('  ✓ ' + name); }
+  catch (e) { failures.push({ name, e }); console.log('  ✗ ' + name + '\n      ' + (e && e.message)); }
+}
+
+const WEEK_A = '2026-06-29'; // a Monday
+const WEEK_B = '2026-07-06'; // the following Monday
+
+// Reset state to a known fixture: one unit with two lessons, plus one standalone lesson.
+function resetState() {
+  const st = getState();
+  st.instructionalComponents = [];
+  st.curriculumCodes = [];
+  st.taughtICs = [];
+  st.students = [];
+  st.currentView = 'planner';
+  st.unitPlans = [
+    { id: 'unit_1', title: 'Fractions', subject: 'Mathematics', yearLevel: '3', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: ['ul_1', 'ul_2'], createdAt: '2026-01-01T00:00:00.000Z' },
+  ];
+  st.lessonPlans = [
+    sandbox.normalizeLessonPlan({ id: 'ul_1', title: 'Intro to fractions', subject: 'Mathematics', unitId: 'unit_1', teachingStatus: 'planned', linkedICIds: [] }),
+    sandbox.normalizeLessonPlan({ id: 'ul_2', title: 'Equivalent fractions', subject: 'Mathematics', unitId: 'unit_1', teachingStatus: 'reteach', linkedICIds: [] }),
+    sandbox.normalizeLessonPlan({ id: 'sa_1', title: 'Spelling test', subject: 'English', weekKey: WEEK_A, dayKey: 'unscheduled', linkedICIds: [] }),
+  ];
+  sandbox.plannerEnsureUiState();
+  st.plannerUi.weekKey = WEEK_A;
+  st.plannerUi.selectedLessonId = null;
+  st.plannerUi.drawerOpen = false;
+}
+
+function lessonById(id) { return getState().lessonPlans.find(l => l.id === id); }
+
+// A fake HTML5 drag-drop event carrying a lessonId in dataTransfer.
+function dropEvent(lessonId) {
+  return {
+    preventDefault() {},
+    currentTarget: { classList: { add() {}, remove() {} } },
+    dataTransfer: { getData() { return lessonId; }, setData() {}, effectAllowed: '' },
+  };
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+console.log('Weekly Planner unit-lesson scheduling (PR2)');
+
+test('drag schedules a unit lesson onto a day (appends one slot)', () => {
+  resetState();
+  sandbox.plannerStartLessonDrag(dropEvent('ul_1'), 'ul_1');
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'mon');
+  const slots = lessonById('ul_1').scheduledSlots;
+  eqJson(slots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
+});
+
+test('drag persists the slot to localStorage', () => {
+  resetState();
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'tue');
+  const saved = JSON.parse(localStorageStub.getItem('ct_planner_lessons_v2'));
+  const savedLesson = saved.find(l => l.id === 'ul_1');
+  eqJson(savedLesson.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'tue' }]);
+});
+
+test('drawer fallback schedules a unit lesson without dragging', () => {
+  resetState();
+  documentStub.getElementById('unit-schedule-week').value = WEEK_B;
+  documentStub.getElementById('unit-schedule-day').value = 'thu';
+  sandbox.unitScheduleLessonFromDrawer('ul_1');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_B, dayKey: 'thu' }]);
+  assert.ok(toasts.some(t => t.type === 'success'), 'expected a success toast from the drawer add');
+});
+
+test('multi-slot: same lesson scheduled to several days across two weeks', () => {
+  resetState();
+  assert.strictEqual(sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon'), true);
+  assert.strictEqual(sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed'), true);
+  assert.strictEqual(sandbox.plannerScheduleUnitLesson('ul_1', WEEK_B, 'mon'), true);
+  eqJson(lessonById('ul_1').scheduledSlots, [
+    { weekKey: WEEK_A, dayKey: 'mon' },
+    { weekKey: WEEK_A, dayKey: 'wed' },
+    { weekKey: WEEK_B, dayKey: 'mon' },
+  ]);
+});
+
+test('scheduling the same week+day twice is a de-duped no-op', () => {
+  resetState();
+  assert.strictEqual(sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon'), true);
+  assert.strictEqual(sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon'), false);
+  assert.strictEqual(lessonById('ul_1').scheduledSlots.length, 1);
+  assert.ok(toasts.some(t => /already scheduled/i.test(t.msg)), 'expected an "already scheduled" toast');
+});
+
+test('dropping a unit lesson on the Unscheduled column adds no slot', () => {
+  resetState();
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'unscheduled');
+  assert.strictEqual(lessonById('ul_1').scheduledSlots.length, 0);
+});
+
+test('single-slot removal deletes only that occurrence', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_B, 'mon');
+  sandbox.plannerUnscheduleSlot('ul_1', WEEK_A, 'mon');
+  eqJson(lessonById('ul_1').scheduledSlots, [
+    { weekKey: WEEK_A, dayKey: 'wed' },
+    { weekKey: WEEK_B, dayKey: 'mon' },
+  ]);
+});
+
+test('scheduling and unscheduling never change teachingStatus', () => {
+  resetState();
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach');
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'mon');
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'schedule must not touch teachingStatus');
+  sandbox.plannerUnscheduleSlot('ul_2', WEEK_A, 'mon');
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'unschedule must not touch teachingStatus');
+});
+
+test('board renders the same lesson once per matching slot, scoped to the week', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_B, 'mon');
+
+  const countOccurrences = (html) => (html.match(/planner-occ-wrap/g) || []).length;
+
+  getState().plannerUi.weekKey = WEEK_A;
+  realRenderView();
+  const weekAHtml = documentStub.getElementById('main-content').innerHTML;
+  assert.strictEqual(countOccurrences(weekAHtml), 2, 'week A should render 2 occurrences (mon + wed)');
+
+  getState().plannerUi.weekKey = WEEK_B;
+  realRenderView();
+  const weekBHtml = documentStub.getElementById('main-content').innerHTML;
+  assert.strictEqual(countOccurrences(weekBHtml), 1, 'week B should render 1 occurrence (mon)');
+});
+
+test('unit sidebar lists only unscheduled unit lessons, grouped by unit', () => {
+  resetState();
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions'), 'unscheduled lesson should appear in the rail');
+  assert.ok(html.includes('Equivalent fractions'), 'unscheduled lesson should appear in the rail');
+  assert.ok(html.includes('Fractions'), 'rail should group by unit title');
+
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions'), 'a scheduled lesson should leave the rail');
+  assert.ok(html.includes('Equivalent fractions'), 'still-unscheduled lesson should remain in the rail');
+});
+
+// ── Standalone (non-unit) lesson behaviour must be unchanged ────────────────────
+console.log('Standalone lesson behaviour unchanged');
+
+test('dragging a standalone lesson still writes legacy dayKey/position', () => {
+  resetState();
+  sandbox.plannerDropLessonToDay(dropEvent('sa_1'), 'wed');
+  const l = lessonById('sa_1');
+  assert.strictEqual(l.dayKey, 'wed');
+  assert.ok((l.position || 0) > 0, 'expected a position to be assigned');
+});
+
+test('dragging a standalone lesson never touches scheduledSlots', () => {
+  resetState();
+  sandbox.plannerDropLessonToDay(dropEvent('sa_1'), 'fri');
+  eqJson(lessonById('sa_1').scheduledSlots, [], 'standalone lessons must not gain slots');
+});
+
+test('plannerScheduleUnitLesson refuses standalone lessons', () => {
+  resetState();
+  assert.strictEqual(sandbox.plannerScheduleUnitLesson('sa_1', WEEK_A, 'mon'), false);
+  eqJson(lessonById('sa_1').scheduledSlots, []);
+});
+
+test('unit lessons never appear as standalone board cards', () => {
+  resetState();
+  // Give a unit lesson a legacy weekKey/dayKey for the current week — it must still
+  // be excluded from the standalone card list (it is board-placed via slots only).
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], weekKey: WEEK_A, dayKey: 'mon' };
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  // The unit lesson has no slots, so it should produce zero board occurrences and
+  // should not be rendered as a standalone card either. (It legitimately appears in
+  // the unit rail, so check for the standalone-card handler rather than the title.)
+  assert.strictEqual((html.match(/planner-occ-wrap/g) || []).length, 0);
+  assert.ok(!html.includes("plannerOpenLessonDrawer('ul_1')"), 'unit lesson must not render as a standalone board card');
+});
+
+// ── Summary ─────────────────────────────────────────────────────────────────────
+console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
+if (failures.length) {
+  for (const f of failures) console.error('FAILED: ' + f.name + '\n' + (f.e && f.e.stack || f.e));
+  process.exit(1);
+}
