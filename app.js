@@ -1727,14 +1727,19 @@ function plannerEndLessonDrag() {
 // lessons keep using their legacy weekKey/dayKey fields and are never touched here.
 // (PLANNER_SCHEDULABLE_DAYS is declared near the top of the file so normalize can use it.)
 
-// A well-formed slot: an ISO-date weekKey and a real weekday dayKey. The single source
-// of truth for slot validity — used by normalize (to drop stale/hand-edited localStorage
-// entries), the drawer, and the board loop. An invalid-but-truthy slot would otherwise
-// count as "scheduled" (hiding the lesson from the rail) yet never match the board,
-// stranding the lesson in the UI.
+// A well-formed slot: a weekKey that is an ISO date normalized to the week's Monday,
+// and a real weekday dayKey. The single source of truth for slot validity — used by
+// normalize (to drop stale/hand-edited localStorage entries), the drawer, and the board
+// loop. An invalid-but-truthy slot would otherwise count as "scheduled" (hiding the
+// lesson from the rail) yet never match the board, stranding the lesson in the UI. The
+// week-start check matters because the board only matches plannerSelectedWeekKey() (a
+// Monday), so a non-week-start weekKey could never render; dropping it returns the
+// lesson to the rail to be re-scheduled. (App writes are always normalized, so this only
+// bites corrupted storage.)
 function isValidScheduledSlot(s) {
   return !!s && typeof s === 'object'
     && typeof s.weekKey === 'string' && isValidIsoDate(s.weekKey)
+    && plannerNormalizeWeekStart(s.weekKey) === s.weekKey
     && PLANNER_SCHEDULABLE_DAYS.includes(s.dayKey);
 }
 
