@@ -1223,8 +1223,8 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
     <div class="planner-occ-wrap" data-occurrence="${escapeHtml(weekKey)}|${escapeHtml(dayKey)}">
       <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''}"
         role="button" tabindex="0"
-        onclick="plannerOpenUnitFromBoard('${plannerJsStr(lesson.unitId)}')"
-        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();plannerOpenUnitFromBoard('${plannerJsStr(lesson.unitId)}')}"
+        onclick="plannerOpenUnitFromBoard('${plannerJsStr(lesson.unitId)}','${plannerJsStr(lesson.id)}')"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();plannerOpenUnitFromBoard('${plannerJsStr(lesson.unitId)}','${plannerJsStr(lesson.id)}')}"
         title="Open unit to edit this lesson">
         <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
@@ -1282,16 +1282,23 @@ function plannerUnitSidebarLessonHtml(lesson) {
   `;
 }
 
-// Jump from a board occurrence to its parent unit (the place to edit / reschedule it).
-function plannerOpenUnitFromBoard(unitId) {
+// Jump from a board occurrence to its parent unit and open the clicked lesson's drawer
+// (the card's tooltip promises "edit this lesson"). renderUnitDetail clears the drawer
+// if the lesson somehow isn't in the unit, so an unknown lessonId is handled gracefully.
+function plannerOpenUnitFromBoard(unitId, lessonId) {
   unitPlansEnsureUiState();
   if (!state.unitPlans.some(u => u.id === unitId)) return;
   state.unitPlansUi.openUnitId = unitId;
   state.unitPlansUi.cdSearch = '';
   state.unitPlansUi.cdShowAllYears = false;
   plannerEnsureUiState();
-  state.plannerUi.selectedLessonId = null;
-  state.plannerUi.drawerOpen = false;
+  // Open the clicked lesson's drawer (reset the IC-picker state like the other open paths).
+  state.plannerUi.selectedLessonId = lessonId || null;
+  state.plannerUi.drawerOpen = !!lessonId;
+  state.plannerUi.icSearch = '';
+  state.plannerUi.suggestedICIds = [];
+  state.plannerUi.expandedICId = null;
+  state.plannerUi.icShowAllYears = false;
   showView('unit-plans');
 }
 

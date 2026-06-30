@@ -273,6 +273,17 @@ test('malformed scheduledSlots entries do not crash render or normalize', () => 
   eqJson(normalized.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
 });
 
+test('clicking a board occurrence opens that unit lesson in its drawer', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenUnitFromBoard('unit_1', 'ul_1');
+  const st = getState();
+  assert.strictEqual(st.unitPlansUi.openUnitId, 'unit_1', 'should open the parent unit');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'should select the clicked lesson');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'should open the lesson drawer');
+  assert.strictEqual(st.currentView, 'unit-plans', 'should navigate to Unit Plans');
+});
+
 // ── Standalone (non-unit) lesson behaviour must be unchanged ────────────────────
 console.log('Standalone lesson behaviour unchanged');
 
