@@ -1372,6 +1372,24 @@ body[data-text-size="large"] {
   font-size: 11px;
   color: var(--text3);
 }
+/* At-a-glance count of how many days a rail lesson is currently scheduled on.
+   Muted at 0; info-toned once it has at least one slot. */
+.planner-unit-slot-count {
+  flex-shrink: 0;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text3);
+  white-space: nowrap;
+}
+.planner-unit-slot-count.is-scheduled {
+  background: var(--status-info-bg);
+  border-color: var(--status-info-border);
+  color: var(--status-info-text);
+}
 
 /* Drawer scheduling fallback: current slots + week/day picker. */
 .planner-slot-list {

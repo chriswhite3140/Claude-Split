@@ -234,17 +234,56 @@ test('board renders the same lesson once per matching slot, scoped to the week',
   assert.strictEqual(countOccurrences(weekBHtml), 1, 'week B should render 1 occurrence (mon)');
 });
 
-test('unit sidebar lists only unscheduled unit lessons, grouped by unit', () => {
+test('unit rail lists all unit lessons (scheduled or not), grouped by unit', () => {
   resetState();
   let html = sandbox.plannerUnitSidebarHtml();
-  assert.ok(html.includes('Intro to fractions'), 'unscheduled lesson should appear in the rail');
-  assert.ok(html.includes('Equivalent fractions'), 'unscheduled lesson should appear in the rail');
+  assert.ok(html.includes('Intro to fractions'), 'lesson should appear in the rail');
+  assert.ok(html.includes('Equivalent fractions'), 'lesson should appear in the rail');
   assert.ok(html.includes('Fractions'), 'rail should group by unit title');
 
+  // Scheduling a lesson must NOT remove it from the rail (so more slots can be dragged on).
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   html = sandbox.plannerUnitSidebarHtml();
-  assert.ok(!html.includes('Intro to fractions'), 'a scheduled lesson should leave the rail');
-  assert.ok(html.includes('Equivalent fractions'), 'still-unscheduled lesson should remain in the rail');
+  assert.ok(html.includes('Intro to fractions'), 'a scheduled lesson should stay in the rail');
+  assert.ok(html.includes('Equivalent fractions'), 'the other lesson should stay in the rail');
+});
+
+test('rail card shows slot count and stays draggable after scheduling', () => {
+  resetState();
+  // ul_2 has no slots yet.
+  let html = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_2'));
+  assert.ok(/draggable="true"/.test(html), 'rail card must be draggable');
+  assert.ok(html.includes('plannerStartLessonDrag'), 'rail card must wire the drag-start handler');
+  assert.ok(/0 slots/.test(html), 'an unscheduled lesson shows "0 slots"');
+
+  // Schedule ul_1 twice, then confirm it still renders, is still draggable, and shows the count.
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  html = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_1'));
+  assert.ok(/draggable="true"/.test(html), 'a scheduled rail card must remain draggable');
+  assert.ok(html.includes('plannerStartLessonDrag'), 'a scheduled rail card must keep the drag handler');
+  assert.ok(/2 slots/.test(html), 'rail card should show the current slot count (plural)');
+
+  // Singular label with exactly one slot.
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_B, 'thu');
+  const html1 = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_2'));
+  assert.ok(/1 slot(?!s)/.test(html1), 'a lesson with one slot shows "1 slot" (singular)');
+});
+
+test('rail empty state shows only when no unit has any lessons', () => {
+  resetState();
+  const st = getState();
+  // Units exist but with no lessons -> empty state, not the units.
+  st.unitPlans = [{ id: 'u_empty', title: 'Empty Unit', subject: '', yearLevel: '', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: [], createdAt: '2026-01-01T00:00:00.000Z' }];
+  st.lessonPlans = [];
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(/no unit lessons yet/i.test(html), 'empty state should show when no unit has lessons');
+  assert.ok(!/all unit lessons are scheduled/i.test(html), 'the old "all scheduled" empty state must be gone');
+
+  // No units at all -> the "no units" empty state.
+  st.unitPlans = [];
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(/no units yet/i.test(html), 'empty state should show when there are no units');
 });
 
 test('malformed scheduledSlots entries do not crash render or normalize', () => {

@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.34';
+const APP_VERSION = '1.13.35';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1138,7 +1138,7 @@ function renderPlanner(main) {
       <aside class="card planner-unit-rail">
         <div class="card-head">
           <div class="card-title">Unit lessons</div>
-          <div style="font-size:12px;color:var(--text3)">Drag onto a day to schedule</div>
+          <div style="font-size:12px;color:var(--text3)">Drag onto a day to add a slot</div>
         </div>
         <div class="planner-unit-rail-body">${plannerUnitSidebarHtml()}</div>
       </aside>
@@ -1241,22 +1241,21 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
   `;
 }
 
-// Left rail on the Weekly Planner: each unit's *unscheduled* lessons (those with no
-// scheduledSlots), grouped by unit, ready to drag onto a day. Reuses the standalone
-// drag start/end handlers — plannerDropLessonToDay branches on unitId.
+// Left rail on the Weekly Planner: every unit's lessons, grouped by unit, always
+// draggable onto a day to add a slot. Cards stay in the rail no matter how many slots
+// a lesson already has (each card shows its current slot count), so drag-to-schedule
+// works for the 2nd/3rd/... slot too — not just the first. Reuses the standalone drag
+// start/end handlers; plannerDropLessonToDay branches on unitId.
 function plannerUnitSidebarHtml() {
   const units = state.unitPlans || [];
   if (!units.length) {
     return `<div class="planner-unit-rail-empty">No units yet. Create units in <strong>Unit Plans</strong> to schedule their lessons onto the week.</div>`;
   }
   const groups = units
-    .map(unit => ({
-      unit,
-      lessons: unitGetLessons(unit).filter(l => !(Array.isArray(l.scheduledSlots) && l.scheduledSlots.length)),
-    }))
+    .map(unit => ({ unit, lessons: unitGetLessons(unit) }))
     .filter(g => g.lessons.length);
   if (!groups.length) {
-    return `<div class="planner-unit-rail-empty">All unit lessons are scheduled. Unscheduled unit lessons will appear here.</div>`;
+    return `<div class="planner-unit-rail-empty">No unit lessons yet. Add lessons to a unit in <strong>Unit Plans</strong> to schedule them here.</div>`;
   }
   return groups.map(({ unit, lessons }) => `
     <div class="planner-unit-group">
@@ -1268,16 +1267,18 @@ function plannerUnitSidebarHtml() {
 
 function plannerUnitSidebarLessonHtml(lesson) {
   const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
+  const slotCount = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots.length : 0;
   return `
     <div class="planner-unit-pill" draggable="true"
       ondragstart="plannerStartLessonDrag(event,'${plannerJsStr(lesson.id)}')"
       ondragend="plannerEndLessonDrag(event)"
-      title="Drag onto a day to schedule">
+      title="Drag onto a day to add a slot">
       <span class="planner-unit-drag" aria-hidden="true">⠿</span>
       <div class="planner-unit-pill-main">
         <div class="planner-unit-pill-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-unit-pill-meta">${escapeHtml(lesson.subject || 'No subject')} · ${icCount} IC${icCount === 1 ? '' : 's'}</div>
       </div>
+      <span class="planner-unit-slot-count ${slotCount ? 'is-scheduled' : ''}" title="Scheduled on ${slotCount} day${slotCount === 1 ? '' : 's'}">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
     </div>
   `;
 }
