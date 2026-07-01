@@ -371,6 +371,16 @@ test('moving one occurrence leaves other slots and teachingStatus untouched', ()
   assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'moving a slot must not change teachingStatus');
 });
 
+test('dragging an occurrence onto a day the lesson already occupies is a no-op (no slot lost)', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'tue');
+  // Drag the Tuesday occurrence onto Monday (already occupied) — both slots must survive.
+  sandbox.plannerStartOccurrenceDrag(dropEvent('ul_1'), 'ul_1', WEEK_A, 'tue');
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'mon');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'tue' }]);
+});
+
 test('dropping an occurrence back on its own day is a no-op', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');

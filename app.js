@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.36';
+const APP_VERSION = '1.13.37';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1844,6 +1844,13 @@ function plannerMoveScheduledSlot(lessonId, fromWeekKey, fromDayKey, toWeekKey, 
   if (idx < 0) return false;
   let lesson = state.lessonPlans[idx];
   if (!lesson.unitId) return false;
+  // If the target day already holds this lesson, moving onto it would drop the source
+  // slot yet de-dupe the add — silently losing an occurrence. Treat it as a no-op.
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  if (slots.some(s => s && s.weekKey === toWk && s.dayKey === toDayKey)) {
+    toast('Already scheduled on that day', 'info');
+    return false;
+  }
   lesson = lessonWithoutScheduledSlot(lesson, fromWeekKey, fromDayKey);
   lesson = lessonWithScheduledSlot(lesson, toWk, toDayKey);
   state.lessonPlans[idx] = lesson;
