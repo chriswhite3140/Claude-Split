@@ -1141,22 +1141,61 @@ body[data-text-size="large"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* Fill the column's min-height so the whole area below the header (empty days and
+     the space under existing cards) is a valid drop target, not just over the cards. */
+  flex: 1 1 auto;
 }
 
 .planner-lesson-column-body.drop-over {
   background: var(--status-info-bg);
+  box-shadow: inset 0 0 0 2px var(--status-info-border);
+  border-radius: 8px;
 }
 
 .planner-lesson-card {
+  position: relative;
   border: 1px solid var(--border2);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   text-align: left;
-  padding: 9px;
-  cursor: pointer;
+  /* Extra right padding reserves space for the top-right actions cluster (pencil,
+     plus ✕ on unit cards). The card body itself is the drag handle. */
+  padding: 9px 32px 9px 9px;
+  cursor: grab;
   display: grid;
   gap: 4px;
+}
+.planner-lesson-card:active { cursor: grabbing; }
+
+/* Top-right actions on a board card: edit pencil (and ✕ remove on unit occurrences). */
+.planner-card-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.planner-card-edit {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text3);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.planner-card-edit:hover {
+  color: var(--status-info-text);
+  border-color: var(--status-info-border);
+  background: var(--status-info-bg);
 }
 
 .planner-lesson-card-wrap {
@@ -1249,10 +1288,8 @@ body[data-text-size="large"] {
 /* Unit-linked card: coloured left border + unit chip to distinguish from standalone. */
 .planner-lesson-card.is-unit {
   border-left: 3px solid var(--status-info-border);
-}
-/* Keep the title clear of the absolutely-positioned ✕ in the top-right corner. */
-.planner-lesson-card.is-unit .planner-lesson-card-title {
-  padding-right: 24px;
+  /* Unit cards carry two corner buttons (edit + ✕), so reserve a little more room. */
+  padding-right: 58px;
 }
 .planner-unit-chip {
   /* inline-block so max-width + ellipsis actually clamp long unit titles
@@ -1272,16 +1309,13 @@ body[data-text-size="large"] {
   color: var(--status-info-text);
 }
 
-/* Each board occurrence carries its own ✕ to remove just that slot. */
+/* Each board occurrence carries its own ✕ (in the card's top-right actions cluster)
+   to remove just that slot. */
 .planner-occ-wrap {
-  position: relative;
   display: grid;
   gap: 4px;
 }
 .planner-occ-remove {
-  position: absolute;
-  top: 4px;
-  right: 4px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text3);

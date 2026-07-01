@@ -127,6 +127,8 @@ function resetState() {
   st.plannerUi.weekKey = WEEK_A;
   st.plannerUi.selectedLessonId = null;
   st.plannerUi.drawerOpen = false;
+  st.plannerUi.draggingLessonId = null;
+  st.plannerUi.draggingSlot = null;
 }
 
 function lessonById(id) { return getState().lessonPlans.find(l => l.id === id); }
@@ -135,6 +137,7 @@ function lessonById(id) { return getState().lessonPlans.find(l => l.id === id); 
 function dropEvent(lessonId) {
   return {
     preventDefault() {},
+    stopPropagation() {},
     currentTarget: { classList: { add() {}, remove() {} } },
     dataTransfer: { getData() { return lessonId; }, setData() {}, effectAllowed: '' },
   };
@@ -312,7 +315,7 @@ test('malformed scheduledSlots entries do not crash render or normalize', () => 
   eqJson(normalized.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
 });
 
-test('clicking a board occurrence opens that unit lesson in its drawer', () => {
+test('the pencil on a board occurrence opens that unit lesson in its drawer', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   sandbox.plannerOpenUnitFromBoard('unit_1', 'ul_1');
@@ -321,6 +324,67 @@ test('clicking a board occurrence opens that unit lesson in its drawer', () => {
   assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'should select the clicked lesson');
   assert.strictEqual(st.plannerUi.drawerOpen, true, 'should open the lesson drawer');
   assert.strictEqual(st.currentView, 'unit-plans', 'should navigate to Unit Plans');
+});
+
+// ── Pencil-to-edit + drag scheduled cards between days (UX polish) ───────────────
+test('standalone card is a drag handle with a pencil edit button (no click-to-open body)', () => {
+  resetState();
+  const html = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(html.includes('draggable="true"'), 'card body should be draggable');
+  assert.ok(html.includes('plannerStartLessonDrag'), 'card body should wire the drag-start handler');
+  assert.ok(html.includes('planner-card-edit'), 'card should have a pencil edit button');
+  assert.ok(html.includes("plannerOpenLessonDrawer('sa_1')"), 'pencil should open the lesson drawer');
+  // Only the pencil opens the drawer (its onclick is stopPropagation-prefixed); the
+  // card body must not carry a direct click-to-open handler that would fight dragging.
+  assert.ok(!html.includes('onclick="plannerOpenLessonDrawer'), 'card body must not have a direct click-to-open handler');
+});
+
+test('unit occurrence card is draggable with pencil-edit and keeps the remove ✕', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const html = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  assert.ok(html.includes('draggable="true"'), 'occurrence card should be draggable');
+  assert.ok(html.includes('plannerStartOccurrenceDrag'), 'occurrence card should wire the occurrence drag-start');
+  assert.ok(html.includes('planner-card-edit'), 'occurrence card should have a pencil edit button');
+  assert.ok(html.includes('plannerOpenUnitFromBoard'), 'pencil should open the unit lesson');
+  assert.ok(html.includes('planner-occ-remove'), 'occurrence card should keep the ✕ remove control');
+  assert.ok(html.includes('plannerUnscheduleSlot'), 'the ✕ should unschedule this slot');
+  assert.ok(!html.includes('onclick="plannerOpenUnitFromBoard'), 'card body must not have a direct click-to-open handler');
+});
+
+test('dragging a scheduled occurrence to another day moves that slot (not append)', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerStartOccurrenceDrag(dropEvent('ul_1'), 'ul_1', WEEK_A, 'mon');
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'wed');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'wed' }]);
+});
+
+test('moving one occurrence leaves other slots and teachingStatus untouched', () => {
+  resetState();
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach');
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'thu');
+  sandbox.plannerStartOccurrenceDrag(dropEvent('ul_2'), 'ul_2', WEEK_A, 'mon');
+  sandbox.plannerDropLessonToDay(dropEvent('ul_2'), 'fri');
+  eqJson(lessonById('ul_2').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'thu' }, { weekKey: WEEK_A, dayKey: 'fri' }]);
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'moving a slot must not change teachingStatus');
+});
+
+test('dropping an occurrence back on its own day is a no-op', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerStartOccurrenceDrag(dropEvent('ul_1'), 'ul_1', WEEK_A, 'mon');
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'mon');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
+});
+
+test('dragging an occurrence onto the Unscheduled column keeps the slot', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerStartOccurrenceDrag(dropEvent('ul_1'), 'ul_1', WEEK_A, 'mon');
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'unscheduled');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
 });
 
 test('normalize de-dupes duplicate scheduledSlots entries', () => {
