@@ -1152,6 +1152,17 @@ body[data-text-size="large"] {
   border-radius: 8px;
 }
 
+/* Within-day drag-to-reorder: a single shared line, moved into place via insertBefore
+   (see plannerShowInsertionLine), not a permanent node on every card. Deliberately
+   just a rule — no card/column glow — so it reads as "insert here" rather than
+   "drop somewhere in this day" (that's what the column glow above communicates). */
+.planner-insertion-line {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--status-info-text);
+  flex-shrink: 0;
+}
+
 .planner-lesson-card {
   position: relative;
   border: 1px solid var(--border2);

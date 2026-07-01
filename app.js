@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.37';
+const APP_VERSION = '1.13.38';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -381,7 +381,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
   unitPlans: loadUnitPlansState(),
   unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   themePreference: 'auto',
@@ -1097,23 +1097,26 @@ function renderPlanner(main) {
   const boardIsEmpty = weekLessons.length === 0 && unitOccurrences.length === 0;
 
   const boardColumns = plannerDays.map(day => {
-    const dayLessons = weekLessons
-      .filter(lesson => lesson.dayKey === day.key)
-      .sort((a, b) => (a.position || 0) - (b.position || 0));
-    const standaloneCards = dayLessons.map(lesson => plannerLessonCardHtml(lesson)).join('');
-    // Unit occurrences only target real weekdays, so the Unscheduled column shows none.
-    const unitCards = unitOccurrences
-      .filter(occ => occ.dayKey === day.key)
-      .map(occ => plannerUnitOccurrenceCardHtml(occ.lesson, weekKey, day.key))
-      .join('');
-    const isEmpty = dayLessons.length === 0 && !unitCards;
+    // Combined standalone+unit order for this day (custom order if the teacher has
+    // drag-reordered it, else the default standalone-then-unit order) — see
+    // plannerDayItemsInOrder for the single source of truth shared with the reorder mutation.
+    const items = plannerDayItemsInOrder(weekKey, day.key, weekLessons, unitOccurrences);
+    const cardsHtml = items.map(item => {
+      if (item.type === 'standalone') {
+        const lesson = weekLessons.find(l => l.id === item.lessonId);
+        return lesson ? plannerLessonCardHtml(lesson) : '';
+      }
+      const occ = unitOccurrences.find(o => o.dayKey === day.key && o.lesson.id === item.lessonId);
+      return occ ? plannerUnitOccurrenceCardHtml(occ.lesson, weekKey, day.key) : '';
+    }).join('');
+    const isEmpty = items.length === 0;
     return `
       <section class="planner-lesson-column">
         <div class="planner-lesson-column-head">${day.label}</div>
-        <div class="planner-lesson-column-body" ondragover="plannerAllowLessonDrop(event)" ondrop="plannerDropLessonToDay(event, '${day.key}')" ondragleave="plannerLessonDropLeave(event)">
+        <div class="planner-lesson-column-body" ondragover="plannerAllowLessonDrop(event, '${day.key}')" ondrop="plannerDropLessonToDay(event, '${day.key}')" ondragleave="plannerLessonDropLeave(event)">
           ${isEmpty
             ? `<div class="planner-lesson-empty">No lessons</div>`
-            : standaloneCards + unitCards
+            : cardsHtml
           }
           <button class="planner-add-in-column" type="button" onclick="plannerAddLesson('${day.key}')">+ Add</button>
         </div>
@@ -1166,13 +1169,46 @@ function renderPlanner(main) {
   `;
 }
 
+// Single source of truth for a day column's card order — shared by the board render
+// and by plannerReorderWithinDay so both agree on "current order". Default order
+// (no custom order recorded yet) is standalone lessons by position, then unit
+// occurrences in their natural (scheduledSlots traversal) order — i.e. exactly what
+// rendered before drag-to-reorder-within-day existed, so nothing shifts visually
+// until a teacher actually reorders a day. A custom order (state.plannerUi.dayOrder,
+// session-only — never touches scheduledSlots or the lesson data model) is applied
+// as a stable sort key; items not yet in a recorded order keep their default
+// relative order and fall in after any ranked items.
+function plannerDayItemsInOrder(weekKey, dayKey, weekLessons, unitOccurrences) {
+  const standalone = weekLessons
+    .filter(lesson => lesson.dayKey === dayKey)
+    .sort((a, b) => (a.position || 0) - (b.position || 0))
+    .map(lesson => ({ type: 'standalone', lessonId: lesson.id }));
+  const unit = unitOccurrences
+    .filter(occ => occ.dayKey === dayKey)
+    .map(occ => ({ type: 'unit', lessonId: occ.lesson.id }));
+  let items = [...standalone, ...unit];
+
+  const orderKey = weekKey + '|' + dayKey;
+  const customOrder = state.plannerUi?.dayOrder?.[orderKey];
+  if (Array.isArray(customOrder) && customOrder.length) {
+    const rank = new Map(customOrder.map((id, i) => [id, i]));
+    items = items
+      .map((item, i) => ({ item, i, rank: rank.has(item.lessonId) ? rank.get(item.lessonId) : Infinity }))
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .map(entry => entry.item);
+  }
+  return items;
+}
+
 function plannerLessonCardHtml(lesson) {
   const isSelected = state.plannerUi.selectedLessonId === lesson.id;
   const isTaught = lesson.status === 'taught';
   const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
   const incomplete = icCount === 0;
   return `
-    <div class="planner-lesson-card-wrap">
+    <div class="planner-lesson-card-wrap"
+      ondragover="plannerCardDragOver(event, '${plannerJsStr(lesson.dayKey)}', '${plannerJsStr(lesson.id)}')"
+    >
       <div
         class="planner-lesson-card ${isSelected ? 'is-selected' : ''} ${isTaught ? 'is-taught' : ''} ${incomplete ? 'is-incomplete' : ''}"
         draggable="true"
@@ -1230,7 +1266,9 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
   const unitTitle = unit ? (unit.title || 'Untitled unit') : 'Unit';
   const isTaught = lesson.teachingStatus === 'taught';
   return `
-    <div class="planner-occ-wrap" data-occurrence="${escapeHtml(weekKey)}|${escapeHtml(dayKey)}">
+    <div class="planner-occ-wrap" data-occurrence="${escapeHtml(weekKey)}|${escapeHtml(dayKey)}"
+      ondragover="plannerCardDragOver(event, '${plannerJsStr(dayKey)}', '${plannerJsStr(lesson.id)}')"
+    >
       <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''}"
         draggable="true"
         ondragstart="plannerStartOccurrenceDrag(event, '${plannerJsStr(lesson.id)}', '${plannerJsStr(weekKey)}', '${plannerJsStr(dayKey)}')"
@@ -1657,6 +1695,12 @@ function plannerEnsureUiState() {
   if (typeof state.plannerUi.drawerOpen === 'undefined') state.plannerUi.drawerOpen = false;
   if (typeof state.plannerUi.draggingLessonId === 'undefined') state.plannerUi.draggingLessonId = null;
   if (typeof state.plannerUi.draggingSlot === 'undefined') state.plannerUi.draggingSlot = null;
+  // Within-day drag-to-reorder (session-only, never persisted): insertionTarget tracks
+  // the live hover position during a drag; dayOrder records the resulting custom card
+  // order per "weekKey|dayKey" so it survives re-renders without touching the lesson
+  // data model or scheduledSlots (see plannerDayItemsInOrder / plannerReorderWithinDay).
+  if (typeof state.plannerUi.insertionTarget === 'undefined') state.plannerUi.insertionTarget = null;
+  if (!state.plannerUi.dayOrder || typeof state.plannerUi.dayOrder !== 'object') state.plannerUi.dayOrder = {};
   if (typeof state.plannerUi.icSearch !== 'string') state.plannerUi.icSearch = '';
   if (!Array.isArray(state.plannerUi.suggestedICIds)) state.plannerUi.suggestedICIds = [];
   if (!state.plannerUi.suggestionScores || typeof state.plannerUi.suggestionScores !== 'object') state.plannerUi.suggestionScores = {};
@@ -1738,10 +1782,57 @@ function plannerStartOccurrenceDrag(ev, lessonId, weekKey, dayKey) {
   }
 }
 
-function plannerAllowLessonDrop(ev) {
+// Column-level dragover: cross-day drops keep the existing glow feedback unchanged.
+// A same-day hover (the dragged card's current day === this column) is a reorder,
+// not a move — so the glow is suppressed in favour of the insertion line, shown at
+// the end of the list (this only fires when the cursor is over the column background
+// itself, not a specific card; hovering a card is handled by plannerCardDragOver,
+// which stops the event from bubbling here).
+function plannerAllowLessonDrop(ev, dayKey) {
   ev.preventDefault();
   const zone = ev.currentTarget;
-  if (zone) zone.classList.add('drop-over');
+  if (dayKey && dayKey === plannerCurrentDragOriginDay()) {
+    if (zone) zone.classList.remove('drop-over');
+    state.plannerUi.insertionTarget = { dayKey, lessonId: null, before: false };
+    plannerShowInsertionLineAtEnd(zone);
+  } else {
+    if (zone) zone.classList.add('drop-over');
+    state.plannerUi.insertionTarget = null;
+    plannerClearInsertionLine();
+  }
+}
+
+// Card-level dragover: only takes over (showing the insertion line) when the hovered
+// card is in the SAME day the dragged card currently occupies — a reorder, not a
+// cross-day move. Cross-day hovers return without stopping propagation, so the
+// column's dragover (existing glow) still runs — that behaviour is untouched.
+function plannerCardDragOver(ev, dayKey, hoveredLessonId) {
+  const draggingId = state.plannerUi.draggingLessonId;
+  if (!draggingId || draggingId === hoveredLessonId) return;
+  if (plannerCurrentDragOriginDay() !== dayKey) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const zone = ev.currentTarget.parentElement;
+  if (zone) zone.classList.remove('drop-over');
+  const rect = ev.currentTarget.getBoundingClientRect();
+  const before = (ev.clientY - (rect.top || 0)) < (rect.height || 0) / 2;
+  state.plannerUi.insertionTarget = { dayKey, lessonId: hoveredLessonId, before };
+  plannerShowInsertionLine(ev.currentTarget, before);
+}
+
+// The day the currently-dragged card lives on right now (before the drop), so
+// dragover handlers can tell a same-day reorder apart from a cross-day move. A
+// rail-dragged unit lesson (no draggingSlot yet — it isn't on the board) has no
+// current day, so it never matches and always falls through to the existing
+// schedule/append path, never the reorder path.
+function plannerCurrentDragOriginDay() {
+  const draggingId = state.plannerUi.draggingLessonId;
+  if (!draggingId) return null;
+  const draggingSlot = state.plannerUi.draggingSlot;
+  if (draggingSlot && draggingSlot.lessonId === draggingId) return draggingSlot.dayKey;
+  const lesson = state.lessonPlans.find(l => l.id === draggingId);
+  if (!lesson || lesson.unitId) return null;
+  return lesson.dayKey;
 }
 
 function plannerLessonDropLeave(ev) {
@@ -1752,7 +1843,41 @@ function plannerLessonDropLeave(ev) {
 function plannerEndLessonDrag() {
   state.plannerUi.draggingLessonId = null;
   state.plannerUi.draggingSlot = null;
+  state.plannerUi.insertionTarget = null;
+  plannerClearInsertionLine();
   document.querySelectorAll('.planner-lesson-column-body.drop-over').forEach(el => el.classList.remove('drop-over'));
+}
+
+// ── Within-day drag-to-reorder: insertion line ──
+// A single shared DOM node moved into place via insertBefore as the cursor moves,
+// rather than a permanent element baked into every card's template.
+function plannerInsertionLineEl() {
+  let line = document.getElementById('planner-insertion-line');
+  if (!line) {
+    line = document.createElement('div');
+    line.id = 'planner-insertion-line';
+    line.className = 'planner-insertion-line';
+    line.setAttribute('aria-hidden', 'true');
+  }
+  return line;
+}
+
+function plannerShowInsertionLine(cardWrapEl, before) {
+  if (!cardWrapEl || !cardWrapEl.parentNode) return;
+  const line = plannerInsertionLineEl();
+  cardWrapEl.parentNode.insertBefore(line, before ? cardWrapEl : cardWrapEl.nextSibling);
+}
+
+function plannerShowInsertionLineAtEnd(columnBodyEl) {
+  if (!columnBodyEl) return;
+  const line = plannerInsertionLineEl();
+  const addBtn = columnBodyEl.querySelector('.planner-add-in-column');
+  columnBodyEl.insertBefore(line, addBtn || null);
+}
+
+function plannerClearInsertionLine() {
+  const line = document.getElementById('planner-insertion-line');
+  if (line && line.parentNode) line.parentNode.removeChild(line);
 }
 
 // ── Unit lesson scheduling (PR2): scheduledSlots <-> Weekly Planner board ──
@@ -1864,20 +1989,38 @@ function plannerDropLessonToDay(ev, targetDayKey) {
   if (zone) zone.classList.remove('drop-over');
   const lessonId = ev?.dataTransfer?.getData('text/plain') || state.plannerUi.draggingLessonId;
   const draggingSlot = state.plannerUi.draggingSlot;
+  const insertionTarget = state.plannerUi.insertionTarget;
   state.plannerUi.draggingLessonId = null;
   state.plannerUi.draggingSlot = null;
+  state.plannerUi.insertionTarget = null;
+  plannerClearInsertionLine();
   if (!lessonId) return;
 
   const idx = state.lessonPlans.findIndex(lesson => lesson.id === lessonId);
   if (idx < 0) return;
 
   const weekKey = plannerSelectedWeekKey();
+  const isUnit = !!state.lessonPlans[idx].unitId;
+  const isOccurrenceDrag = isUnit && draggingSlot && draggingSlot.lessonId === lessonId;
+  // The day this card currently occupies (before the drop). Unit lessons dragged from
+  // the rail (no draggingSlot — they aren't on the board yet) have no origin day, so
+  // they never match a same-day reorder and always fall through to scheduling below.
+  const originDayKey = isUnit ? (isOccurrenceDrag ? draggingSlot.dayKey : null) : state.lessonPlans[idx].dayKey;
+
+  // Same-day drop: reorder within the column (visual order only — never touches
+  // scheduledSlots or dayKey/position) instead of moving/scheduling.
+  if (originDayKey === targetDayKey) {
+    const target = (insertionTarget && insertionTarget.dayKey === targetDayKey) ? insertionTarget : null;
+    plannerReorderWithinDay(weekKey, targetDayKey, lessonId, target);
+    renderView();
+    return;
+  }
 
   // Unit lessons live on the board via scheduledSlots. Dragging an *existing* board
-  // occurrence (draggingSlot set) relocates that slot; dragging a card from the rail
-  // (no draggingSlot) appends a new slot. Standalone lessons keep their legacy write.
-  if (state.lessonPlans[idx].unitId) {
-    if (draggingSlot && draggingSlot.lessonId === lessonId) {
+  // occurrence relocates that slot; dragging a card from the rail appends a new slot.
+  // Standalone lessons keep their legacy write.
+  if (isUnit) {
+    if (isOccurrenceDrag) {
       plannerMoveScheduledSlot(lessonId, draggingSlot.weekKey, draggingSlot.dayKey, weekKey, targetDayKey);
     } else {
       plannerScheduleUnitLesson(lessonId, weekKey, targetDayKey);
@@ -1886,8 +2029,8 @@ function plannerDropLessonToDay(ev, targetDayKey) {
     return;
   }
 
-  // Drop appends to the end of the target column (covers move-between-days,
-  // move-to-unscheduled, and coarse within-day reordering).
+  // Drop appends to the end of the target column (covers move-between-days and
+  // move-to-unscheduled; same-day drops are handled above as a reorder).
   const maxPos = state.lessonPlans
     .filter(lesson => lesson.weekKey === weekKey && lesson.dayKey === targetDayKey && lesson.id !== lessonId)
     .reduce((max, lesson) => Math.max(max, lesson.position || 0), 0);
@@ -1895,6 +2038,35 @@ function plannerDropLessonToDay(ev, targetDayKey) {
   state.lessonPlans[idx] = { ...state.lessonPlans[idx], dayKey: targetDayKey, position: maxPos + 1 };
   saveLessonPlansState();
   renderView();
+}
+
+// Reorder a day's cards after a within-day drag-drop. Session-only: it records a
+// display order in state.plannerUi.dayOrder (read back by plannerDayItemsInOrder on
+// every render) and never touches scheduledSlots, dayKey/position, or teachingStatus.
+function plannerReorderWithinDay(weekKey, dayKey, movedLessonId, insertionTarget) {
+  const weekLessons = state.lessonPlans.filter(l => l.weekKey === weekKey && !l.unitId);
+  const unitOccurrences = [];
+  state.lessonPlans.forEach(lesson => {
+    if (!lesson.unitId) return;
+    (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).forEach(slot => {
+      if (isValidScheduledSlot(slot) && slot.weekKey === weekKey) {
+        unitOccurrences.push({ lesson, dayKey: slot.dayKey });
+      }
+    });
+  });
+
+  const currentIds = plannerDayItemsInOrder(weekKey, dayKey, weekLessons, unitOccurrences).map(item => item.lessonId);
+  const ids = currentIds.filter(id => id !== movedLessonId);
+
+  let insertAt = ids.length; // default: dropped on empty space -> end of the list
+  if (insertionTarget && insertionTarget.lessonId && insertionTarget.lessonId !== movedLessonId) {
+    const targetIdx = ids.indexOf(insertionTarget.lessonId);
+    if (targetIdx >= 0) insertAt = insertionTarget.before ? targetIdx : targetIdx + 1;
+  }
+  ids.splice(insertAt, 0, movedLessonId);
+
+  if (!state.plannerUi.dayOrder || typeof state.plannerUi.dayOrder !== 'object') state.plannerUi.dayOrder = {};
+  state.plannerUi.dayOrder[weekKey + '|' + dayKey] = ids;
 }
 
 function plannerAddLesson(dayKey) {
