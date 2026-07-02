@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.41';
+const APP_VERSION = '1.13.42';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1236,6 +1236,7 @@ function plannerLessonCardHtml(lesson) {
   const isTaught = lesson.status === 'taught';
   const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
   const incomplete = icCount === 0;
+  const openExpr = `plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`;
   return `
     <div class="planner-lesson-card-wrap"
       ondragover="plannerCardDragOver(event, '${plannerJsStr(lesson.dayKey)}', '${plannerJsStr(lesson.id)}')"
@@ -1245,6 +1246,7 @@ function plannerLessonCardHtml(lesson) {
         draggable="true"
         ondragstart="plannerStartLessonDrag(event, '${plannerJsStr(lesson.id)}')"
         ondragend="plannerEndLessonDrag(event)"
+        ${plannerCardOpenAttrs(openExpr)}
       >
         <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
@@ -1254,7 +1256,7 @@ function plannerLessonCardHtml(lesson) {
           ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
         </div>
         <div class="planner-card-actions">
-          ${plannerEditPencilHtml(`plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`, lesson.title)}
+          ${plannerCardExpandIconHtml(openExpr, lesson.title)}
         </div>
       </div>
       <div class="planner-inline-actions">
@@ -1265,13 +1267,29 @@ function plannerLessonCardHtml(lesson) {
   `;
 }
 
-// Small pencil button (top-right of a board card) that opens the lesson drawer. The
-// rest of the card is the drag handle, so editing and dragging no longer conflict.
-// onclickExpr is the JS call to open the right drawer (standalone vs unit).
-function plannerEditPencilHtml(onclickExpr, title) {
-  return `<button class="planner-card-edit" type="button" title="Edit lesson"
-    aria-label="Edit ${escapeHtml(title || 'lesson')}"
-    onclick="event.stopPropagation();${onclickExpr}">✎</button>`;
+// Small "open panel" button (top-right of a board card) — a visual affordance for the
+// same action the whole card body now performs on click (see the card's own onclick/
+// onkeydown). Not "edit": the card isn't a form, it's a trigger that opens the lesson
+// in the drawer, where editing happens. stopPropagation just avoids a redundant double
+// call to onclickExpr via bubbling into the card's own click handler underneath it.
+// onclickExpr is the JS call to open the right drawer (standalone vs unit) — the exact
+// same expression is reused as the card body's own onclick, see plannerCardOpenAttrs.
+function plannerCardExpandIconHtml(onclickExpr, title) {
+  return `<button class="planner-card-expand" type="button" title="Open lesson details"
+    aria-label="Open ${escapeHtml(title || 'lesson')}"
+    onclick="event.stopPropagation();${onclickExpr}">⤢</button>`;
+}
+
+// HTML attributes that make the whole card body a click/keyboard-activatable trigger
+// for opening the lesson drawer, alongside its existing role as a drag handle (native
+// HTML5 drag-and-drop does not fire 'click' after an actual drag, so the two coexist
+// without conflict — a plain press-and-release opens the drawer, a press-and-move-away
+// drags the card instead). role="button" + onkeydown mirrors the pattern already used
+// for other whole-element click targets in this file (e.g. .unit-card).
+function plannerCardOpenAttrs(onclickExpr) {
+  return `role="button" tabindex="0"
+        onclick="${onclickExpr}"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${onclickExpr}}"`;
 }
 
 // Compact IC display for the lesson card: count + up to two short descriptor codes.
@@ -1296,6 +1314,7 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
   const unit = unitForLesson(lesson);
   const unitTitle = unit ? (unit.title || 'Untitled unit') : 'Unit';
   const isTaught = lesson.teachingStatus === 'taught';
+  const openExpr = `plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`;
   return `
     <div class="planner-occ-wrap" data-occurrence="${escapeHtml(weekKey)}|${escapeHtml(dayKey)}"
       ondragover="plannerCardDragOver(event, '${plannerJsStr(dayKey)}', '${plannerJsStr(lesson.id)}')"
@@ -1303,7 +1322,8 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
       <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''}"
         draggable="true"
         ondragstart="plannerStartOccurrenceDrag(event, '${plannerJsStr(lesson.id)}', '${plannerJsStr(weekKey)}', '${plannerJsStr(dayKey)}')"
-        ondragend="plannerEndLessonDrag(event)">
+        ondragend="plannerEndLessonDrag(event)"
+        ${plannerCardOpenAttrs(openExpr)}>
         <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
         <div class="planner-lesson-card-tags">
@@ -1312,7 +1332,7 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
           ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
         </div>
         <div class="planner-card-actions">
-          ${plannerEditPencilHtml(`plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`, lesson.title)}
+          ${plannerCardExpandIconHtml(openExpr, lesson.title)}
           <button class="planner-occ-remove" type="button" title="Remove from this day"
             aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
             onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')">✕</button>
