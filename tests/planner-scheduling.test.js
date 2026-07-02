@@ -479,13 +479,36 @@ test('hovering the bottom half of a card sets insertionTarget to "insert after"'
   assert.strictEqual(st.plannerUi.insertionTarget.before, false);
 });
 
-test('a cross-day card hover is ignored (falls through to the unchanged column glow)', () => {
+test('a cross-day card hover also sets the insertion line, keeping the glow alongside it', () => {
   resetState();
   addStandaloneLesson('sa_2', 'B lesson', 'tue');
   const st = getState();
   st.plannerUi.draggingLessonId = 'sa_1'; // sa_1 lives on 'unscheduled', not 'tue'
-  sandbox.plannerCardDragOver(cardDragOverEvent(100, 40, 105), 'tue', 'sa_2');
-  assert.strictEqual(st.plannerUi.insertionTarget, null, 'a cross-day hover must not set an insertion target');
+  const ev = cardDragOverEvent(100, 40, 105);
+  let glowAdded = false, glowRemoved = false;
+  ev.currentTarget.parentElement.classList = { add() { glowAdded = true; }, remove() { glowRemoved = true; } };
+  sandbox.plannerCardDragOver(ev, 'tue', 'sa_2');
+  assert.deepStrictEqual(
+    { lessonId: st.plannerUi.insertionTarget.lessonId, before: st.plannerUi.insertionTarget.before },
+    { lessonId: 'sa_2', before: true },
+    'a cross-day hover must set a precise insertion target, same as a same-day hover'
+  );
+  assert.strictEqual(glowAdded, true, 'cross-day hover keeps the existing glow');
+  assert.strictEqual(glowRemoved, false, 'cross-day hover must not suppress the glow (that is same-day-only)');
+});
+
+test('a same-day card hover suppresses the glow (insertion line is the only indicator)', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'mon');
+  const st = getState();
+  st.plannerUi.draggingLessonId = 'sa_1';
+  st.lessonPlans[st.lessonPlans.findIndex(l => l.id === 'sa_1')].dayKey = 'mon'; // sa_1 now lives on 'mon' too
+  const ev = cardDragOverEvent(100, 40, 105);
+  let glowAdded = false, glowRemoved = false;
+  ev.currentTarget.parentElement.classList = { add() { glowAdded = true; }, remove() { glowRemoved = true; } };
+  sandbox.plannerCardDragOver(ev, 'mon', 'sa_2');
+  assert.strictEqual(glowRemoved, true, 'same-day hover suppresses the glow');
+  assert.strictEqual(glowAdded, false, 'same-day hover must not add the glow (insertion line is the only indicator)');
 });
 
 test('dragging a card and dropping it before another reorders the day accordingly', () => {
@@ -574,18 +597,72 @@ test('reordered day order persists after a full re-render', () => {
   assert.ok(idxC < idxB, 'C lesson (moved before B) should render before B lesson after re-render');
 });
 
-test('cross-day drag behaviour is unchanged: still appends to the end, no reorder path taken', () => {
+test('cross-day drop with no hovered card still appends to the end (unchanged default)', () => {
   resetState();
   addStandaloneLesson('sa_2', 'B lesson', 'wed');
   addStandaloneLesson('sa_3', 'C lesson', 'wed');
-  // sa_1 lives on 'unscheduled'; dragging it to 'wed' (a different day) must append,
-  // never consult dayOrder/insertionTarget (the reorder path is same-day only).
   const st = getState();
-  st.plannerUi.draggingLessonId = 'sa_1';
-  st.plannerUi.insertionTarget = { dayKey: 'wed', lessonId: 'sa_2', before: true }; // stale/irrelevant target
+  st.plannerUi.draggingLessonId = 'sa_1'; // sa_1 lives on 'unscheduled'
+  sandbox.plannerAllowLessonDrop(columnDragOverEvent(), 'wed'); // hovering column background, not a card
   sandbox.plannerDropLessonToDay(dropEvent('sa_1'), 'wed');
-  assert.strictEqual(lessonById('sa_1').dayKey, 'wed');
-  eqJson(dayOrderIds(WEEK_A, 'wed'), ['sa_2', 'sa_3', 'sa_1'], 'cross-day drop still appends to the end');
+  assert.strictEqual(lessonById('sa_1').dayKey, 'wed', 'the underlying dayKey write is unchanged (still a plain append)');
+  eqJson(dayOrderIds(WEEK_A, 'wed'), ['sa_2', 'sa_3', 'sa_1'], 'no hovered card -> appended to the end, same as before');
+});
+
+test('cross-day drop to a specific hovered position inserts there, not at the bottom', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'wed');
+  addStandaloneLesson('sa_3', 'C lesson', 'wed');
+  const st = getState();
+  st.plannerUi.draggingLessonId = 'sa_1'; // sa_1 lives on 'unscheduled', dragged onto 'wed'
+  sandbox.plannerCardDragOver(cardDragOverEvent(0, 40, 5), 'wed', 'sa_2'); // top half of sa_2 -> insert before it
+  sandbox.plannerDropLessonToDay(dropEvent('sa_1'), 'wed');
+  assert.strictEqual(lessonById('sa_1').dayKey, 'wed', 'the underlying dayKey write is unchanged (still a plain append)');
+  eqJson(dayOrderIds(WEEK_A, 'wed'), ['sa_1', 'sa_2', 'sa_3'], 'dropped at the hovered position, not appended to the end');
+});
+
+test('cross-day occurrence move also lands at the hovered position', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  addStandaloneLesson('sa_2', 'B lesson', 'wed');
+  addStandaloneLesson('sa_3', 'C lesson', 'wed');
+  const st = getState();
+  st.plannerUi.draggingLessonId = 'ul_1';
+  st.plannerUi.draggingSlot = { lessonId: 'ul_1', weekKey: WEEK_A, dayKey: 'mon' };
+  sandbox.plannerCardDragOver(cardDragOverEvent(100, 40, 135), 'wed', 'sa_2'); // bottom half of sa_2 -> insert after it
+  sandbox.plannerDropLessonToDay(dropEvent('ul_1'), 'wed');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'wed' }], 'the underlying slot move is unchanged');
+  eqJson(dayOrderIds(WEEK_A, 'wed'), ['sa_2', 'ul_1', 'sa_3'], 'dropped at the hovered position, not appended to the end');
+});
+
+test('cross-day placement never touches scheduledSlots/position beyond the existing append, and leaves teachingStatus alone', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'wed');
+  const st = getState();
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach');
+  st.plannerUi.draggingLessonId = 'ul_2';
+  sandbox.plannerCardDragOver(cardDragOverEvent(0, 40, 5), 'wed', 'sa_2'); // top half -> insert before sa_2
+  sandbox.plannerDropLessonToDay(dropEvent('ul_2'), 'wed');
+  eqJson(lessonById('ul_2').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'wed' }]);
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'cross-day placement must not change teachingStatus');
+});
+
+test('cross-day placement persists after a full re-render', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'wed');
+  addStandaloneLesson('sa_3', 'C lesson', 'wed');
+  const st = getState();
+  st.plannerUi.draggingLessonId = 'sa_1'; // sa_1 lives on 'unscheduled'
+  sandbox.plannerCardDragOver(cardDragOverEvent(0, 40, 5), 'wed', 'sa_2'); // top half of sa_2 -> insert before it
+  sandbox.plannerDropLessonToDay(dropEvent('sa_1'), 'wed');
+
+  st.plannerUi.weekKey = WEEK_A;
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  const idxSpelling = html.indexOf('Spelling test'); // sa_1's title
+  const idxB = html.indexOf('B lesson');
+  assert.ok(idxSpelling >= 0 && idxB >= 0, 'both cards should render');
+  assert.ok(idxSpelling < idxB, 'the cross-day-placed card should render before B lesson after re-render');
 });
 
 // ── Standalone (non-unit) lesson behaviour must be unchanged ────────────────────
