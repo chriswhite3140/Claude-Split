@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.42';
+const APP_VERSION = '1.13.43';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1277,7 +1277,8 @@ function plannerLessonCardHtml(lesson) {
 function plannerCardExpandIconHtml(onclickExpr, title) {
   return `<button class="planner-card-expand" type="button" title="Open lesson details"
     aria-label="Open ${escapeHtml(title || 'lesson')}"
-    onclick="event.stopPropagation();${onclickExpr}">⤢</button>`;
+    onclick="event.stopPropagation();${onclickExpr}"
+    onkeydown="event.stopPropagation()">⤢</button>`;
 }
 
 // HTML attributes that make the whole card body a click/keyboard-activatable trigger
@@ -1335,7 +1336,8 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
           ${plannerCardExpandIconHtml(openExpr, lesson.title)}
           <button class="planner-occ-remove" type="button" title="Remove from this day"
             aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
-            onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')">✕</button>
+            onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')"
+            onkeydown="event.stopPropagation()">✕</button>
         </div>
       </div>
     </div>

@@ -364,6 +364,20 @@ test('unit occurrence card: whole body opens the drawer (not navigation), expand
   assert.ok(/planner-occ-remove[\s\S]*?onclick="event\.stopPropagation\(\);plannerUnscheduleSlot/.test(html), 'the ✕ must stop propagation before unscheduling');
 });
 
+test('nested controls (✕ remove, expand icon) stop keydown propagation too, so Enter/Space on them cannot also fire the parent card\'s open-drawer handler', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const occHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  // keydown bubbles independently of click, so stopping propagation only in onclick is not
+  // enough — without this, pressing Enter/Space on the focused ✕ button would unschedule the
+  // slot AND trigger the parent card's onkeydown (open drawer) in the same keystroke.
+  assert.ok(/planner-occ-remove[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(occHtml), 'the ✕ remove button must stop keydown propagation');
+  assert.ok(/planner-card-expand[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(occHtml), 'the expand icon on the occurrence card must stop keydown propagation');
+
+  const standaloneHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(/planner-card-expand[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(standaloneHtml), 'the expand icon on the standalone card must stop keydown propagation');
+});
+
 test('clicking the card body (not just the expand icon) opens the drawer, for both card types', () => {
   resetState();
   const st = getState();
