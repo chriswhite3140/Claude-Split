@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.40';
+const APP_VERSION = '1.13.41';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1254,7 +1254,7 @@ function plannerLessonCardHtml(lesson) {
           ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
         </div>
         <div class="planner-card-actions">
-          ${plannerEditPencilHtml(`plannerOpenLessonDrawer('${plannerJsStr(lesson.id)}')`, lesson.title)}
+          ${plannerEditPencilHtml(`plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`, lesson.title)}
         </div>
       </div>
       <div class="planner-inline-actions">
@@ -1312,7 +1312,7 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
           ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
         </div>
         <div class="planner-card-actions">
-          ${plannerEditPencilHtml(`plannerOpenLessonDrawer('${plannerJsStr(lesson.id)}')`, lesson.title)}
+          ${plannerEditPencilHtml(`plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`, lesson.title)}
           <button class="planner-occ-remove" type="button" title="Remove from this day"
             aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
             onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')">✕</button>
@@ -1818,6 +1818,25 @@ function plannerOpenLessonDrawer(lessonId) {
   state.plannerUi.expandedICId = null;
   state.plannerUi.icShowAllYears = false;  // default the IC picker to the unit's year
   renderView();
+}
+
+// Pencil entry point for a board card specifically (both standalone and unit
+// occurrence cards). Wraps plannerOpenLessonDrawer — unchanged, and still used as-is
+// by Unit Plans' own lesson-row click — with a reset of the unit CD search/year filter
+// for a unit lesson, so the trailing unit-context CD panel in plannerUnitLessonEditHtml
+// doesn't inherit stale filter state left over from a previous Unit Plans session. This
+// reset must NOT live inside plannerOpenLessonDrawer itself: that function also opens a
+// lesson's edit drawer from within the Unit Plans detail view, where the CD search is
+// live in that view's own sidebar — resetting it there on every lesson-row click would
+// be an unwanted behaviour change to a different view.
+function plannerOpenLessonDrawerFromCard(lessonId) {
+  const lesson = state.lessonPlans.find(l => l.id === lessonId);
+  if (lesson && lesson.unitId) {
+    unitPlansEnsureUiState();
+    state.unitPlansUi.cdSearch = '';
+    state.unitPlansUi.cdShowAllYears = false;
+  }
+  plannerOpenLessonDrawer(lessonId);
 }
 
 function plannerStartLessonDrag(ev, lessonId) {

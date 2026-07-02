@@ -322,7 +322,7 @@ test('the pencil on a board occurrence opens that unit lesson in the planner dra
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   const st = getState();
   st.currentView = 'planner';
-  sandbox.plannerOpenLessonDrawer('ul_1');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
   assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'should select the clicked lesson');
   assert.strictEqual(st.plannerUi.drawerOpen, true, 'should open the lesson drawer');
   assert.strictEqual(st.currentView, 'planner', 'must stay on the Weekly Planner — no navigation to Unit Plans');
@@ -335,10 +335,10 @@ test('standalone card is a drag handle with a pencil edit button (no click-to-op
   assert.ok(html.includes('draggable="true"'), 'card body should be draggable');
   assert.ok(html.includes('plannerStartLessonDrag'), 'card body should wire the drag-start handler');
   assert.ok(html.includes('planner-card-edit'), 'card should have a pencil edit button');
-  assert.ok(html.includes("plannerOpenLessonDrawer('sa_1')"), 'pencil should open the lesson drawer');
+  assert.ok(html.includes("plannerOpenLessonDrawerFromCard('sa_1')"), 'pencil should open the lesson drawer');
   // Only the pencil opens the drawer (its onclick is stopPropagation-prefixed); the
   // card body must not carry a direct click-to-open handler that would fight dragging.
-  assert.ok(!html.includes('onclick="plannerOpenLessonDrawer'), 'card body must not have a direct click-to-open handler');
+  assert.ok(!html.includes('onclick="plannerOpenLessonDrawerFromCard'), 'card body must not have a direct click-to-open handler');
 });
 
 test('unit occurrence card is draggable with pencil-edit (opens the planner drawer, not a navigation) and keeps the remove ✕', () => {
@@ -348,10 +348,45 @@ test('unit occurrence card is draggable with pencil-edit (opens the planner draw
   assert.ok(html.includes('draggable="true"'), 'occurrence card should be draggable');
   assert.ok(html.includes('plannerStartOccurrenceDrag'), 'occurrence card should wire the occurrence drag-start');
   assert.ok(html.includes('planner-card-edit'), 'occurrence card should have a pencil edit button');
-  assert.ok(html.includes("plannerOpenLessonDrawer('ul_1')"), 'pencil should open the same planner drawer used for standalone cards, not a separate view');
+  assert.ok(html.includes("plannerOpenLessonDrawerFromCard('ul_1')"), 'pencil should open the same planner drawer used for standalone cards, not a separate view');
   assert.ok(html.includes('planner-occ-remove'), 'occurrence card should keep the ✕ remove control');
   assert.ok(html.includes('plannerUnscheduleSlot'), 'the ✕ should unschedule this slot');
-  assert.ok(!html.includes('onclick="plannerOpenLessonDrawer'), 'card body must not have a direct click-to-open handler');
+  assert.ok(!html.includes('onclick="plannerOpenLessonDrawerFromCard'), 'card body must not have a direct click-to-open handler');
+});
+
+test('opening a unit lesson from a board pencil resets the stale unit CD search/year filter', () => {
+  resetState();
+  const st = getState();
+  sandbox.unitPlansEnsureUiState();
+  // Simulate a search left over from a previous Unit Plans session.
+  st.unitPlansUi.cdSearch = 'some old search';
+  st.unitPlansUi.cdShowAllYears = true;
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  assert.strictEqual(st.unitPlansUi.cdSearch, '', 'the CD search must be cleared so the unit-context CD panel is not filtered by stale state');
+  assert.strictEqual(st.unitPlansUi.cdShowAllYears, false, 'the CD year filter must reset too');
+});
+
+test('opening a lesson from Unit Plans\' own lesson row must NOT reset that view\'s live CD search', () => {
+  resetState();
+  const st = getState();
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.cdSearch = 'a search the teacher is actively using in Unit Plans';
+  st.unitPlansUi.cdShowAllYears = true;
+  // unitLessonRowHtml's onclick calls plannerOpenLessonDrawer directly, not the
+  // board-pencil wrapper — that must stay untouched so Unit Plans' own sidebar search
+  // isn't wiped out just because a lesson's edit drawer was opened alongside it.
+  sandbox.plannerOpenLessonDrawer('ul_1');
+  assert.strictEqual(st.unitPlansUi.cdSearch, 'a search the teacher is actively using in Unit Plans', 'Unit Plans\' own CD search must be untouched by this path');
+  assert.strictEqual(st.unitPlansUi.cdShowAllYears, true, 'Unit Plans\' own CD year filter must be untouched by this path');
+});
+
+test('opening a standalone lesson from a board pencil leaves the unit CD search alone (nothing to reset)', () => {
+  resetState();
+  const st = getState();
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.cdSearch = 'unrelated search';
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  assert.strictEqual(st.unitPlansUi.cdSearch, 'unrelated search', 'a standalone lesson has no unit context, so nothing should be reset');
 });
 
 // ── Pencil opens full edit in the drawer / Unscheduled column removed ────────────
@@ -366,7 +401,7 @@ test('pencil on a unit occurrence populates the drawer with the full unit lesson
   st.lessonPlans[lidx] = { ...st.lessonPlans[lidx], title: 'Halves and quarters', subject: 'Mathematics', teachingStatus: 'reteach', intention: 'Partition shapes into equal parts.' };
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
 
-  sandbox.plannerOpenLessonDrawer('ul_1');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1'); // the actual pencil call path
   assert.strictEqual(st.currentView, 'planner', 'opening the drawer must not navigate to another view');
   assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1');
   assert.strictEqual(st.plannerUi.drawerOpen, true);
