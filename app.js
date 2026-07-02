@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.39';
+const APP_VERSION = '1.13.41';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1055,8 +1055,13 @@ function plannerJsStr(value) {
 }
 
 function renderPlanner(main) {
+  // The board is Mon–Fri only — there is no Unscheduled column. Unit lessons waiting
+  // to be scheduled live in the Unit Lessons rail; standalone lessons are always
+  // created directly into a day (see plannerAddLesson). A standalone lesson can still
+  // technically carry the legacy dayKey 'unscheduled' (e.g. pre-existing localStorage
+  // from before this change — normalizeLessonPlan still accepts it, unchanged), so
+  // those are surfaced separately below rather than silently dropped from the board.
   const plannerDays = [
-    { key: 'unscheduled', label: 'Unscheduled' },
     { key: 'mon', label: 'Monday' },
     { key: 'tue', label: 'Tuesday' },
     { key: 'wed', label: 'Wednesday' },
@@ -1071,6 +1076,10 @@ function renderPlanner(main) {
   // Exclude lessons that belong to a unit — those are placed on the board via
   // scheduledSlots (below), not by their legacy weekKey/dayKey.
   const weekLessons = state.lessonPlans.filter(lesson => lesson.weekKey === weekKey && !lesson.unitId);
+  // Any standalone lesson whose dayKey isn't one of the rendered columns (in practice
+  // only the legacy 'unscheduled' value) — kept visible in their own area instead of
+  // disappearing now that the Unscheduled column is gone.
+  const unassignedLessons = weekLessons.filter(lesson => !PLANNER_SCHEDULABLE_DAYS.includes(lesson.dayKey));
 
   // Unit lessons appear on the same board as standalone lessons — one card per slot
   // that targets the displayed week. The same lesson can yield several occurrences
@@ -1085,9 +1094,15 @@ function renderPlanner(main) {
     });
   });
 
-  // Scope the selected lesson to the displayed week so navigating weeks doesn't
-  // leave the drawer editing a now-hidden lesson from another week.
-  const selectedLesson = weekLessons.find(lesson => lesson.id === state.plannerUi.selectedLessonId) || null;
+  // Scope the selected lesson to the displayed week so navigating weeks doesn't leave
+  // the drawer editing a now-hidden lesson from another week. A standalone lesson must
+  // belong to this week; a unit lesson must have at least one occurrence this week —
+  // either way, that's exactly the set of lessons whose pencil is reachable on this board.
+  const anySelectedLesson = state.lessonPlans.find(lesson => lesson.id === state.plannerUi.selectedLessonId) || null;
+  const selectedLesson = anySelectedLesson && (
+    (!anySelectedLesson.unitId && weekLessons.some(l => l.id === anySelectedLesson.id)) ||
+    (anySelectedLesson.unitId && unitOccurrences.some(o => o.lesson.id === anySelectedLesson.id))
+  ) ? anySelectedLesson : null;
   if (!selectedLesson) {
     state.plannerUi.selectedLessonId = null;
     state.plannerUi.drawerOpen = false;
@@ -1148,9 +1163,10 @@ function renderPlanner(main) {
       <section class="card planner-shell-board">
         <div class="card-head">
           <div class="card-title">Week Board</div>
-          <div style="font-size:12px;color:var(--text3)">Click a lesson card to edit · drag to move between days</div>
+          <div style="font-size:12px;color:var(--text3)">Click the pencil to edit · drag to move between days</div>
         </div>
         ${noICsLoaded ? `<div class="planner-banner">No Instructional Components are loaded yet — lessons need at least one IC. Load curriculum/IC data first.</div>` : ''}
+        ${plannerUnassignedLessonsHtml(unassignedLessons)}
         ${boardIsEmpty ? `<div class="planner-empty-week">No lessons for this week yet. Use <strong>+ Add Lesson</strong> to create one, or drag a unit lesson from the left.</div>` : ''}
         <div class="planner-lesson-board">
           ${boardColumns}
@@ -1166,6 +1182,21 @@ function renderPlanner(main) {
           : `<div class="planner-shell-placeholder">Select any lesson card from the weekly board to open editing.</div>`}
       </aside>
     </div>
+  `;
+}
+
+// Fallback area for standalone lessons whose dayKey isn't one of the rendered board
+// columns — in practice only the legacy 'unscheduled' value, which can no longer be
+// assigned going forward (plannerAddLesson and the drawer's day picker are both
+// weekday-only now) but can still exist in already-saved data. Rendered as ordinary,
+// fully-interactive cards (pencil, drag, duplicate, delete all work unchanged) so nothing
+// is silently lost — dragging one onto a day column below reassigns it like any move.
+function plannerUnassignedLessonsHtml(unassignedLessons) {
+  if (!unassignedLessons.length) return '';
+  const n = unassignedLessons.length;
+  return `
+    <div class="planner-banner">${n} lesson${n === 1 ? '' : 's'} from before this change ${n === 1 ? 'has' : 'have'} no day assigned. Drag onto a day below, or use the pencil to pick one.</div>
+    <div class="planner-unassigned-cards">${unassignedLessons.map(lesson => plannerLessonCardHtml(lesson)).join('')}</div>
   `;
 }
 
@@ -1223,7 +1254,7 @@ function plannerLessonCardHtml(lesson) {
           ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
         </div>
         <div class="planner-card-actions">
-          ${plannerEditPencilHtml(`plannerOpenLessonDrawer('${plannerJsStr(lesson.id)}')`, lesson.title)}
+          ${plannerEditPencilHtml(`plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`, lesson.title)}
         </div>
       </div>
       <div class="planner-inline-actions">
@@ -1281,7 +1312,7 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
           ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
         </div>
         <div class="planner-card-actions">
-          ${plannerEditPencilHtml(`plannerOpenUnitFromBoard('${plannerJsStr(lesson.unitId)}','${plannerJsStr(lesson.id)}')`, lesson.title)}
+          ${plannerEditPencilHtml(`plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`, lesson.title)}
           <button class="planner-occ-remove" type="button" title="Remove from this day"
             aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
             onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')">✕</button>
@@ -1333,29 +1364,24 @@ function plannerUnitSidebarLessonHtml(lesson) {
   `;
 }
 
-// Jump from a board occurrence to its parent unit and open the clicked lesson's drawer
-// (the card's tooltip promises "edit this lesson"). renderUnitDetail clears the drawer
-// if the lesson somehow isn't in the unit, so an unknown lessonId is handled gracefully.
-function plannerOpenUnitFromBoard(unitId, lessonId) {
-  unitPlansEnsureUiState();
-  if (!state.unitPlans.some(u => u.id === unitId)) return;
-  state.unitPlansUi.openUnitId = unitId;
-  state.unitPlansUi.cdSearch = '';
-  state.unitPlansUi.cdShowAllYears = false;
-  plannerEnsureUiState();
-  // Open the clicked lesson's drawer (reset the IC-picker state like the other open paths).
-  state.plannerUi.selectedLessonId = lessonId || null;
-  state.plannerUi.drawerOpen = !!lessonId;
-  state.plannerUi.icSearch = '';
-  state.plannerUi.suggestedICIds = [];
-  state.plannerUi.expandedICId = null;
-  state.plannerUi.icShowAllYears = false;
-  showView('unit-plans');
+// Right-hand Lesson Drawer on the Weekly Planner. Pure dispatcher on lesson type — the
+// pencil on any board card (standalone or unit) opens this drawer in place, never
+// navigating to another view (see plannerOpenLessonDrawer). Each branch below is a
+// self-contained "edit mode" renderer; a future quick-view (read-only summary) can sit
+// as a separate layer in front of either without touching this edit-mode content.
+function plannerDrawerHtml(lesson, plannerDays) {
+  return lesson.unitId ? plannerUnitLessonEditHtml(lesson) : plannerStandaloneLessonEditHtml(lesson, plannerDays);
 }
 
-function plannerDrawerHtml(lesson, plannerDays) {
+function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
   const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
   const isTaught = lesson.status === 'taught';
+  // Day options are weekday-only going forward (no Unscheduled column to land in). A
+  // lesson already carrying the legacy 'unscheduled' value (pre-existing data) still
+  // shows that as its current selection instead of silently landing on Monday, so the
+  // teacher makes an active choice rather than the UI making one for them.
+  const dayOptions = plannerDays.map(day => `<option value="${day.key}" ${lesson.dayKey === day.key ? 'selected' : ''}>${day.label}</option>`).join('')
+    + (lesson.dayKey === 'unscheduled' ? `<option value="unscheduled" selected>Unscheduled (legacy — pick a day)</option>` : '');
   return `
     <div style="padding:16px">
       <div class="form-group">
@@ -1372,7 +1398,7 @@ function plannerDrawerHtml(lesson, plannerDays) {
       <div class="form-group">
         <label class="form-label">Day</label>
         <select class="form-input" onchange="plannerUpdateSelectedLessonField('dayKey', this.value)">
-          ${plannerDays.map(day => `<option value="${day.key}" ${lesson.dayKey === day.key ? 'selected' : ''}>${day.label}</option>`).join('')}
+          ${dayOptions}
         </select>
       </div>
       <div class="form-group">
@@ -1397,6 +1423,39 @@ function plannerDrawerHtml(lesson, plannerDays) {
           : `<button class="btn btn-primary" type="button" onclick="plannerSetLessonStatus('taught')">Mark as taught</button>`}
         <span style="font-size:12px;color:var(--text3)">Status: ${isTaught ? 'Taught' : 'Planned'}</span>
       </div>
+    </div>
+  `;
+}
+
+// Unit lesson edit mode, opened from its board card's pencil — the Weekly Planner's own
+// drawer, not a navigation to Unit Plans (see plannerOpenLessonDrawer). Shares its core
+// fields (title/subject/teaching status/intention/ICs) with the Unit Plans detail
+// drawer via plannerUnitLessonFieldsHtml, then adds the schedule section and — since
+// the board has no separate unit sidebar to show them in — a trailing unit-context
+// block (linked curriculum descriptors + assessment notes) so nothing requires leaving
+// the board to see or edit. unitCDPanelHtml/unitUpdateField are the exact functions
+// Unit Plans' own sidebar uses; reused as-is, they re-render in place on this view too.
+function plannerUnitLessonEditHtml(lesson) {
+  const unit = unitForLesson(lesson);
+  const unitContext = unit ? `
+      <div class="planner-unit-context">
+        <div class="planner-unit-context-title">Unit: ${escapeHtml(unit.title || 'Untitled unit')}</div>
+        <div class="form-group">
+          <label class="form-label">Linked curriculum descriptors</label>
+          <div id="unit-cd-panel">${unitCDPanelHtml(unit)}</div>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Assessment notes</label>
+          <textarea class="form-input" rows="4" placeholder="How will this unit be assessed?"
+            onblur="unitUpdateField('${plannerJsStr(unit.id)}','assessmentNotes',this.value)">${escapeHtml(unit.assessmentNotes || '')}</textarea>
+        </div>
+      </div>`
+    : '';
+  return `
+    <div style="padding:16px">
+      ${plannerUnitLessonFieldsHtml(lesson)}
+      ${unitLessonScheduleHtml(lesson)}
+      ${unitContext}
     </div>
   `;
 }
@@ -1761,6 +1820,25 @@ function plannerOpenLessonDrawer(lessonId) {
   renderView();
 }
 
+// Pencil entry point for a board card specifically (both standalone and unit
+// occurrence cards). Wraps plannerOpenLessonDrawer — unchanged, and still used as-is
+// by Unit Plans' own lesson-row click — with a reset of the unit CD search/year filter
+// for a unit lesson, so the trailing unit-context CD panel in plannerUnitLessonEditHtml
+// doesn't inherit stale filter state left over from a previous Unit Plans session. This
+// reset must NOT live inside plannerOpenLessonDrawer itself: that function also opens a
+// lesson's edit drawer from within the Unit Plans detail view, where the CD search is
+// live in that view's own sidebar — resetting it there on every lesson-row click would
+// be an unwanted behaviour change to a different view.
+function plannerOpenLessonDrawerFromCard(lessonId) {
+  const lesson = state.lessonPlans.find(l => l.id === lessonId);
+  if (lesson && lesson.unitId) {
+    unitPlansEnsureUiState();
+    state.unitPlansUi.cdSearch = '';
+    state.unitPlansUi.cdShowAllYears = false;
+  }
+  plannerOpenLessonDrawer(lessonId);
+}
+
 function plannerStartLessonDrag(ev, lessonId) {
   state.plannerUi.draggingLessonId = lessonId;
   state.plannerUi.draggingSlot = null;
@@ -2083,7 +2161,11 @@ function plannerReorderWithinDay(weekKey, dayKey, movedLessonId, insertionTarget
 function plannerAddLesson(dayKey) {
   plannerEnsureUiState();
   const weekKey = plannerSelectedWeekKey();
-  const targetDay = ['unscheduled', 'mon', 'tue', 'wed', 'thu', 'fri'].includes(dayKey) ? dayKey : 'unscheduled';
+  // New lessons always land on a real day — there's no Unscheduled column to hold an
+  // unassigned one. The per-column "+ Add" buttons always pass a valid weekday; only
+  // the top-bar "+ Add Lesson" button calls this with no day, so it needs a default —
+  // Monday, the first day of the board.
+  const targetDay = PLANNER_SCHEDULABLE_DAYS.includes(dayKey) ? dayKey : 'mon';
   const maxPos = state.lessonPlans
     .filter(lesson => lesson.weekKey === weekKey && lesson.dayKey === targetDay)
     .reduce((max, lesson) => Math.max(max, lesson.position || 0), 0);
@@ -2153,7 +2235,10 @@ function plannerUpdateSelectedLessonField(field, value) {
 
   let nextValue = value;
   if (field === 'dayKey') {
-    nextValue = ['unscheduled', 'mon', 'tue', 'wed', 'thu', 'fri'].includes(value) ? value : state.lessonPlans[idx].dayKey;
+    // Weekday-only, going forward — a lesson can no longer be (re)assigned into the
+    // legacy 'unscheduled' state via this drawer, even defensively (a value outside
+    // the real days is rejected as a no-op, not written).
+    nextValue = PLANNER_SCHEDULABLE_DAYS.includes(value) ? value : state.lessonPlans[idx].dayKey;
   }
   state.lessonPlans[idx] = { ...state.lessonPlans[idx], [field]: nextValue };
   saveLessonPlansState();
@@ -2642,11 +2727,13 @@ function unitLessonRowHtml(unit, lesson) {
   `;
 }
 
-// Lesson drawer within a unit. Reuses the planner's IC-linking engine (same element
-// ids, same handlers) plus the shared lesson-field updater, so search / suggest /
-// expand / create-IC all work unchanged. Adds a teaching-status selector (a PR1
-// data-model field) in place of the weekly planner's day/taught controls.
-function unitLessonDrawerHtml(lesson) {
+// Unit lesson core fields — title, subject, teaching status, learning intention, and
+// the IC picker (reuses the planner's IC-linking engine: same element ids, same
+// handlers, so search / suggest / expand / create-IC all work unchanged). Shared by
+// the Unit Plans detail drawer (unitLessonDrawerHtml) and the Weekly Planner's own
+// drawer (plannerUnitLessonEditHtml) so both surfaces edit the exact same fields the
+// exact same way.
+function plannerUnitLessonFieldsHtml(lesson) {
   const icCount = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds.length : 0;
   const unit = unitForLesson(lesson);
   const icYearToggle = (unit && normaliseYear(unit.yearLevel))
@@ -2656,7 +2743,6 @@ function unitLessonDrawerHtml(lesson) {
        </div>`
     : '';
   return `
-    <div style="padding:16px">
       <div class="form-group">
         <label class="form-label">Title</label>
         <input class="form-input" type="text" value="${escapeHtml(lesson.title || '')}" oninput="plannerUpdateSelectedLessonField('title', this.value)">
@@ -2690,7 +2776,13 @@ function unitLessonDrawerHtml(lesson) {
         ${icYearToggle}
         <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
       </div>
+  `;
+}
 
+function unitLessonDrawerHtml(lesson) {
+  return `
+    <div style="padding:16px">
+      ${plannerUnitLessonFieldsHtml(lesson)}
       ${unitLessonScheduleHtml(lesson)}
     </div>
   `;

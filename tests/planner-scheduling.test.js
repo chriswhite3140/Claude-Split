@@ -317,15 +317,15 @@ test('malformed scheduledSlots entries do not crash render or normalize', () => 
   eqJson(normalized.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
 });
 
-test('the pencil on a board occurrence opens that unit lesson in its drawer', () => {
+test('the pencil on a board occurrence opens that unit lesson in the planner drawer, without navigating away', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
-  sandbox.plannerOpenUnitFromBoard('unit_1', 'ul_1');
   const st = getState();
-  assert.strictEqual(st.unitPlansUi.openUnitId, 'unit_1', 'should open the parent unit');
+  st.currentView = 'planner';
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
   assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'should select the clicked lesson');
   assert.strictEqual(st.plannerUi.drawerOpen, true, 'should open the lesson drawer');
-  assert.strictEqual(st.currentView, 'unit-plans', 'should navigate to Unit Plans');
+  assert.strictEqual(st.currentView, 'planner', 'must stay on the Weekly Planner — no navigation to Unit Plans');
 });
 
 // ── Pencil-to-edit + drag scheduled cards between days (UX polish) ───────────────
@@ -335,23 +335,147 @@ test('standalone card is a drag handle with a pencil edit button (no click-to-op
   assert.ok(html.includes('draggable="true"'), 'card body should be draggable');
   assert.ok(html.includes('plannerStartLessonDrag'), 'card body should wire the drag-start handler');
   assert.ok(html.includes('planner-card-edit'), 'card should have a pencil edit button');
-  assert.ok(html.includes("plannerOpenLessonDrawer('sa_1')"), 'pencil should open the lesson drawer');
+  assert.ok(html.includes("plannerOpenLessonDrawerFromCard('sa_1')"), 'pencil should open the lesson drawer');
   // Only the pencil opens the drawer (its onclick is stopPropagation-prefixed); the
   // card body must not carry a direct click-to-open handler that would fight dragging.
-  assert.ok(!html.includes('onclick="plannerOpenLessonDrawer'), 'card body must not have a direct click-to-open handler');
+  assert.ok(!html.includes('onclick="plannerOpenLessonDrawerFromCard'), 'card body must not have a direct click-to-open handler');
 });
 
-test('unit occurrence card is draggable with pencil-edit and keeps the remove ✕', () => {
+test('unit occurrence card is draggable with pencil-edit (opens the planner drawer, not a navigation) and keeps the remove ✕', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   const html = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
   assert.ok(html.includes('draggable="true"'), 'occurrence card should be draggable');
   assert.ok(html.includes('plannerStartOccurrenceDrag'), 'occurrence card should wire the occurrence drag-start');
   assert.ok(html.includes('planner-card-edit'), 'occurrence card should have a pencil edit button');
-  assert.ok(html.includes('plannerOpenUnitFromBoard'), 'pencil should open the unit lesson');
+  assert.ok(html.includes("plannerOpenLessonDrawerFromCard('ul_1')"), 'pencil should open the same planner drawer used for standalone cards, not a separate view');
   assert.ok(html.includes('planner-occ-remove'), 'occurrence card should keep the ✕ remove control');
   assert.ok(html.includes('plannerUnscheduleSlot'), 'the ✕ should unschedule this slot');
-  assert.ok(!html.includes('onclick="plannerOpenUnitFromBoard'), 'card body must not have a direct click-to-open handler');
+  assert.ok(!html.includes('onclick="plannerOpenLessonDrawerFromCard'), 'card body must not have a direct click-to-open handler');
+});
+
+test('opening a unit lesson from a board pencil resets the stale unit CD search/year filter', () => {
+  resetState();
+  const st = getState();
+  sandbox.unitPlansEnsureUiState();
+  // Simulate a search left over from a previous Unit Plans session.
+  st.unitPlansUi.cdSearch = 'some old search';
+  st.unitPlansUi.cdShowAllYears = true;
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  assert.strictEqual(st.unitPlansUi.cdSearch, '', 'the CD search must be cleared so the unit-context CD panel is not filtered by stale state');
+  assert.strictEqual(st.unitPlansUi.cdShowAllYears, false, 'the CD year filter must reset too');
+});
+
+test('opening a lesson from Unit Plans\' own lesson row must NOT reset that view\'s live CD search', () => {
+  resetState();
+  const st = getState();
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.cdSearch = 'a search the teacher is actively using in Unit Plans';
+  st.unitPlansUi.cdShowAllYears = true;
+  // unitLessonRowHtml's onclick calls plannerOpenLessonDrawer directly, not the
+  // board-pencil wrapper — that must stay untouched so Unit Plans' own sidebar search
+  // isn't wiped out just because a lesson's edit drawer was opened alongside it.
+  sandbox.plannerOpenLessonDrawer('ul_1');
+  assert.strictEqual(st.unitPlansUi.cdSearch, 'a search the teacher is actively using in Unit Plans', 'Unit Plans\' own CD search must be untouched by this path');
+  assert.strictEqual(st.unitPlansUi.cdShowAllYears, true, 'Unit Plans\' own CD year filter must be untouched by this path');
+});
+
+test('opening a standalone lesson from a board pencil leaves the unit CD search alone (nothing to reset)', () => {
+  resetState();
+  const st = getState();
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.cdSearch = 'unrelated search';
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  assert.strictEqual(st.unitPlansUi.cdSearch, 'unrelated search', 'a standalone lesson has no unit context, so nothing should be reset');
+});
+
+// ── Pencil opens full edit in the drawer / Unscheduled column removed ────────────
+console.log('Pencil-to-drawer edit and Unscheduled column removal');
+
+test('pencil on a unit occurrence populates the drawer with the full unit lesson edit fields, staying on the planner', () => {
+  resetState();
+  const st = getState();
+  const uidx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[uidx] = { ...st.unitPlans[uidx], linkedCDIds: ['AC9M3N01'], assessmentNotes: 'Exit ticket each fortnight.' };
+  const lidx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[lidx] = { ...st.lessonPlans[lidx], title: 'Halves and quarters', subject: 'Mathematics', teachingStatus: 'reteach', intention: 'Partition shapes into equal parts.' };
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1'); // the actual pencil call path
+  assert.strictEqual(st.currentView, 'planner', 'opening the drawer must not navigate to another view');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1');
+  assert.strictEqual(st.plannerUi.drawerOpen, true);
+
+  const html = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
+  assert.ok(html.includes('value="Halves and quarters"'), 'title should populate');
+  assert.ok(html.includes('Mathematics') && html.includes('selected'), 'subject should populate');
+  assert.ok(/<option value="reteach"[^>]*selected/.test(html), 'teaching status should populate as selected');
+  assert.ok(html.includes('Partition shapes into equal parts.'), 'learning intention should populate');
+  assert.ok(html.includes('planner-ic-results'), 'IC picker should be present');
+  assert.ok(html.includes('Schedule to week / day'), 'schedule section should be present');
+  assert.ok(html.includes('Unit: Fractions'), 'unit context header should be present');
+  assert.ok(html.includes('unit-cd-panel'), 'linked CD panel should be present');
+  assert.ok(html.includes('AC9M3N01'), 'the unit\'s linked CD should populate in the panel');
+  assert.ok(html.includes('Exit ticket each fortnight.'), 'assessment notes should populate');
+});
+
+test('pencil on a standalone card populates the drawer with the standalone edit fields', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], title: 'Spelling test', subject: 'English', dayKey: 'wed', intention: 'Weekly spelling check.' };
+  const html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }, { key: 'wed', label: 'Wednesday' }]);
+  assert.ok(html.includes('value="Spelling test"'), 'title should populate');
+  assert.ok(html.includes('Weekly spelling check.'), 'learning intention should populate');
+  assert.ok(/<option value="wed"[^>]*selected/.test(html), 'day should populate as selected');
+  assert.ok(html.includes('Mark as taught'), 'status control should be present for a standalone lesson');
+  assert.ok(!html.includes('Unit:'), 'a standalone lesson must not show unit context');
+});
+
+test('the rendered board has no Unscheduled column', () => {
+  resetState();
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(!/>Unscheduled</.test(html), 'no column header should read "Unscheduled"');
+  assert.strictEqual((html.match(/class="planner-lesson-column"/g) || []).length, 5, 'exactly 5 day columns (Mon–Fri) should render');
+});
+
+test('a legacy lesson with no day assigned is shown in a fallback area, not silently dropped', () => {
+  resetState();
+  assert.strictEqual(lessonById('sa_1').dayKey, 'unscheduled', 'sanity check: the fixture starts in the legacy state');
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('planner-unassigned-cards'), 'the fallback area should render');
+  assert.ok(html.includes('Spelling test'), 'the legacy lesson should still be visible somewhere on the board');
+});
+
+test('plannerAddLesson() with no day defaults to Monday, never Unscheduled', () => {
+  resetState();
+  sandbox.plannerAddLesson();
+  const st = getState();
+  const created = st.lessonPlans.find(l => l.id === st.plannerUi.selectedLessonId);
+  assert.strictEqual(created.dayKey, 'mon', 'a freshly created lesson must always land on a real day');
+});
+
+test('the drawer cannot reassign a lesson back into the legacy Unscheduled state', () => {
+  resetState();
+  sandbox.plannerOpenLessonDrawer('sa_1'); // sa_1 starts on 'unscheduled' in the fixture
+  const before = lessonById('sa_1').dayKey;
+  sandbox.plannerUpdateSelectedLessonField('dayKey', 'unscheduled');
+  assert.strictEqual(lessonById('sa_1').dayKey, before, 'an out-of-range dayKey write must be rejected as a no-op');
+});
+
+test('the standalone drawer day-select only offers "Unscheduled (legacy)" for a lesson that already has it', () => {
+  resetState();
+  const days = [{ key: 'mon', label: 'Monday' }, { key: 'tue', label: 'Tuesday' }];
+  // A normally-scheduled lesson must never be offered the legacy option.
+  const scheduled = sandbox.normalizeLessonPlan({ id: 'sa_x', title: 'X', weekKey: WEEK_A, dayKey: 'mon' });
+  const scheduledHtml = sandbox.plannerStandaloneLessonEditHtml(scheduled, days);
+  assert.ok(!scheduledHtml.includes('legacy'), 'a normal lesson must not see the legacy option');
+
+  // A lesson that is already legacy-unassigned must still show its true current state.
+  const legacyHtml = sandbox.plannerStandaloneLessonEditHtml(lessonById('sa_1'), days);
+  assert.ok(/<option value="unscheduled" selected>/.test(legacyHtml), 'a legacy lesson keeps its current value visible and selected');
 });
 
 test('dragging a scheduled occurrence to another day moves that slot (not append)', () => {

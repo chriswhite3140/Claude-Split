@@ -1111,7 +1111,7 @@ body[data-text-size="large"] {
 
 .planner-lesson-board {
   display: grid;
-  grid-template-columns: repeat(6, minmax(160px, 1fr));
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
   gap: 10px;
   padding: 12px 14px 14px;
   overflow-x: auto;
@@ -1265,6 +1265,34 @@ body[data-text-size="large"] {
   color: var(--status-warning-text);
   border-radius: 8px;
   font-size: var(--helper-size);
+}
+
+/* Fallback area for legacy lessons with no day assigned (see plannerUnassignedLessonsHtml) —
+   reuses the ordinary card component, just laid out in a wrapping row instead of a column. */
+.planner-unassigned-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+.planner-unassigned-cards .planner-lesson-card-wrap {
+  width: 220px;
+  flex-shrink: 0;
+}
+
+/* Trailing unit-context block in a unit lesson's planner drawer (CDs + assessment
+   notes) — visually set apart from the lesson-specific fields above it since it edits
+   the parent unit, not the lesson itself. */
+.planner-unit-context {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.planner-unit-context-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
 }
 
 .planner-add-in-column {
