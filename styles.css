@@ -1179,7 +1179,8 @@ body[data-text-size="large"] {
 }
 .planner-lesson-card:active { cursor: grabbing; }
 
-/* Top-right actions on a board card: expand/open icon (and ✕ remove on unit occurrences). */
+/* Top-right actions on a board card: ✕ remove on unit occurrences only (standalone cards
+   have no top-right action now that the whole card opens the drawer on click). */
 .planner-card-actions {
   position: absolute;
   top: 4px;
@@ -1187,26 +1188,6 @@ body[data-text-size="large"] {
   display: flex;
   gap: 3px;
   align-items: center;
-}
-.planner-card-expand {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text3);
-  border-radius: 4px;
-  width: 24px;
-  height: 24px;
-  line-height: 1;
-  font-size: 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-.planner-card-expand:hover {
-  color: var(--status-info-text);
-  border-color: var(--status-info-border);
-  background: var(--status-info-bg);
 }
 
 .planner-lesson-card-wrap {

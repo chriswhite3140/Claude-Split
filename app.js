@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.43';
+const APP_VERSION = '1.13.44';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1097,7 +1097,7 @@ function renderPlanner(main) {
   // Scope the selected lesson to the displayed week so navigating weeks doesn't leave
   // the drawer editing a now-hidden lesson from another week. A standalone lesson must
   // belong to this week; a unit lesson must have at least one occurrence this week —
-  // either way, that's exactly the set of lessons whose pencil is reachable on this board.
+  // either way, that's exactly the set of lessons whose card is reachable on this board.
   const anySelectedLesson = state.lessonPlans.find(lesson => lesson.id === state.plannerUi.selectedLessonId) || null;
   const selectedLesson = anySelectedLesson && (
     (!anySelectedLesson.unitId && weekLessons.some(l => l.id === anySelectedLesson.id)) ||
@@ -1163,7 +1163,7 @@ function renderPlanner(main) {
       <section class="card planner-shell-board">
         <div class="card-head">
           <div class="card-title">Week Board</div>
-          <div style="font-size:12px;color:var(--text3)">Click the pencil to edit · drag to move between days</div>
+          <div style="font-size:12px;color:var(--text3)">Click a lesson to edit · drag to move between days</div>
         </div>
         ${noICsLoaded ? `<div class="planner-banner">No Instructional Components are loaded yet — lessons need at least one IC. Load curriculum/IC data first.</div>` : ''}
         ${plannerUnassignedLessonsHtml(unassignedLessons)}
@@ -1189,13 +1189,13 @@ function renderPlanner(main) {
 // columns — in practice only the legacy 'unscheduled' value, which can no longer be
 // assigned going forward (plannerAddLesson and the drawer's day picker are both
 // weekday-only now) but can still exist in already-saved data. Rendered as ordinary,
-// fully-interactive cards (pencil, drag, duplicate, delete all work unchanged) so nothing
-// is silently lost — dragging one onto a day column below reassigns it like any move.
+// fully-interactive cards (click-to-edit, drag, duplicate, delete all work unchanged) so
+// nothing is silently lost — dragging one onto a day column below reassigns it like any move.
 function plannerUnassignedLessonsHtml(unassignedLessons) {
   if (!unassignedLessons.length) return '';
   const n = unassignedLessons.length;
   return `
-    <div class="planner-banner">${n} lesson${n === 1 ? '' : 's'} from before this change ${n === 1 ? 'has' : 'have'} no day assigned. Drag onto a day below, or use the pencil to pick one.</div>
+    <div class="planner-banner">${n} lesson${n === 1 ? '' : 's'} from before this change ${n === 1 ? 'has' : 'have'} no day assigned. Drag onto a day below, or click one to pick a day.</div>
     <div class="planner-unassigned-cards">${unassignedLessons.map(lesson => plannerLessonCardHtml(lesson)).join('')}</div>
   `;
 }
@@ -1255,9 +1255,6 @@ function plannerLessonCardHtml(lesson) {
           <span class="planner-status-pill ${isTaught ? 'is-taught' : ''}">${isTaught ? 'Taught' : 'Planned'}</span>
           ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
         </div>
-        <div class="planner-card-actions">
-          ${plannerCardExpandIconHtml(openExpr, lesson.title)}
-        </div>
       </div>
       <div class="planner-inline-actions">
         <button class="planner-mini-btn" type="button" onclick="plannerDuplicateLesson('${plannerJsStr(lesson.id)}')">Duplicate</button>
@@ -1265,20 +1262,6 @@ function plannerLessonCardHtml(lesson) {
       </div>
     </div>
   `;
-}
-
-// Small "open panel" button (top-right of a board card) — a visual affordance for the
-// same action the whole card body now performs on click (see the card's own onclick/
-// onkeydown). Not "edit": the card isn't a form, it's a trigger that opens the lesson
-// in the drawer, where editing happens. stopPropagation just avoids a redundant double
-// call to onclickExpr via bubbling into the card's own click handler underneath it.
-// onclickExpr is the JS call to open the right drawer (standalone vs unit) — the exact
-// same expression is reused as the card body's own onclick, see plannerCardOpenAttrs.
-function plannerCardExpandIconHtml(onclickExpr, title) {
-  return `<button class="planner-card-expand" type="button" title="Open lesson details"
-    aria-label="Open ${escapeHtml(title || 'lesson')}"
-    onclick="event.stopPropagation();${onclickExpr}"
-    onkeydown="event.stopPropagation()">⤢</button>`;
 }
 
 // HTML attributes that make the whole card body a click/keyboard-activatable trigger
@@ -1309,7 +1292,7 @@ function plannerLessonICSummaryHtml(lesson) {
 // A unit lesson's card as it appears on the weekly board, scheduled for one slot
 // (weekKey + dayKey). Visually distinct from standalone cards (.is-unit left border
 // + unit chip). The card body is a drag handle — dragging it to another day moves this
-// slot (remove old {weekKey, dayKey}, add new). A pencil opens the lesson for editing;
+// slot (remove old {weekKey, dayKey}, add new). Clicking the card opens it for editing;
 // the ✕ removes only this occurrence.
 function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
   const unit = unitForLesson(lesson);
@@ -1333,7 +1316,6 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
           ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
         </div>
         <div class="planner-card-actions">
-          ${plannerCardExpandIconHtml(openExpr, lesson.title)}
           <button class="planner-occ-remove" type="button" title="Remove from this day"
             aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
             onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')"
@@ -1386,9 +1368,9 @@ function plannerUnitSidebarLessonHtml(lesson) {
   `;
 }
 
-// Right-hand Lesson Drawer on the Weekly Planner. Pure dispatcher on lesson type — the
-// pencil on any board card (standalone or unit) opens this drawer in place, never
-// navigating to another view (see plannerOpenLessonDrawer). Each branch below is a
+// Right-hand Lesson Drawer on the Weekly Planner. Pure dispatcher on lesson type — clicking
+// any board card (standalone or unit) opens this drawer in place, never navigating to
+// another view (see plannerOpenLessonDrawer). Each branch below is a
 // self-contained "edit mode" renderer; a future quick-view (read-only summary) can sit
 // as a separate layer in front of either without touching this edit-mode content.
 function plannerDrawerHtml(lesson, plannerDays) {
@@ -1449,7 +1431,7 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
   `;
 }
 
-// Unit lesson edit mode, opened from its board card's pencil — the Weekly Planner's own
+// Unit lesson edit mode, opened by clicking its board card — the Weekly Planner's own
 // drawer, not a navigation to Unit Plans (see plannerOpenLessonDrawer). Shares its core
 // fields (title/subject/teaching status/intention/ICs) with the Unit Plans detail
 // drawer via plannerUnitLessonFieldsHtml, then adds the schedule section and — since
