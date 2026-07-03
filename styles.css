@@ -1179,7 +1179,7 @@ body[data-text-size="large"] {
 }
 .planner-lesson-card:active { cursor: grabbing; }
 
-/* Top-right actions on a board card: edit pencil (and ✕ remove on unit occurrences). */
+/* Top-right actions on a board card: expand/open icon (and ✕ remove on unit occurrences). */
 .planner-card-actions {
   position: absolute;
   top: 4px;
@@ -1188,7 +1188,7 @@ body[data-text-size="large"] {
   gap: 3px;
   align-items: center;
 }
-.planner-card-edit {
+.planner-card-expand {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text3);
@@ -1203,7 +1203,7 @@ body[data-text-size="large"] {
   justify-content: center;
   padding: 0;
 }
-.planner-card-edit:hover {
+.planner-card-expand:hover {
   color: var(--status-info-text);
   border-color: var(--status-info-border);
   background: var(--status-info-bg);

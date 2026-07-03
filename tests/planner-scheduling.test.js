@@ -329,29 +329,85 @@ test('the pencil on a board occurrence opens that unit lesson in the planner dra
 });
 
 // ── Pencil-to-edit + drag scheduled cards between days (UX polish) ───────────────
-test('standalone card is a drag handle with a pencil edit button (no click-to-open body)', () => {
+test('standalone card is a drag handle whose whole body opens the drawer, with an expand icon affordance', () => {
   resetState();
   const html = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
   assert.ok(html.includes('draggable="true"'), 'card body should be draggable');
   assert.ok(html.includes('plannerStartLessonDrag'), 'card body should wire the drag-start handler');
-  assert.ok(html.includes('planner-card-edit'), 'card should have a pencil edit button');
-  assert.ok(html.includes("plannerOpenLessonDrawerFromCard('sa_1')"), 'pencil should open the lesson drawer');
-  // Only the pencil opens the drawer (its onclick is stopPropagation-prefixed); the
-  // card body must not carry a direct click-to-open handler that would fight dragging.
-  assert.ok(!html.includes('onclick="plannerOpenLessonDrawerFromCard'), 'card body must not have a direct click-to-open handler');
+  assert.ok(html.includes('planner-card-expand'), 'card should have an expand/open-panel icon (not a pencil)');
+  assert.ok(!html.includes('planner-card-edit'), 'the old pencil class must be gone');
+  assert.ok(!html.includes('✎'), 'the pencil glyph must be replaced');
+  // The open expression appears 3 times by design: the card body's own onclick, its
+  // onkeydown (Enter/Space), and the icon's onclick — all three drive the same action.
+  const matches = html.match(/plannerOpenLessonDrawerFromCard\('sa_1'\)/g) || [];
+  assert.strictEqual(matches.length, 3, 'card onclick + card onkeydown + icon onclick should all wire the open handler');
+  assert.ok(/class="planner-lesson-card[^"]*"[\s\S]{0,300}?role="button" tabindex="0"[\s\S]{0,120}?onclick="plannerOpenLessonDrawerFromCard\('sa_1'\)"/.test(html), 'the card body itself must carry a click handler, not just the icon');
+  assert.ok(html.includes("onkeydown=\"if(event.key==='Enter'||event.key===' '){event.preventDefault();plannerOpenLessonDrawerFromCard('sa_1')}\""), 'the card body should be keyboard-activatable (Enter/Space) too');
 });
 
-test('unit occurrence card is draggable with pencil-edit (opens the planner drawer, not a navigation) and keeps the remove ✕', () => {
+test('unit occurrence card: whole body opens the drawer (not navigation), expand icon present, ✕ remove unaffected', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   const html = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
   assert.ok(html.includes('draggable="true"'), 'occurrence card should be draggable');
   assert.ok(html.includes('plannerStartOccurrenceDrag'), 'occurrence card should wire the occurrence drag-start');
-  assert.ok(html.includes('planner-card-edit'), 'occurrence card should have a pencil edit button');
-  assert.ok(html.includes("plannerOpenLessonDrawerFromCard('ul_1')"), 'pencil should open the same planner drawer used for standalone cards, not a separate view');
+  assert.ok(html.includes('planner-card-expand'), 'occurrence card should have an expand/open-panel icon (not a pencil)');
+  assert.ok(!html.includes('planner-card-edit'), 'the old pencil class must be gone');
+  // Card onclick + card onkeydown + icon onclick, same as the standalone card.
+  const matches = html.match(/plannerOpenLessonDrawerFromCard\('ul_1'\)/g) || [];
+  assert.strictEqual(matches.length, 3, 'card onclick + card onkeydown + icon onclick should all wire the open handler');
+  assert.ok(/class="planner-lesson-card is-unit[^"]*"[\s\S]{0,300}?role="button" tabindex="0"[\s\S]{0,120}?onclick="plannerOpenLessonDrawerFromCard\('ul_1'\)"/.test(html), 'the card body itself must carry a click handler, not just the icon');
   assert.ok(html.includes('planner-occ-remove'), 'occurrence card should keep the ✕ remove control');
   assert.ok(html.includes('plannerUnscheduleSlot'), 'the ✕ should unschedule this slot');
-  assert.ok(!html.includes('onclick="plannerOpenLessonDrawerFromCard'), 'card body must not have a direct click-to-open handler');
+  // The ✕ must stop propagation so clicking it can never also trigger the card's own
+  // click-to-open handler underneath it.
+  assert.ok(/planner-occ-remove[\s\S]*?onclick="event\.stopPropagation\(\);plannerUnscheduleSlot/.test(html), 'the ✕ must stop propagation before unscheduling');
+});
+
+test('nested controls (✕ remove, expand icon) stop keydown propagation too, so Enter/Space on them cannot also fire the parent card\'s open-drawer handler', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const occHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  // keydown bubbles independently of click, so stopping propagation only in onclick is not
+  // enough — without this, pressing Enter/Space on the focused ✕ button would unschedule the
+  // slot AND trigger the parent card's onkeydown (open drawer) in the same keystroke.
+  assert.ok(/planner-occ-remove[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(occHtml), 'the ✕ remove button must stop keydown propagation');
+  assert.ok(/planner-card-expand[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(occHtml), 'the expand icon on the occurrence card must stop keydown propagation');
+
+  const standaloneHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(/planner-card-expand[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(standaloneHtml), 'the expand icon on the standalone card must stop keydown propagation');
+});
+
+test('clicking the card body (not just the expand icon) opens the drawer, for both card types', () => {
+  resetState();
+  const st = getState();
+  // The card body's own onclick wires the exact same call as the expand icon (verified
+  // above) — invoking it directly is the faithful simulation of a browser click landing
+  // on the card body, since that's literally what its onclick attribute runs.
+  assert.strictEqual(st.plannerUi.drawerOpen, false, 'sanity check: drawer starts closed');
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1'); // == clicking the standalone card body
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'sa_1', 'clicking the card body should select the lesson');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'clicking the card body should open the drawer');
+  assert.strictEqual(st.currentView, 'planner', 'must not navigate away');
+
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1'); // == clicking a unit occurrence card body
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'clicking a unit occurrence card body should select the lesson');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'clicking a unit occurrence card body should open the drawer');
+  assert.strictEqual(st.currentView, 'planner', 'must stay on the Weekly Planner, not navigate to Unit Plans');
+
+  // The drawer opens in the exact same fully-editable mode as before — no separate
+  // read-only quick-view was introduced by making the card body clickable.
+  const html = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
+  assert.ok(html.includes('Teaching status'), 'the unit lesson drawer should render its full editable field set, unchanged');
+});
+
+test('the Unit Lessons rail is unaffected — no expand icon, no card-body click wiring', () => {
+  resetState();
+  const html = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_1'));
+  assert.ok(!html.includes('planner-card-expand'), 'rail pills must not gain the new expand icon');
+  assert.ok(!html.includes('plannerOpenLessonDrawerFromCard'), 'rail pills must not gain click-to-open — they remain drag-only, unchanged');
 });
 
 test('opening a unit lesson from a board pencil resets the stale unit CD search/year filter', () => {
