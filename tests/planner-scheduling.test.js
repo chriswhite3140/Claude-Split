@@ -82,11 +82,14 @@ vm.createContext(sandbox);
 // onkeydown="..." attribute pulled out of rendered markup) as a real function *inside this
 // same vm context* — so a test can execute the actual JS the browser would run, against a
 // synthetic event, rather than re-deriving the same behaviour by calling a function directly.
+// Inline handlers in a real browser run with `this` bound to the element the attribute is
+// on, so thisArg is passed through via .call() to match that (none of our current inline
+// handlers reference `this`, but the helper should still be faithful to browser semantics).
 const appSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 vm.runInContext(
   appSrc +
   '\n;globalThis.__getState = function(){ return state; };\n' +
-  ';globalThis.__runInlineHandler = function(code, evt){ return (new Function("event", code))(evt); };\n',
+  ';globalThis.__runInlineHandler = function(code, evt, thisArg){ return (new Function("event", code)).call(thisArg, evt); };\n',
   sandbox,
   { filename: 'app.js' }
 );
@@ -175,10 +178,13 @@ function extractAttr(tagSrc, attrName) {
 // rendered markup) against a synthetic KeyboardEvent-like object, inside the same vm
 // context app.js was evaluated in — so `event.key`, `preventDefault()` and any bare
 // identifiers the code references (e.g. plannerOpenLessonDrawerFromCard) all resolve
-// exactly as they would for a real browser-dispatched keydown.
+// exactly as they would for a real browser-dispatched keydown. `this` is bound to a stub
+// element, matching real inline-handler semantics (this === the element), in case a
+// future inline handler ever comes to depend on it.
 function fireInlineKeydown(code, key) {
   const evt = { key, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
-  sandbox.__runInlineHandler(code, evt);
+  const stubCardElement = { classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } } };
+  sandbox.__runInlineHandler(code, evt, stubCardElement);
   return evt;
 }
 

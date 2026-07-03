@@ -1170,17 +1170,19 @@ body[data-text-size="large"] {
   background: var(--surface);
   color: var(--text);
   text-align: left;
-  /* Extra right padding reserves space for the top-right actions cluster (pencil,
-     plus ✕ on unit cards). The card body itself is the drag handle. */
-  padding: 9px 32px 9px 9px;
+  padding: 9px;
   cursor: grab;
   display: grid;
   gap: 4px;
 }
 .planner-lesson-card:active { cursor: grabbing; }
 
-/* Top-right actions on a board card: ✕ remove on unit occurrences only (standalone cards
-   have no top-right action now that the whole card opens the drawer on click). */
+/* Only unit occurrence cards render a top-right actions cluster (the ✕ remove control),
+   so only they need the reserved right padding — standalone cards have no top-right
+   action now that the whole card opens the drawer on click. */
+.planner-lesson-card.is-unit {
+  padding-right: 32px;
+}
 .planner-card-actions {
   position: absolute;
   top: 4px;
