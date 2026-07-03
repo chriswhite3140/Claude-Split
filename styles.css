@@ -1177,12 +1177,10 @@ body[data-text-size="large"] {
 }
 .planner-lesson-card:active { cursor: grabbing; }
 
-/* Only unit occurrence cards render a top-right actions cluster (the ✕ remove control),
-   so only they need the reserved right padding — standalone cards have no top-right
-   action now that the whole card opens the drawer on click. */
-.planner-lesson-card.is-unit {
-  padding-right: 32px;
-}
+/* Only unit occurrence cards render a top-right actions cluster (the ✕ remove control) —
+   see the .planner-lesson-card.is-unit rule below for the reserved padding-right this
+   needs. Standalone cards have no top-right action now that the whole card opens the
+   drawer on click, so they keep the base symmetric padding. */
 .planner-card-actions {
   position: absolute;
   top: 4px;
@@ -1310,8 +1308,8 @@ body[data-text-size="large"] {
 /* Unit-linked card: coloured left border + unit chip to distinguish from standalone. */
 .planner-lesson-card.is-unit {
   border-left: 3px solid var(--status-info-border);
-  /* Unit cards carry two corner buttons (edit + ✕), so reserve a little more room. */
-  padding-right: 58px;
+  /* Reserves room for the ✕ remove button in the top-right actions cluster. */
+  padding-right: 32px;
 }
 .planner-unit-chip {
   /* inline-block so max-width + ellipsis actually clamp long unit titles
