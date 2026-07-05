@@ -77,9 +77,22 @@ const sandbox = {
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 
-// Evaluate app.js, then expose the lexically-scoped `state` for the harness.
+// Evaluate app.js, then expose the lexically-scoped `state` for the harness. Also expose a
+// helper that runs a literal inline-handler code string (e.g. the exact text of an
+// onkeydown="..." attribute pulled out of rendered markup) as a real function *inside this
+// same vm context* — so a test can execute the actual JS the browser would run, against a
+// synthetic event, rather than re-deriving the same behaviour by calling a function directly.
+// Inline handlers in a real browser run with `this` bound to the element the attribute is
+// on, so thisArg is passed through via .call() to match that (none of our current inline
+// handlers reference `this`, but the helper should still be faithful to browser semantics).
 const appSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
-vm.runInContext(appSrc + '\n;globalThis.__getState = function(){ return state; };\n', sandbox, { filename: 'app.js' });
+vm.runInContext(
+  appSrc +
+  '\n;globalThis.__getState = function(){ return state; };\n' +
+  ';globalThis.__runInlineHandler = function(code, evt, thisArg){ return (new Function("event", code)).call(thisArg, evt); };\n',
+  sandbox,
+  { filename: 'app.js' }
+);
 
 // Quiet the heavy render path and capture toasts (override the global object props).
 let toasts = [];
@@ -143,6 +156,36 @@ function dropEvent(lessonId) {
     currentTarget: { classList: { add() {}, remove() {} } },
     dataTransfer: { getData() { return lessonId; }, setData() {}, effectAllowed: '' },
   };
+}
+
+// Pulls the opening tag of the outermost element whose class attribute starts with
+// classPrefix (e.g. 'planner-lesson-card ') out of rendered card markup, so a test can
+// inspect exactly the attributes the browser would parse off that one element.
+function extractOpenTag(html, classPrefix) {
+  const marker = 'class="' + classPrefix;
+  const idx = html.indexOf(marker);
+  assert.ok(idx !== -1, 'expected to find an element with class prefix: ' + classPrefix);
+  const closeIdx = html.indexOf('>', idx);
+  return html.slice(0, closeIdx).slice(html.lastIndexOf('<', idx));
+}
+
+function extractAttr(tagSrc, attrName) {
+  const m = tagSrc.match(new RegExp(attrName + '="([^"]*)"'));
+  return m ? m[1] : null;
+}
+
+// Fires the literal source of an inline onkeydown="..." attribute (extracted from real
+// rendered markup) against a synthetic KeyboardEvent-like object, inside the same vm
+// context app.js was evaluated in — so `event.key`, `preventDefault()` and any bare
+// identifiers the code references (e.g. plannerOpenLessonDrawerFromCard) all resolve
+// exactly as they would for a real browser-dispatched keydown. `this` is bound to a stub
+// element, matching real inline-handler semantics (this === the element), in case a
+// future inline handler ever comes to depend on it.
+function fireInlineKeydown(code, key) {
+  const evt = { key, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+  const stubCardElement = { classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } } };
+  sandbox.__runInlineHandler(code, evt, stubCardElement);
+  return evt;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -317,7 +360,7 @@ test('malformed scheduledSlots entries do not crash render or normalize', () => 
   eqJson(normalized.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }]);
 });
 
-test('the pencil on a board occurrence opens that unit lesson in the planner drawer, without navigating away', () => {
+test('clicking a board occurrence opens that unit lesson in the planner drawer, without navigating away', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   const st = getState();
@@ -328,35 +371,35 @@ test('the pencil on a board occurrence opens that unit lesson in the planner dra
   assert.strictEqual(st.currentView, 'planner', 'must stay on the Weekly Planner — no navigation to Unit Plans');
 });
 
-// ── Pencil-to-edit + drag scheduled cards between days (UX polish) ───────────────
-test('standalone card is a drag handle whose whole body opens the drawer, with an expand icon affordance', () => {
+// ── Click-to-edit + drag scheduled cards between days (UX polish) ───────────────
+test('standalone card is a drag handle whose whole body opens the drawer, with no expand icon', () => {
   resetState();
   const html = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
   assert.ok(html.includes('draggable="true"'), 'card body should be draggable');
   assert.ok(html.includes('plannerStartLessonDrag'), 'card body should wire the drag-start handler');
-  assert.ok(html.includes('planner-card-expand'), 'card should have an expand/open-panel icon (not a pencil)');
+  assert.ok(!html.includes('planner-card-expand'), 'the expand icon must be gone — the whole card is the only affordance now');
   assert.ok(!html.includes('planner-card-edit'), 'the old pencil class must be gone');
-  assert.ok(!html.includes('✎'), 'the pencil glyph must be replaced');
-  // The open expression appears 3 times by design: the card body's own onclick, its
-  // onkeydown (Enter/Space), and the icon's onclick — all three drive the same action.
+  assert.ok(!html.includes('✎') && !html.includes('⤢'), 'neither the pencil nor the expand glyph should render');
+  // The open expression appears exactly twice now: the card body's own onclick and its
+  // onkeydown (Enter/Space) — there is no separate icon click handler any more.
   const matches = html.match(/plannerOpenLessonDrawerFromCard\('sa_1'\)/g) || [];
-  assert.strictEqual(matches.length, 3, 'card onclick + card onkeydown + icon onclick should all wire the open handler');
-  assert.ok(/class="planner-lesson-card[^"]*"[\s\S]{0,300}?role="button" tabindex="0"[\s\S]{0,120}?onclick="plannerOpenLessonDrawerFromCard\('sa_1'\)"/.test(html), 'the card body itself must carry a click handler, not just the icon');
+  assert.strictEqual(matches.length, 2, 'card onclick + card onkeydown should be the only two wirings of the open handler');
+  assert.ok(/class="planner-lesson-card[^"]*"[\s\S]{0,300}?role="button" tabindex="0"[\s\S]{0,120}?onclick="plannerOpenLessonDrawerFromCard\('sa_1'\)"/.test(html), 'the card body itself must carry the click handler');
   assert.ok(html.includes("onkeydown=\"if(event.key==='Enter'||event.key===' '){event.preventDefault();plannerOpenLessonDrawerFromCard('sa_1')}\""), 'the card body should be keyboard-activatable (Enter/Space) too');
 });
 
-test('unit occurrence card: whole body opens the drawer (not navigation), expand icon present, ✕ remove unaffected', () => {
+test('unit occurrence card: whole body opens the drawer (not navigation), no expand icon, ✕ remove unaffected', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   const html = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
   assert.ok(html.includes('draggable="true"'), 'occurrence card should be draggable');
   assert.ok(html.includes('plannerStartOccurrenceDrag'), 'occurrence card should wire the occurrence drag-start');
-  assert.ok(html.includes('planner-card-expand'), 'occurrence card should have an expand/open-panel icon (not a pencil)');
+  assert.ok(!html.includes('planner-card-expand'), 'the expand icon must be gone from unit occurrence cards too');
   assert.ok(!html.includes('planner-card-edit'), 'the old pencil class must be gone');
-  // Card onclick + card onkeydown + icon onclick, same as the standalone card.
+  // Card onclick + card onkeydown only, same as the standalone card — no icon click left.
   const matches = html.match(/plannerOpenLessonDrawerFromCard\('ul_1'\)/g) || [];
-  assert.strictEqual(matches.length, 3, 'card onclick + card onkeydown + icon onclick should all wire the open handler');
-  assert.ok(/class="planner-lesson-card is-unit[^"]*"[\s\S]{0,300}?role="button" tabindex="0"[\s\S]{0,120}?onclick="plannerOpenLessonDrawerFromCard\('ul_1'\)"/.test(html), 'the card body itself must carry a click handler, not just the icon');
+  assert.strictEqual(matches.length, 2, 'card onclick + card onkeydown should be the only two wirings of the open handler');
+  assert.ok(/class="planner-lesson-card is-unit[^"]*"[\s\S]{0,300}?role="button" tabindex="0"[\s\S]{0,120}?onclick="plannerOpenLessonDrawerFromCard\('ul_1'\)"/.test(html), 'the card body itself must carry the click handler');
   assert.ok(html.includes('planner-occ-remove'), 'occurrence card should keep the ✕ remove control');
   assert.ok(html.includes('plannerUnscheduleSlot'), 'the ✕ should unschedule this slot');
   // The ✕ must stop propagation so clicking it can never also trigger the card's own
@@ -364,7 +407,7 @@ test('unit occurrence card: whole body opens the drawer (not navigation), expand
   assert.ok(/planner-occ-remove[\s\S]*?onclick="event\.stopPropagation\(\);plannerUnscheduleSlot/.test(html), 'the ✕ must stop propagation before unscheduling');
 });
 
-test('nested controls (✕ remove, expand icon) stop keydown propagation too, so Enter/Space on them cannot also fire the parent card\'s open-drawer handler', () => {
+test('the ✕ remove control stops keydown propagation too, so Enter/Space on it cannot also fire the parent card\'s open-drawer handler', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   const occHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
@@ -372,18 +415,14 @@ test('nested controls (✕ remove, expand icon) stop keydown propagation too, so
   // enough — without this, pressing Enter/Space on the focused ✕ button would unschedule the
   // slot AND trigger the parent card's onkeydown (open drawer) in the same keystroke.
   assert.ok(/planner-occ-remove[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(occHtml), 'the ✕ remove button must stop keydown propagation');
-  assert.ok(/planner-card-expand[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(occHtml), 'the expand icon on the occurrence card must stop keydown propagation');
-
-  const standaloneHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
-  assert.ok(/planner-card-expand[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(standaloneHtml), 'the expand icon on the standalone card must stop keydown propagation');
 });
 
-test('clicking the card body (not just the expand icon) opens the drawer, for both card types', () => {
+test('clicking the card body opens the drawer, for both card types', () => {
   resetState();
   const st = getState();
-  // The card body's own onclick wires the exact same call as the expand icon (verified
-  // above) — invoking it directly is the faithful simulation of a browser click landing
-  // on the card body, since that's literally what its onclick attribute runs.
+  // The card body's own onclick is the only trigger now (no separate icon) — invoking it
+  // directly is the faithful simulation of a browser click landing anywhere on the card,
+  // since that's literally what its onclick attribute runs.
   assert.strictEqual(st.plannerUi.drawerOpen, false, 'sanity check: drawer starts closed');
   sandbox.plannerOpenLessonDrawerFromCard('sa_1'); // == clicking the standalone card body
   assert.strictEqual(st.plannerUi.selectedLessonId, 'sa_1', 'clicking the card body should select the lesson');
@@ -403,14 +442,62 @@ test('clicking the card body (not just the expand icon) opens the drawer, for bo
   assert.ok(html.includes('Teaching status'), 'the unit lesson drawer should render its full editable field set, unchanged');
 });
 
-test('the Unit Lessons rail is unaffected — no expand icon, no card-body click wiring', () => {
+test('pressing Enter or Space on a focused standalone card runs the literal onkeydown code and opens the drawer; other keys do not', () => {
+  resetState();
+  const st = getState();
+
+  const enterHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  const enterCode = extractAttr(extractOpenTag(enterHtml, 'planner-lesson-card '), 'onkeydown');
+  assert.ok(enterCode, 'the card must render an onkeydown attribute');
+  const enterEvt = fireInlineKeydown(enterCode, 'Enter');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'sa_1', 'Enter should select the lesson');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'Enter should open the drawer');
+  assert.strictEqual(enterEvt.defaultPrevented, true, 'Enter should preventDefault so it does not also submit/scroll');
+
+  resetState();
+  const spaceHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  const spaceCode = extractAttr(extractOpenTag(spaceHtml, 'planner-lesson-card '), 'onkeydown');
+  const spaceEvt = fireInlineKeydown(spaceCode, ' ');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'sa_1', 'Space should also select the lesson');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'Space should also open the drawer');
+  assert.strictEqual(spaceEvt.defaultPrevented, true, 'Space should preventDefault so the page does not scroll');
+
+  resetState();
+  const tabHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  const tabCode = extractAttr(extractOpenTag(tabHtml, 'planner-lesson-card '), 'onkeydown');
+  const tabEvt = fireInlineKeydown(tabCode, 'Tab');
+  assert.strictEqual(st.plannerUi.drawerOpen, false, 'a non-activation key (Tab) must not open the drawer');
+  assert.strictEqual(tabEvt.defaultPrevented, false, 'Tab must not be prevented, so normal keyboard tabbing still works');
+});
+
+test('pressing Enter or Space on a focused unit occurrence card runs the literal onkeydown code and opens the drawer', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+
+  const enterHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  const enterCode = extractAttr(extractOpenTag(enterHtml, 'planner-lesson-card is-unit'), 'onkeydown');
+  assert.ok(enterCode, 'the occurrence card must render an onkeydown attribute');
+  fireInlineKeydown(enterCode, 'Enter');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'Enter should select the unit lesson');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'Enter should open the drawer');
+
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const spaceHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  const spaceCode = extractAttr(extractOpenTag(spaceHtml, 'planner-lesson-card is-unit'), 'onkeydown');
+  fireInlineKeydown(spaceCode, ' ');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'Space should also select the unit lesson');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'Space should also open the drawer');
+});
+
+test('the Unit Lessons rail is unaffected — no card-body click wiring', () => {
   resetState();
   const html = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_1'));
-  assert.ok(!html.includes('planner-card-expand'), 'rail pills must not gain the new expand icon');
   assert.ok(!html.includes('plannerOpenLessonDrawerFromCard'), 'rail pills must not gain click-to-open — they remain drag-only, unchanged');
 });
 
-test('opening a unit lesson from a board pencil resets the stale unit CD search/year filter', () => {
+test('opening a unit lesson from a board card click resets the stale unit CD search/year filter', () => {
   resetState();
   const st = getState();
   sandbox.unitPlansEnsureUiState();
@@ -429,14 +516,14 @@ test('opening a lesson from Unit Plans\' own lesson row must NOT reset that view
   st.unitPlansUi.cdSearch = 'a search the teacher is actively using in Unit Plans';
   st.unitPlansUi.cdShowAllYears = true;
   // unitLessonRowHtml's onclick calls plannerOpenLessonDrawer directly, not the
-  // board-pencil wrapper — that must stay untouched so Unit Plans' own sidebar search
+  // board-card-click wrapper — that must stay untouched so Unit Plans' own sidebar search
   // isn't wiped out just because a lesson's edit drawer was opened alongside it.
   sandbox.plannerOpenLessonDrawer('ul_1');
   assert.strictEqual(st.unitPlansUi.cdSearch, 'a search the teacher is actively using in Unit Plans', 'Unit Plans\' own CD search must be untouched by this path');
   assert.strictEqual(st.unitPlansUi.cdShowAllYears, true, 'Unit Plans\' own CD year filter must be untouched by this path');
 });
 
-test('opening a standalone lesson from a board pencil leaves the unit CD search alone (nothing to reset)', () => {
+test('opening a standalone lesson from a board card click leaves the unit CD search alone (nothing to reset)', () => {
   resetState();
   const st = getState();
   sandbox.unitPlansEnsureUiState();
@@ -445,10 +532,10 @@ test('opening a standalone lesson from a board pencil leaves the unit CD search 
   assert.strictEqual(st.unitPlansUi.cdSearch, 'unrelated search', 'a standalone lesson has no unit context, so nothing should be reset');
 });
 
-// ── Pencil opens full edit in the drawer / Unscheduled column removed ────────────
-console.log('Pencil-to-drawer edit and Unscheduled column removal');
+// ── Clicking a card opens full edit in the drawer / Unscheduled column removed ──
+console.log('Card click opens the drawer edit / Unscheduled column removal');
 
-test('pencil on a unit occurrence populates the drawer with the full unit lesson edit fields, staying on the planner', () => {
+test('clicking a unit occurrence populates the drawer with the full unit lesson edit fields, staying on the planner', () => {
   resetState();
   const st = getState();
   const uidx = st.unitPlans.findIndex(u => u.id === 'unit_1');
@@ -457,7 +544,7 @@ test('pencil on a unit occurrence populates the drawer with the full unit lesson
   st.lessonPlans[lidx] = { ...st.lessonPlans[lidx], title: 'Halves and quarters', subject: 'Mathematics', teachingStatus: 'reteach', intention: 'Partition shapes into equal parts.' };
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
 
-  sandbox.plannerOpenLessonDrawerFromCard('ul_1'); // the actual pencil call path
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1'); // the actual card-click path
   assert.strictEqual(st.currentView, 'planner', 'opening the drawer must not navigate to another view');
   assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1');
   assert.strictEqual(st.plannerUi.drawerOpen, true);
@@ -475,7 +562,7 @@ test('pencil on a unit occurrence populates the drawer with the full unit lesson
   assert.ok(html.includes('Exit ticket each fortnight.'), 'assessment notes should populate');
 });
 
-test('pencil on a standalone card populates the drawer with the standalone edit fields', () => {
+test('clicking a standalone card populates the drawer with the standalone edit fields', () => {
   resetState();
   const st = getState();
   const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');

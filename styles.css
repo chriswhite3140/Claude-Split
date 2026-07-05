@@ -1170,16 +1170,17 @@ body[data-text-size="large"] {
   background: var(--surface);
   color: var(--text);
   text-align: left;
-  /* Extra right padding reserves space for the top-right actions cluster (pencil,
-     plus ✕ on unit cards). The card body itself is the drag handle. */
-  padding: 9px 32px 9px 9px;
+  padding: 9px;
   cursor: grab;
   display: grid;
   gap: 4px;
 }
 .planner-lesson-card:active { cursor: grabbing; }
 
-/* Top-right actions on a board card: expand/open icon (and ✕ remove on unit occurrences). */
+/* Only unit occurrence cards render a top-right actions cluster (the ✕ remove control) —
+   see the .planner-lesson-card.is-unit rule below for the reserved padding-right this
+   needs. Standalone cards have no top-right action now that the whole card opens the
+   drawer on click, so they keep the base symmetric padding. */
 .planner-card-actions {
   position: absolute;
   top: 4px;
@@ -1187,26 +1188,6 @@ body[data-text-size="large"] {
   display: flex;
   gap: 3px;
   align-items: center;
-}
-.planner-card-expand {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text3);
-  border-radius: 4px;
-  width: 24px;
-  height: 24px;
-  line-height: 1;
-  font-size: 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-.planner-card-expand:hover {
-  color: var(--status-info-text);
-  border-color: var(--status-info-border);
-  background: var(--status-info-bg);
 }
 
 .planner-lesson-card-wrap {
@@ -1327,8 +1308,8 @@ body[data-text-size="large"] {
 /* Unit-linked card: coloured left border + unit chip to distinguish from standalone. */
 .planner-lesson-card.is-unit {
   border-left: 3px solid var(--status-info-border);
-  /* Unit cards carry two corner buttons (edit + ✕), so reserve a little more room. */
-  padding-right: 58px;
+  /* Reserves room for the ✕ remove button in the top-right actions cluster. */
+  padding-right: 32px;
 }
 .planner-unit-chip {
   /* inline-block so max-width + ellipsis actually clamp long unit titles
