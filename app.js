@@ -93,11 +93,14 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.46';
+const APP_VERSION = '1.13.47';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
 const UNIT_PLANS_STORAGE_KEY = 'ct_unit_plans_v1';
+// Timestamp of the last local edit to unit plans / lessons — used to decide whether
+// a Drive backup is newer than what's on this device (see DRIVE BACKUP SYNC below).
+const PLANNER_LOCAL_MODIFIED_KEY = 'ct_planner_local_modified_v1';
 // Weekday keys a unit lesson can be scheduled onto (the board columns are these +
 // 'unscheduled'). Declared up here so normalizeLessonPlan — which runs during state
 // init, before the planner section executes — can use it without a TDZ error.
@@ -384,6 +387,7 @@ let state = {
   plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
   unitPlans: loadUnitPlansState(),
   unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
+  driveSync: { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 },
   themePreference: 'auto',
   textSizePreference: 'standard',
   adminAccordion: {
@@ -392,6 +396,7 @@ let state = {
     dataUploads: false,
     assessmentScale: false,
     exportData: false,
+    driveBackup: false,
     dataStatus: false,
     sheetsSetup: false,
   },
@@ -2405,6 +2410,7 @@ function saveLessonPlansState() {
   try {
     const lessons = Array.isArray(state.lessonPlans) ? state.lessonPlans.map(normalizeLessonPlan) : [];
     localStorage.setItem(LESSON_PLANS_STORAGE_KEY, JSON.stringify(lessons));
+    markPlannerDirtyForDriveSync();
   } catch (e) {}
 }
 
@@ -2440,7 +2446,160 @@ function saveUnitPlansState() {
   try {
     const units = Array.isArray(state.unitPlans) ? state.unitPlans.map(normalizeUnitPlan) : [];
     localStorage.setItem(UNIT_PLANS_STORAGE_KEY, JSON.stringify(units));
+    markPlannerDirtyForDriveSync();
   } catch (e) {}
+}
+
+// ════════════════════════════════════════════════════
+// ── DRIVE BACKUP SYNC ──
+// Unit plans + lessons are localStorage-only (see docs/ARCHITECTURE-ASSESSMENT.md §6),
+// so a cache clear loses a term's worth of planning. This is a safety-net JSON backup
+// to a file in the teacher's Google Drive — not full Sheets persistence. It goes
+// through the existing Apps Script backend (driveBackupSave/driveBackupLoad actions)
+// so it reuses the script's own Drive access with no separate Google sign-in for the
+// teacher. See apps-script/DriveBackup.gs for the backend half of this.
+// ════════════════════════════════════════════════════
+let driveSyncDirty = false;
+let driveSyncTimer = null;
+let pendingDriveRestoreData = null;
+
+function plannerLocalModifiedAt() {
+  try { return localStorage.getItem(PLANNER_LOCAL_MODIFIED_KEY) || null; } catch (e) { return null; }
+}
+
+function markPlannerDirtyForDriveSync() {
+  driveSyncDirty = true;
+  try { localStorage.setItem(PLANNER_LOCAL_MODIFIED_KEY, new Date().toISOString()); } catch (e) {}
+}
+
+function driveSyncEnsureState() {
+  if (!state.driveSync || typeof state.driveSync !== 'object') {
+    state.driveSync = { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 };
+  }
+  return state.driveSync;
+}
+
+function formatRelativeTime(isoString) {
+  if (!isoString) return '';
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  if (!isFinite(diffMs) || diffMs < 0) return 'just now';
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+async function driveBackupSave(opts) {
+  const silent = !!(opts && opts.silent);
+  const ds = driveSyncEnsureState();
+  if (ds.syncing) return;
+  ds.syncing = true;
+  updateDriveSyncIndicator();
+  try {
+    const payload = {
+      unitPlans: state.unitPlans || [],
+      lessonPlans: state.lessonPlans || [],
+      savedAt: new Date().toISOString(),
+    };
+    const result = await apiCall('driveBackupSave', payload);
+    if (!result || result.error) throw new Error((result && result.error) || 'Drive backup failed');
+    ds.lastSyncedAt = payload.savedAt;
+    ds.consecutiveFailures = 0;
+    driveSyncDirty = false;
+    if (!silent) toast('Backed up unit plans to Drive', 'success');
+  } catch (e) {
+    ds.consecutiveFailures = (ds.consecutiveFailures || 0) + 1;
+    console.warn('[DriveSync] backup failed:', e);
+    // Manual clicks (silent=false) always get a toast; the background timer stays
+    // quiet so a single transient network blip doesn't nag the teacher.
+    if (!silent) toast('Drive backup failed — will retry', 'error');
+  } finally {
+    ds.syncing = false;
+    updateDriveSyncIndicator();
+  }
+}
+
+function driveSyncTick() {
+  if (!driveSyncDirty) return;
+  driveBackupSave({ silent: true });
+}
+
+function startDriveSyncTimer() {
+  if (driveSyncTimer) return;
+  driveSyncTimer = setInterval(driveSyncTick, 150000); // every 2.5 minutes
+}
+
+// Renders without a wrapper element — callers embed this inside a container that
+// already carries class="drive-sync-indicator" (there can be more than one on
+// screen at once, e.g. the Unit Plans topbar and the Data & Settings panel).
+function driveSyncIndicatorHtml() {
+  const ds = driveSyncEnsureState();
+  if (ds.syncing) return `Syncing to Drive…`;
+  if ((ds.consecutiveFailures || 0) >= 2) {
+    return `<span class="is-error">Drive sync failed —</span> <button type="button" class="drive-sync-retry-btn" onclick="driveBackupSave()">retry</button>`;
+  }
+  if (ds.lastSyncedAt) return `Last synced to Drive: ${formatRelativeTime(ds.lastSyncedAt)}`;
+  return `<span class="is-muted">Not yet backed up to Drive</span>`;
+}
+
+function updateDriveSyncIndicator() {
+  document.querySelectorAll('.drive-sync-indicator').forEach(el => {
+    el.innerHTML = driveSyncIndicatorHtml();
+  });
+}
+
+async function driveBackupCheckOnLoad() {
+  try {
+    const result = await apiCall('driveBackupLoad');
+    if (!result || result.error || !result.data) return;
+    const driveSavedAt = result.data.savedAt || result.savedAt;
+    if (!driveSavedAt) return;
+    const localModifiedAt = plannerLocalModifiedAt();
+    const driveIsNewer = !localModifiedAt || new Date(driveSavedAt) > new Date(localModifiedAt);
+    if (driveIsNewer) showDriveRestoreBanner(result.data, driveSavedAt);
+  } catch (e) {
+    console.warn('[DriveSync] background check failed:', e);
+  }
+}
+
+function showDriveRestoreBanner(driveData, savedAt) {
+  if (document.getElementById('drive-restore-banner')) return;
+  pendingDriveRestoreData = driveData;
+  const banner = document.createElement('div');
+  banner.id = 'drive-restore-banner';
+  banner.style.cssText = "background:var(--banner-bg);color:var(--banner-text);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;flex-wrap:wrap;gap:8px";
+  banner.innerHTML = `
+    <span>A newer Drive backup of your unit plans was found (saved ${formatRelativeTime(savedAt)}). Restore it?</span>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button onclick="restoreDriveBackup()"
+        style="padding:4px 12px;border-radius:4px;border:1px solid rgba(255,255,255,0.4);background:rgba(255,255,255,0.15);color:var(--banner-text);font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
+        Restore
+      </button>
+      <button onclick="dismissDriveRestoreBanner()"
+        style="background:none;border:none;color:var(--banner-text);font-size:18px;cursor:pointer;padding:0;line-height:1;opacity:0.7">✕</button>
+    </div>`;
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+
+function dismissDriveRestoreBanner() {
+  pendingDriveRestoreData = null;
+  const banner = document.getElementById('drive-restore-banner');
+  if (banner) banner.remove();
+}
+
+function restoreDriveBackup() {
+  if (!pendingDriveRestoreData) return;
+  const data = pendingDriveRestoreData;
+  if (Array.isArray(data.unitPlans)) state.unitPlans = data.unitPlans.map(normalizeUnitPlan);
+  if (Array.isArray(data.lessonPlans)) state.lessonPlans = data.lessonPlans.map(normalizeLessonPlan);
+  saveUnitPlansState();
+  saveLessonPlansState();
+  dismissDriveRestoreBanner();
+  toast('Restored unit plans from Drive backup', 'success');
+  renderView();
 }
 
 // ════════════════════════════════════════════════════
@@ -2604,6 +2763,7 @@ function renderUnitList(main) {
       <div>
         <div class="topbar-title">Unit Plans</div>
         <div style="font-size:12px;color:var(--text3);margin-top:2px">Group lessons into teaching units</div>
+        <div class="drive-sync-indicator">${driveSyncIndicatorHtml()}</div>
       </div>
       <div class="topbar-actions">
         <button class="btn btn-primary" type="button" onclick="unitCreateNew()">+ New Unit</button>
@@ -2642,13 +2802,14 @@ function renderUnitDetail(main, unit) {
 
   main.innerHTML = `
     <div class="topbar" style="padding:14px 24px;gap:12px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:200px">
+      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:200px;flex-wrap:wrap">
         <button class="btn" type="button" onclick="unitBackToList()">‹ Units</button>
         <label class="unit-title-edit" title="Rename this unit">
           <input class="unit-title-input" type="text" value="${escapeHtml(unit.title || '')}" placeholder="Untitled unit" aria-label="Unit title"
             oninput="unitUpdateField('${plannerJsStr(unit.id)}','title',this.value)">
           <span class="unit-title-edit-icon" aria-hidden="true">✎</span>
         </label>
+        <div class="drive-sync-indicator">${driveSyncIndicatorHtml()}</div>
       </div>
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select class="form-input unit-field-sm" onchange="unitUpdateField('${plannerJsStr(unit.id)}','subject',this.value)">
@@ -7564,6 +7725,7 @@ function isAdminAccordionOpen(key) {
       dataUploads: false,
       assessmentScale: false,
       exportData: false,
+      driveBackup: false,
       dataStatus: false,
       sheetsSetup: false,
     };
@@ -7832,6 +7994,25 @@ function renderAdmin(main) {
                 style="padding:8px 16px;border-radius:6px;border:none;background:var(--blue);color:var(--primary-contrast);font-family:'Instrument Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">
                 ↓ Export All
               </button>
+            </div>
+          </div>
+        `
+      })}
+
+      <!-- Drive Backup -->
+      ${buildAdminAccordionSection({
+        key: 'driveBackup',
+        title: 'Drive Backup',
+        content: `
+          <div style="padding:14px 18px">
+            <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px">
+              Unit plans and lessons live only in this browser. A safety-net backup is written to a JSON file
+              in your Google Drive automatically every few minutes while the app is open — use the button below
+              to back up immediately instead of waiting for the timer.
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+              <button class="btn btn-primary" type="button" onclick="driveBackupSave()">Backup to Drive now</button>
+              <div class="drive-sync-indicator" style="font-size:12px">${driveSyncIndicatorHtml()}</div>
             </div>
           </div>
         `
@@ -9888,6 +10069,11 @@ async function init() {
   checkDailyLogBadge();
   updateStubBadge();
   checkStubBanner();
+
+  // Drive backup sync: load from localStorage above already made the app usable,
+  // so the Drive check runs in the background and never blocks rendering.
+  startDriveSyncTimer();
+  driveBackupCheckOnLoad();
 
   const today = new Date().toISOString().split('T')[0];
   const loggedToday = state.taughtLog.some(t => t.date === today);
