@@ -2535,6 +2535,11 @@ async function driveBackupSave(opts) {
     const localModifiedAtBeforeUpload = plannerLocalModifiedAt();
     const result = await apiCall('driveBackupSave', payload);
     if (!result || result.error) throw new Error((result && result.error) || 'Drive backup failed');
+    // The backend rejects an out-of-order write (see DriveBackup.gs) and reports it
+    // as { success: true, skipped: true } rather than an error — this payload never
+    // actually landed on Drive, so treat it like a failure so it retries instead of
+    // being recorded as synced.
+    if (result.skipped) throw new Error('Drive backup skipped — a newer backup already exists');
     ds.lastSyncedAt = payload.savedAt;
     ds.consecutiveFailures = 0;
     if (plannerLocalModifiedAt() === localModifiedAtBeforeUpload) driveSyncDirty = false;
