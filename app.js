@@ -2527,11 +2527,17 @@ async function driveBackupSave(opts) {
       lessonPlans: state.lessonPlans || [],
       savedAt: new Date().toISOString(),
     };
+    // Snapshot the local-modified marker right before the upload starts. If a save
+    // lands while we're awaiting the network (the upload can take a second or two),
+    // markPlannerDirtyForDriveSync() will move this marker and re-set driveSyncDirty
+    // — in that case the payload we just uploaded is already stale, so we must not
+    // clear the flag below and silently drop that edit until something else re-dirties it.
+    const localModifiedAtBeforeUpload = plannerLocalModifiedAt();
     const result = await apiCall('driveBackupSave', payload);
     if (!result || result.error) throw new Error((result && result.error) || 'Drive backup failed');
     ds.lastSyncedAt = payload.savedAt;
     ds.consecutiveFailures = 0;
-    driveSyncDirty = false;
+    if (plannerLocalModifiedAt() === localModifiedAtBeforeUpload) driveSyncDirty = false;
     try { localStorage.setItem(PLANNER_LAST_DRIVE_SYNC_KEY, payload.savedAt); } catch (e) {}
     if (!silent) toast('Backed up unit plans to Drive', 'success');
   } catch (e) {
