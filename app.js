@@ -101,6 +101,10 @@ const UNIT_PLANS_STORAGE_KEY = 'ct_unit_plans_v1';
 // Timestamp of the last local edit to unit plans / lessons — used to decide whether
 // a Drive backup is newer than what's on this device (see DRIVE BACKUP SYNC below).
 const PLANNER_LOCAL_MODIFIED_KEY = 'ct_planner_local_modified_v1';
+// Timestamp of the last *successful* Drive backup. Persisted (not just kept on
+// state.driveSync) so a reload can tell whether local edits since then still need
+// to go up, instead of starting every session assuming nothing is pending.
+const PLANNER_LAST_DRIVE_SYNC_KEY = 'ct_planner_last_drive_sync_v1';
 // Weekday keys a unit lesson can be scheduled onto (the board columns are these +
 // 'unscheduled'). Declared up here so normalizeLessonPlan — which runs during state
 // init, before the planner section executes — can use it without a TDZ error.
@@ -2467,6 +2471,10 @@ function plannerLocalModifiedAt() {
   try { return localStorage.getItem(PLANNER_LOCAL_MODIFIED_KEY) || null; } catch (e) { return null; }
 }
 
+function plannerLastDriveSyncAt() {
+  try { return localStorage.getItem(PLANNER_LAST_DRIVE_SYNC_KEY) || null; } catch (e) { return null; }
+}
+
 function markPlannerDirtyForDriveSync() {
   driveSyncDirty = true;
   try { localStorage.setItem(PLANNER_LOCAL_MODIFIED_KEY, new Date().toISOString()); } catch (e) {}
@@ -2477,6 +2485,21 @@ function driveSyncEnsureState() {
     state.driveSync = { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 };
   }
   return state.driveSync;
+}
+
+// driveSyncDirty (and state.driveSync.lastSyncedAt) live in memory, so a page reload
+// would otherwise forget about a backup that was still pending — including one that
+// failed right before the tab closed. Reconstruct both from the two persisted
+// timestamps so unsynced local edits keep retrying across reloads instead of being
+// silently dropped until the next edit happens to touch a save function.
+function driveSyncInitDirtyState() {
+  const hasLocalPlanningData = !!((state.unitPlans && state.unitPlans.length) || (state.lessonPlans && state.lessonPlans.length));
+  const persistedLastSync = plannerLastDriveSyncAt();
+  if (persistedLastSync) driveSyncEnsureState().lastSyncedAt = persistedLastSync;
+  if (!hasLocalPlanningData) return;
+  const localModifiedAt = plannerLocalModifiedAt();
+  const unsynced = !persistedLastSync || !localModifiedAt || new Date(localModifiedAt) > new Date(persistedLastSync);
+  if (unsynced) driveSyncDirty = true;
 }
 
 function formatRelativeTime(isoString) {
@@ -2509,6 +2532,7 @@ async function driveBackupSave(opts) {
     ds.lastSyncedAt = payload.savedAt;
     ds.consecutiveFailures = 0;
     driveSyncDirty = false;
+    try { localStorage.setItem(PLANNER_LAST_DRIVE_SYNC_KEY, payload.savedAt); } catch (e) {}
     if (!silent) toast('Backed up unit plans to Drive', 'success');
   } catch (e) {
     ds.consecutiveFailures = (ds.consecutiveFailures || 0) + 1;
@@ -2558,7 +2582,14 @@ async function driveBackupCheckOnLoad() {
     const driveSavedAt = result.data.savedAt || result.savedAt;
     if (!driveSavedAt) return;
     const localModifiedAt = plannerLocalModifiedAt();
-    const driveIsNewer = !localModifiedAt || new Date(driveSavedAt) > new Date(localModifiedAt);
+    const hasLocalPlanningData = !!((state.unitPlans && state.unitPlans.length) || (state.lessonPlans && state.lessonPlans.length));
+    // A missing local timestamp only means "Drive wins" when there's no local data to
+    // lose (a genuinely fresh device, or a real cache clear). If local planning data
+    // exists but predates this feature's timestamp tracking, treat it as authoritative
+    // rather than letting an unrelated (possibly older) Drive backup look newer by default.
+    const driveIsNewer = localModifiedAt
+      ? new Date(driveSavedAt) > new Date(localModifiedAt)
+      : !hasLocalPlanningData;
     if (driveIsNewer) showDriveRestoreBanner(result.data, driveSavedAt);
   } catch (e) {
     console.warn('[DriveSync] background check failed:', e);
@@ -10072,6 +10103,7 @@ async function init() {
 
   // Drive backup sync: load from localStorage above already made the app usable,
   // so the Drive check runs in the background and never blocks rendering.
+  driveSyncInitDirtyState();
   startDriveSyncTimer();
   driveBackupCheckOnLoad();
 
