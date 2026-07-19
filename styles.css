@@ -1162,8 +1162,7 @@ body[data-text-size="large"] {
 }
 
 .planner-column-day-date {
-  font-size: 11px;
-  opacity: 0.8;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 

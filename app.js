@@ -1128,6 +1128,10 @@ function renderPlanner(main) {
   // column's calendar date is derived from it directly — same source of truth as the
   // "Week of ..." label above, no separate date calculation.
   const todayIso = toIsoDate(new Date());
+  // toLocaleDateString's {month:'short'} doesn't reliably abbreviate for every locale
+  // (e.g. en-AU renders the full month name), which would blow out these narrow
+  // columns — spelled out by hand instead so the header always stays compact.
+  const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const boardColumns = plannerDays.map((day, dayIndex) => {
     // Combined standalone+unit order for this day (custom order if the teacher has
     // drag-reordered it, else the default standalone-then-unit order) — see
@@ -1143,7 +1147,8 @@ function renderPlanner(main) {
     }).join('');
     const isEmpty = items.length === 0;
     const dayIso = addDaysToDate(weekKey, dayIndex);
-    const dayDateLabel = parseIsoDateLocal(dayIso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    const dayDate = parseIsoDateLocal(dayIso);
+    const dayDateLabel = `${dayDate.getDate()} ${MONTH_ABBR[dayDate.getMonth()]}`;
     const isToday = dayIso === todayIso;
     return `
       <section class="planner-lesson-column">
