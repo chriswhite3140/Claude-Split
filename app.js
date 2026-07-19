@@ -2658,10 +2658,20 @@ function dismissDriveRestoreBanner() {
 
 function restoreDriveBackup() {
   if (!pendingDriveRestoreData) return;
-  // If a save happened after the banner appeared, the pending snapshot is now stale —
-  // applying it as-is would silently discard those newer local edits.
-  if (plannerLocalModifiedAt() !== pendingDriveRestoreLocalModifiedAt) {
-    const proceed = confirm('You have made changes since this Drive backup was found. Restoring will overwrite those changes with the Drive version. Continue?');
+  const localModifiedAt = plannerLocalModifiedAt();
+  // Two independent ways this restore can be stale relative to local work:
+  // (1) a save happened while the banner was already on screen (it's non-blocking by
+  //     design), or (2) the local edit predates the banner entirely — the banner only
+  //     compares Drive's savedAt against this device's last *confirmed sync*, so Drive
+  //     can still be older than a local edit that already existed when it appeared
+  //     (e.g. last sync 10:00, local edit 10:10, another device's backup at 10:05).
+  // Either way, applying the pending snapshot unprompted would silently discard newer
+  // local work, so both are checked before overwriting without confirmation.
+  const localChangedSinceBanner = localModifiedAt !== pendingDriveRestoreLocalModifiedAt;
+  const driveOlderThanLocal = pendingDriveRestoreSavedAt && localModifiedAt
+    && new Date(pendingDriveRestoreSavedAt) < new Date(localModifiedAt);
+  if (localChangedSinceBanner || driveOlderThanLocal) {
+    const proceed = confirm('You have local changes newer than this Drive backup. Restoring will overwrite those changes with the Drive version. Continue?');
     if (!proceed) return;
   }
   const data = pendingDriveRestoreData;
