@@ -2466,6 +2466,7 @@ function saveUnitPlansState() {
 let driveSyncDirty = false;
 let driveSyncTimer = null;
 let pendingDriveRestoreData = null;
+let pendingDriveRestoreSavedAt = null;
 
 function plannerLocalModifiedAt() {
   try { return localStorage.getItem(PLANNER_LOCAL_MODIFIED_KEY) || null; } catch (e) { return null; }
@@ -2614,6 +2615,7 @@ async function driveBackupCheckOnLoad() {
 function showDriveRestoreBanner(driveData, savedAt) {
   if (document.getElementById('drive-restore-banner')) return;
   pendingDriveRestoreData = driveData;
+  pendingDriveRestoreSavedAt = savedAt;
   const banner = document.createElement('div');
   banner.id = 'drive-restore-banner';
   banner.style.cssText = "background:var(--banner-bg);color:var(--banner-text);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;flex-wrap:wrap;gap:8px";
@@ -2632,6 +2634,7 @@ function showDriveRestoreBanner(driveData, savedAt) {
 
 function dismissDriveRestoreBanner() {
   pendingDriveRestoreData = null;
+  pendingDriveRestoreSavedAt = null;
   const banner = document.getElementById('drive-restore-banner');
   if (banner) banner.remove();
 }
@@ -2639,12 +2642,20 @@ function dismissDriveRestoreBanner() {
 function restoreDriveBackup() {
   if (!pendingDriveRestoreData) return;
   const data = pendingDriveRestoreData;
+  const restoredSavedAt = pendingDriveRestoreSavedAt || new Date().toISOString();
   if (Array.isArray(data.unitPlans)) state.unitPlans = data.unitPlans.map(normalizeUnitPlan);
   if (Array.isArray(data.lessonPlans)) state.lessonPlans = data.lessonPlans.map(normalizeLessonPlan);
   saveUnitPlansState();
   saveLessonPlansState();
+  // The restored content is exactly what Drive holds as of restoredSavedAt, so this
+  // device is now in sync with Drive — record it the same way a successful upload
+  // would, instead of leaving the indicator claiming nothing has ever been backed up.
+  driveSyncEnsureState().lastSyncedAt = restoredSavedAt;
+  try { localStorage.setItem(PLANNER_LAST_DRIVE_SYNC_KEY, restoredSavedAt); } catch (e) {}
+  driveSyncDirty = false;
   dismissDriveRestoreBanner();
   toast('Restored unit plans from Drive backup', 'success');
+  updateDriveSyncIndicator();
   renderView();
 }
 
