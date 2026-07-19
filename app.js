@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.49';
+const APP_VERSION = '1.13.50';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1124,7 +1124,11 @@ function renderPlanner(main) {
   const noICsLoaded = !state.instructionalComponents.some(ic => !ic.isArchived);
   const boardIsEmpty = weekLessons.length === 0 && unitOccurrences.length === 0;
 
-  const boardColumns = plannerDays.map(day => {
+  // The board only ever displays the week that weekKey (a Monday) anchors, so each
+  // column's calendar date is derived from it directly — same source of truth as the
+  // "Week of ..." label above, no separate date calculation.
+  const todayIso = toIsoDate(new Date());
+  const boardColumns = plannerDays.map((day, dayIndex) => {
     // Combined standalone+unit order for this day (custom order if the teacher has
     // drag-reordered it, else the default standalone-then-unit order) — see
     // plannerDayItemsInOrder for the single source of truth shared with the reorder mutation.
@@ -1138,9 +1142,15 @@ function renderPlanner(main) {
       return occ ? plannerUnitOccurrenceCardHtml(occ.lesson, weekKey, day.key) : '';
     }).join('');
     const isEmpty = items.length === 0;
+    const dayIso = addDaysToDate(weekKey, dayIndex);
+    const dayDateLabel = parseIsoDateLocal(dayIso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    const isToday = dayIso === todayIso;
     return `
       <section class="planner-lesson-column">
-        <div class="planner-lesson-column-head">${day.label}</div>
+        <div class="planner-lesson-column-head${isToday ? ' is-today' : ''}">
+          <span class="planner-column-day-name">${day.label}</span>
+          <span class="planner-column-day-date">${escapeHtml(dayDateLabel)}</span>
+        </div>
         <div class="planner-lesson-column-body" ondragover="plannerAllowLessonDrop(event, '${day.key}')" ondrop="plannerDropLessonToDay(event, '${day.key}')" ondragleave="plannerLessonDropLeave(event)">
           ${isEmpty
             ? `<div class="planner-lesson-empty">No lessons</div>`
