@@ -1228,6 +1228,9 @@ body[data-text-size="large"] {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .planner-lesson-card-meta {

@@ -93,7 +93,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.47';
+const APP_VERSION = '1.13.48';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1261,10 +1261,9 @@ function plannerLessonCardHtml(lesson) {
         ondragend="plannerEndLessonDrag(event)"
         ${plannerCardOpenAttrs(openExpr)}
       >
-        <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+        <div class="planner-lesson-card-title" title="${escapeHtml(lesson.title || 'Untitled lesson')}">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
         <div class="planner-lesson-card-tags">
-          ${plannerLessonICSummaryHtml(lesson)}
           <span class="planner-status-pill ${isTaught ? 'is-taught' : ''}">${isTaught ? 'Taught' : 'Planned'}</span>
           ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
         </div>
@@ -1289,19 +1288,6 @@ function plannerCardOpenAttrs(onclickExpr) {
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${onclickExpr}}"`;
 }
 
-// Compact IC display for the lesson card: count + up to two short descriptor codes.
-function plannerLessonICSummaryHtml(lesson) {
-  const ids = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : [];
-  if (!ids.length) return '';
-  const codes = [...new Set(ids
-    .map(id => state.instructionalComponents.find(ic => ic.id === id)?.homeDescriptorId)
-    .filter(Boolean))];
-  const countChip = `<span class="planner-ic-chip planner-ic-count">${ids.length} IC${ids.length === 1 ? '' : 's'}</span>`;
-  const shown = codes.slice(0, 2).map(code => `<span class="planner-ic-chip">${escapeHtml(code)}</span>`).join('');
-  const extra = codes.length > 2 ? `<span class="planner-ic-chip">+${codes.length - 2}</span>` : '';
-  return countChip + shown + extra;
-}
-
 // A unit lesson's card as it appears on the weekly board, scheduled for one slot
 // (weekKey + dayKey). Visually distinct from standalone cards (.is-unit left border
 // + unit chip). The card body is a drag handle — dragging it to another day moves this
@@ -1321,11 +1307,10 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
         ondragstart="plannerStartOccurrenceDrag(event, '${plannerJsStr(lesson.id)}', '${plannerJsStr(weekKey)}', '${plannerJsStr(dayKey)}')"
         ondragend="plannerEndLessonDrag(event)"
         ${plannerCardOpenAttrs(openExpr)}>
-        <div class="planner-lesson-card-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+        <div class="planner-lesson-card-title" title="${escapeHtml(lesson.title || 'Untitled lesson')}">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
         <div class="planner-lesson-card-tags">
           <span class="planner-unit-chip" title="Unit: ${escapeHtml(unitTitle)}">${escapeHtml(unitTitle)}</span>
-          ${plannerLessonICSummaryHtml(lesson)}
           ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
         </div>
         <div class="planner-card-actions">
