@@ -2592,14 +2592,18 @@ async function driveBackupCheckOnLoad() {
     if (!result || result.error || !result.data) return;
     const driveSavedAt = result.data.savedAt || result.savedAt;
     if (!driveSavedAt) return;
-    const localModifiedAt = plannerLocalModifiedAt();
+    // Compare against the last time THIS device confirmed a successful sync, not the
+    // last local edit — a successful upload's savedAt is always written a moment after
+    // the local edit that triggered it, so comparing against the edit timestamp would
+    // make Drive look "newer" on every single reload even when nothing actually changed.
+    const persistedLastSync = plannerLastDriveSyncAt();
     const hasLocalPlanningData = !!((state.unitPlans && state.unitPlans.length) || (state.lessonPlans && state.lessonPlans.length));
-    // A missing local timestamp only means "Drive wins" when there's no local data to
-    // lose (a genuinely fresh device, or a real cache clear). If local planning data
+    // No sync history on this device only means "Drive wins" when there's no local data
+    // to lose (a genuinely fresh device, or a real cache clear). If local planning data
     // exists but predates this feature's timestamp tracking, treat it as authoritative
     // rather than letting an unrelated (possibly older) Drive backup look newer by default.
-    const driveIsNewer = localModifiedAt
-      ? new Date(driveSavedAt) > new Date(localModifiedAt)
+    const driveIsNewer = persistedLastSync
+      ? new Date(driveSavedAt) > new Date(persistedLastSync)
       : !hasLocalPlanningData;
     if (driveIsNewer) showDriveRestoreBanner(result.data, driveSavedAt);
   } catch (e) {
