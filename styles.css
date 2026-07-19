@@ -1193,6 +1193,10 @@ body[data-text-size="large"] {
   cursor: grab;
   display: grid;
   gap: 4px;
+  /* Grid items default to min-width:auto, which refuses to shrink below the widest
+     child's content size (here, the unit chip's max-width:120px) even when the column
+     itself is narrower — the card would then overflow past its own wrapper and column. */
+  min-width: 0;
 }
 .planner-lesson-card:active { cursor: grabbing; }
 
