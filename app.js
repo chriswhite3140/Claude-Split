@@ -2479,6 +2479,7 @@ let driveSyncTimer = null;
 let pendingDriveRestoreData = null;
 let pendingDriveRestoreSavedAt = null;
 let pendingDriveRestoreLocalModifiedAt = null;
+let pendingDrivePersistRetrySavedAt = null;
 
 function plannerLocalModifiedAt() {
   try { return localStorage.getItem(PLANNER_LOCAL_MODIFIED_KEY) || null; } catch (e) { return null; }
@@ -2678,17 +2679,27 @@ function restoreDriveBackup() {
   const restoredSavedAt = pendingDriveRestoreSavedAt || new Date().toISOString();
   if (Array.isArray(data.unitPlans)) state.unitPlans = data.unitPlans.map(normalizeUnitPlan);
   if (Array.isArray(data.lessonPlans)) state.lessonPlans = data.lessonPlans.map(normalizeLessonPlan);
+  dismissDriveRestoreBanner();
+  finishDriveRestore(restoredSavedAt);
+}
+
+// Attempts to persist the already-applied in-memory restore to localStorage and, if
+// that succeeds, records it as a confirmed sync. Split out from restoreDriveBackup()
+// so the failure banner below can retry it: if a save*State() call fails (e.g. quota
+// exceeded), the in-memory data is already correct, but the *next* successful Drive
+// upload would still read from that correct in-memory state, succeed, and mark this
+// device "synced" — while localStorage silently keeps the pre-restore data underneath
+// it, with nothing left to catch the gap on a later reload. A dismissible toast isn't
+// enough here; the failure has to stay visible until persistence actually lands.
+function finishDriveRestore(restoredSavedAt) {
   const unitsSaved = saveUnitPlansState();
   const lessonsSaved = saveLessonPlansState();
-  dismissDriveRestoreBanner();
   if (!unitsSaved || !lessonsSaved) {
-    // The restored data is live in memory but didn't actually persist to localStorage
-    // (e.g. quota exceeded) — don't claim it's synced or clear the dirty flag, so a
-    // future save attempt keeps retrying instead of silently reverting on next reload.
-    toast('Restored in this session, but saving locally failed — check your browser storage', 'error');
+    showDrivePersistFailureBanner(restoredSavedAt);
     renderView();
     return;
   }
+  hideDrivePersistFailureBanner();
   // The restored content is exactly what Drive holds as of restoredSavedAt, so this
   // device is now in sync with Drive — record it the same way a successful upload
   // would, instead of leaving the indicator claiming nothing has ever been backed up.
@@ -2698,6 +2709,34 @@ function restoreDriveBackup() {
   toast('Restored unit plans from Drive backup', 'success');
   updateDriveSyncIndicator();
   renderView();
+}
+
+function showDrivePersistFailureBanner(restoredSavedAt) {
+  hideDrivePersistFailureBanner();
+  pendingDrivePersistRetrySavedAt = restoredSavedAt;
+  const banner = document.createElement('div');
+  banner.id = 'drive-persist-failure-banner';
+  banner.style.cssText = "background:var(--status-danger-bg);color:var(--status-danger-text);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--status-danger-border)";
+  banner.innerHTML = `
+    <span>Restored data could not be saved in this browser (storage may be full) — it exists only in memory and will be lost if you reload. Retry saving before doing anything else.</span>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button onclick="retryDrivePersist()"
+        style="padding:4px 12px;border-radius:4px;border:1px solid currentColor;background:none;color:inherit;font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
+        Retry
+      </button>
+    </div>`;
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+
+function hideDrivePersistFailureBanner() {
+  pendingDrivePersistRetrySavedAt = null;
+  const banner = document.getElementById('drive-persist-failure-banner');
+  if (banner) banner.remove();
+}
+
+function retryDrivePersist() {
+  if (!pendingDrivePersistRetrySavedAt) return;
+  finishDriveRestore(pendingDrivePersistRetrySavedAt);
 }
 
 // ════════════════════════════════════════════════════
