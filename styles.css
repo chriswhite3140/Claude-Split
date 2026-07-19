@@ -256,6 +256,25 @@ body[data-text-size="large"] {
 .sync-dot.syncing { background: var(--status-warning-text); box-shadow: 0 0 6px var(--status-warning-text); animation: pulse 1s infinite; }
 .sync-dot.error { background: var(--status-danger-text); box-shadow: 0 0 6px var(--status-danger-text); }
 
+.drive-sync-indicator {
+  font-size: 12px;
+  color: var(--text3);
+  font-family: 'DM Mono', monospace;
+}
+.drive-sync-indicator .is-muted { color: var(--text3); }
+.drive-sync-indicator .is-error { color: var(--status-danger-text); }
+.drive-sync-indicator .drive-sync-retry-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--status-danger-text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
 /* ── MAIN ── */
