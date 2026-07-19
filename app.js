@@ -2410,12 +2410,19 @@ function loadLessonPlansState() {
   }
 }
 
+// Returns true if the write actually reached localStorage. Existing callers ignore
+// this and keep working exactly as before — it exists for callers (like the Drive
+// restore flow) that need to know a "successful" save wasn't silently swallowed by
+// a quota/security error before treating the data as durably persisted.
 function saveLessonPlansState() {
   try {
     const lessons = Array.isArray(state.lessonPlans) ? state.lessonPlans.map(normalizeLessonPlan) : [];
     localStorage.setItem(LESSON_PLANS_STORAGE_KEY, JSON.stringify(lessons));
     markPlannerDirtyForDriveSync();
-  } catch (e) {}
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ── UNIT PLANS persistence (mirrors loadLessonPlansState / saveLessonPlansState) ──
@@ -2446,12 +2453,16 @@ function loadUnitPlansState() {
   }
 }
 
+// See saveLessonPlansState() above for why this returns a boolean.
 function saveUnitPlansState() {
   try {
     const units = Array.isArray(state.unitPlans) ? state.unitPlans.map(normalizeUnitPlan) : [];
     localStorage.setItem(UNIT_PLANS_STORAGE_KEY, JSON.stringify(units));
     markPlannerDirtyForDriveSync();
-  } catch (e) {}
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ════════════════════════════════════════════════════
@@ -2467,6 +2478,7 @@ let driveSyncDirty = false;
 let driveSyncTimer = null;
 let pendingDriveRestoreData = null;
 let pendingDriveRestoreSavedAt = null;
+let pendingDriveRestoreLocalModifiedAt = null;
 
 function plannerLocalModifiedAt() {
   try { return localStorage.getItem(PLANNER_LOCAL_MODIFIED_KEY) || null; } catch (e) { return null; }
@@ -2616,6 +2628,10 @@ function showDriveRestoreBanner(driveData, savedAt) {
   if (document.getElementById('drive-restore-banner')) return;
   pendingDriveRestoreData = driveData;
   pendingDriveRestoreSavedAt = savedAt;
+  // The banner is deliberately non-blocking, so the teacher can keep editing while it
+  // sits on screen. Snapshot the local-modified marker now so restoreDriveBackup() can
+  // detect if that happened and avoid clobbering newer edits with this stale snapshot.
+  pendingDriveRestoreLocalModifiedAt = plannerLocalModifiedAt();
   const banner = document.createElement('div');
   banner.id = 'drive-restore-banner';
   banner.style.cssText = "background:var(--banner-bg);color:var(--banner-text);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;flex-wrap:wrap;gap:8px";
@@ -2635,25 +2651,40 @@ function showDriveRestoreBanner(driveData, savedAt) {
 function dismissDriveRestoreBanner() {
   pendingDriveRestoreData = null;
   pendingDriveRestoreSavedAt = null;
+  pendingDriveRestoreLocalModifiedAt = null;
   const banner = document.getElementById('drive-restore-banner');
   if (banner) banner.remove();
 }
 
 function restoreDriveBackup() {
   if (!pendingDriveRestoreData) return;
+  // If a save happened after the banner appeared, the pending snapshot is now stale —
+  // applying it as-is would silently discard those newer local edits.
+  if (plannerLocalModifiedAt() !== pendingDriveRestoreLocalModifiedAt) {
+    const proceed = confirm('You have made changes since this Drive backup was found. Restoring will overwrite those changes with the Drive version. Continue?');
+    if (!proceed) return;
+  }
   const data = pendingDriveRestoreData;
   const restoredSavedAt = pendingDriveRestoreSavedAt || new Date().toISOString();
   if (Array.isArray(data.unitPlans)) state.unitPlans = data.unitPlans.map(normalizeUnitPlan);
   if (Array.isArray(data.lessonPlans)) state.lessonPlans = data.lessonPlans.map(normalizeLessonPlan);
-  saveUnitPlansState();
-  saveLessonPlansState();
+  const unitsSaved = saveUnitPlansState();
+  const lessonsSaved = saveLessonPlansState();
+  dismissDriveRestoreBanner();
+  if (!unitsSaved || !lessonsSaved) {
+    // The restored data is live in memory but didn't actually persist to localStorage
+    // (e.g. quota exceeded) — don't claim it's synced or clear the dirty flag, so a
+    // future save attempt keeps retrying instead of silently reverting on next reload.
+    toast('Restored in this session, but saving locally failed — check your browser storage', 'error');
+    renderView();
+    return;
+  }
   // The restored content is exactly what Drive holds as of restoredSavedAt, so this
   // device is now in sync with Drive — record it the same way a successful upload
   // would, instead of leaving the indicator claiming nothing has ever been backed up.
   driveSyncEnsureState().lastSyncedAt = restoredSavedAt;
   try { localStorage.setItem(PLANNER_LAST_DRIVE_SYNC_KEY, restoredSavedAt); } catch (e) {}
   driveSyncDirty = false;
-  dismissDriveRestoreBanner();
   toast('Restored unit plans from Drive backup', 'success');
   updateDriveSyncIndicator();
   renderView();
