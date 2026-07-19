@@ -407,8 +407,13 @@ let state = {
 };
 
 // ── GOOGLE SHEETS API ──
-async function apiCall(action, data = null) {
-  setSyncing(true);
+// quiet:true skips the global sync-dot/sync-label side effects — used by the Drive
+// backup calls below, which have their own dedicated indicator and quiet-retry design
+// (see DRIVE BACKUP SYNC). Without this, a background Drive hiccup would flip the
+// Sheets connection indicator to "Sync error" even though Sheets is fine.
+async function apiCall(action, data = null, opts = {}) {
+  const quiet = !!(opts && opts.quiet);
+  if (!quiet) setSyncing(true);
   try {
     const resp = await fetch(API_URL + '?action=' + action, {
       method: 'POST',
@@ -416,11 +421,10 @@ async function apiCall(action, data = null) {
       body: JSON.stringify({ action, ...(data || {}) })
     });
     const result = await resp.json();
-    setSyncing(false);
+    if (!quiet) setSyncing(false);
     return result;
   } catch (err) {
-    setSyncing(false);
-    setError();
+    if (!quiet) { setSyncing(false); setError(); }
     throw err;
   }
 }
@@ -2533,13 +2537,48 @@ async function driveBackupSave(opts) {
   const silent = !!(opts && opts.silent);
   const ds = driveSyncEnsureState();
   if (ds.syncing) return;
+  const unitPlans = state.unitPlans || [];
+  const lessonPlans = state.lessonPlans || [];
+  // A fresh browser (or a real cache clear) starts with empty arrays before the
+  // restore banner is actioned. Uploading that as-is — especially from the manual
+  // button, which isn't gated by the dirty flag — would overwrite a real Drive backup
+  // with nothing. Only worth checking when this device has no confirmed sync history;
+  // an established device legitimately deleting everything should still be able to
+  // sync that intentional empty state.
+  if (!unitPlans.length && !lessonPlans.length && !plannerLastDriveSyncAt()) {
+    ds.syncing = true;
+    updateDriveSyncIndicator();
+    try {
+      const existing = await apiCall('driveBackupLoad', null, { quiet: true });
+      const existingHasData = existing && !existing.error && existing.data &&
+        ((existing.data.unitPlans && existing.data.unitPlans.length) || (existing.data.lessonPlans && existing.data.lessonPlans.length));
+      if (existingHasData) {
+        if (!silent) toast('Drive already has unit plans saved — restore them before backing up an empty browser', 'error');
+        return;
+      }
+    } catch (e) {
+      // Can't confirm what's on Drive — safer to skip this attempt than risk
+      // overwriting real data blind. The next tick (or another manual click) retries.
+      if (!silent) toast('Could not confirm Drive is empty — skipped to avoid overwriting existing data', 'error');
+      return;
+    } finally {
+      ds.syncing = false;
+      updateDriveSyncIndicator();
+    }
+  }
   ds.syncing = true;
   updateDriveSyncIndicator();
   try {
+    // savedAt reflects when the data was last actually edited, not when this upload
+    // attempt happened. If it used the upload time instead, a delayed retry of stale
+    // data (e.g. this device was offline while another device uploaded something
+    // newer) would stamp old content with a fresh timestamp and pass the backend's
+    // staleness guard, clobbering the genuinely newer backup. Using the edit time
+    // means a retry of unchanged data always carries the same timestamp it always had.
     const payload = {
-      unitPlans: state.unitPlans || [],
-      lessonPlans: state.lessonPlans || [],
-      savedAt: new Date().toISOString(),
+      unitPlans,
+      lessonPlans,
+      savedAt: plannerLocalModifiedAt() || new Date().toISOString(),
     };
     // Snapshot the local-modified marker right before the upload starts. If a save
     // lands while we're awaiting the network (the upload can take a second or two),
@@ -2547,7 +2586,7 @@ async function driveBackupSave(opts) {
     // — in that case the payload we just uploaded is already stale, so we must not
     // clear the flag below and silently drop that edit until something else re-dirties it.
     const localModifiedAtBeforeUpload = plannerLocalModifiedAt();
-    const result = await apiCall('driveBackupSave', payload);
+    const result = await apiCall('driveBackupSave', payload, { quiet: true });
     if (!result || result.error) throw new Error((result && result.error) || 'Drive backup failed');
     // The backend rejects an out-of-order write (see DriveBackup.gs) and reports it
     // as { success: true, skipped: true } rather than an error — this payload never
@@ -2602,7 +2641,7 @@ function updateDriveSyncIndicator() {
 
 async function driveBackupCheckOnLoad() {
   try {
-    const result = await apiCall('driveBackupLoad');
+    const result = await apiCall('driveBackupLoad', null, { quiet: true });
     if (!result || result.error || !result.data) return;
     const driveSavedAt = result.data.savedAt || result.savedAt;
     if (!driveSavedAt) return;
@@ -8149,7 +8188,7 @@ function renderAdmin(main) {
             </div>
             <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
               <button class="btn btn-primary" type="button" onclick="driveBackupSave()">Backup to Drive now</button>
-              <div class="drive-sync-indicator" style="font-size:12px">${driveSyncIndicatorHtml()}</div>
+              <div class="drive-sync-indicator">${driveSyncIndicatorHtml()}</div>
             </div>
           </div>
         `
@@ -10210,6 +10249,7 @@ async function init() {
   // Drive backup sync: load from localStorage above already made the app usable,
   // so the Drive check runs in the background and never blocks rendering.
   driveSyncInitDirtyState();
+  updateDriveSyncIndicator();
   startDriveSyncTimer();
   driveBackupCheckOnLoad();
 
