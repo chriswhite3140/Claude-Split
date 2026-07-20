@@ -3424,6 +3424,7 @@ function unitDuplicateLesson(unitId, lessonId) {
     intention: source.intention || '',
     linkedICIds: Array.isArray(source.linkedICIds) ? [...source.linkedICIds] : [],
     unitId: unit.id,
+    teachingStatus: 'planned',
   });
   state.lessonPlans.push(copy);
   const lessonIds = Array.isArray(unit.lessonIds) ? [...unit.lessonIds] : [];
