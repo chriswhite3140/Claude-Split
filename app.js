@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.52
+ * THIS FILE IS VERSION: 1.13.53
  * Last updated: 2026-07-20
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.53 - Unit Plans: "Duplicate" action on lesson sequence rows copies title/subject/intention/linked ICs into a new lesson inserted right after the source, with teaching status reset to Planned and no inherited scheduledSlots (starts unscheduled); title gets a " (copy)" suffix
  * v1.13.52 - Calendar picker fixes from PR review: shaded cells now mix from --surface-alt (matching unshaded cells, no more tone jump at 1 lesson); dense on-blue text colour only kicks in at 8+/10 lessons instead of 5+, since dark theme's lighter --blue only gets light enough to need it near the top of the scale; date cells get an aria-label with a coarse light/moderate/heavy hint (not colour-only); the outside-click handler is scoped to the planner view so it doesn't force a redundant re-render after navigating away with the picker left open
  * v1.13.51 - Weekly Planner: calendar icon next to Prev/This week/Next opens a compact date-picker popover; picking a date jumps the Week Board to that date's Monday-start week via the existing plannerNormalizeWeekStart() week-range logic; each day cell is shaded by that day's scheduled lesson count (0-10+, from existing lessonPlans data, no exact count shown)
  * v1.13.33 - Fix: unit IC picker "Taught" badge now uses the most-recent taughtICs status per student+IC and ignores cleared (empty-status) outcomes, so an IC whose outcome was cleared no longer shows as taught (matches getTaughtICStatus)
@@ -95,7 +96,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.52';
+const APP_VERSION = '1.13.53';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -3223,8 +3224,12 @@ function unitLessonRowHtml(unit, lesson) {
           <span class="unit-lesson-chip">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
         </div>
       </div>
-      <button class="unit-lesson-delete" type="button" title="Remove lesson from unit"
-        onclick="event.stopPropagation();unitDeleteLesson('${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')">✕</button>
+      <div class="unit-lesson-actions">
+        <button class="planner-mini-btn" type="button" title="Duplicate lesson"
+          onclick="event.stopPropagation();unitDuplicateLesson('${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')">Duplicate</button>
+        <button class="unit-lesson-delete" type="button" title="Remove lesson from unit"
+          onclick="event.stopPropagation();unitDeleteLesson('${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')">✕</button>
+      </div>
     </div>
   `;
 }
@@ -3398,6 +3403,36 @@ function unitAddLesson(unitId) {
   state.plannerUi.suggestedICIds = [];
   state.plannerUi.expandedICId = null;
   state.plannerUi.icShowAllYears = false;
+  renderView();
+}
+
+// Copies a lesson's content (title, subject, intention, linked ICs) into a new lesson
+// inserted immediately after the source in the unit's sequence. Teaching status always
+// resets to "planned" regardless of the source's status, and scheduledSlots are
+// deliberately dropped — the duplicate starts unscheduled; placing it on the Weekly
+// Planner is a separate, deliberate action. Reuses normalizeLessonPlan so the copy gets
+// the exact same shape/defaults as any other lesson (see unitAddLesson).
+function unitDuplicateLesson(unitId, lessonId) {
+  const unitIdx = state.unitPlans.findIndex(u => u.id === unitId);
+  if (unitIdx < 0) return;
+  const unit = state.unitPlans[unitIdx];
+  const source = state.lessonPlans.find(l => l.id === lessonId);
+  if (!source) return;
+  const copy = normalizeLessonPlan({
+    title: `${source.title || 'Untitled lesson'} (copy)`,
+    subject: source.subject || '',
+    intention: source.intention || '',
+    linkedICIds: Array.isArray(source.linkedICIds) ? [...source.linkedICIds] : [],
+    unitId: unit.id,
+  });
+  state.lessonPlans.push(copy);
+  const lessonIds = Array.isArray(unit.lessonIds) ? [...unit.lessonIds] : [];
+  const sourcePos = lessonIds.indexOf(lessonId);
+  const insertAt = sourcePos >= 0 ? sourcePos + 1 : lessonIds.length;
+  lessonIds.splice(insertAt, 0, copy.id);
+  state.unitPlans[unitIdx] = { ...unit, lessonIds };
+  saveLessonPlansState();
+  saveUnitPlansState();
   renderView();
 }
 
