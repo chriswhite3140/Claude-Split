@@ -2,14 +2,16 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.33
- * Last updated: 2026-06-29
+ * THIS FILE IS VERSION: 1.13.52
+ * Last updated: 2026-07-20
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.52 - Calendar picker fixes from PR review: shaded cells now mix from --surface-alt (matching unshaded cells, no more tone jump at 1 lesson); dense on-blue text colour only kicks in at 8+/10 lessons instead of 5+, since dark theme's lighter --blue only gets light enough to need it near the top of the scale; date cells get an aria-label with a coarse light/moderate/heavy hint (not colour-only); the outside-click handler is scoped to the planner view so it doesn't force a redundant re-render after navigating away with the picker left open
+ * v1.13.51 - Weekly Planner: calendar icon next to Prev/This week/Next opens a compact date-picker popover; picking a date jumps the Week Board to that date's Monday-start week via the existing plannerNormalizeWeekStart() week-range logic; each day cell is shaded by that day's scheduled lesson count (0-10+, from existing lessonPlans data, no exact count shown)
  * v1.13.33 - Fix: unit IC picker "Taught" badge now uses the most-recent taughtICs status per student+IC and ignores cleared (empty-status) outcomes, so an IC whose outcome was cleared no longer shows as taught (matches getTaughtICStatus)
  * v1.13.32 - Unit Plans: IC picker cards show an "In lesson N" tag when the IC is already linked to another lesson in the unit, and a "Taught" badge when it has been taught to the class (from existing state.taughtICs — no new fetch); Weekly Planner cards unchanged
  * v1.13.31 - Unit Plans: IC picker cards now show the IC number (sequenceOrder) and the early/middle/late stage tag, matching the Curriculum Codes drawer; Weekly Planner IC cards unchanged
@@ -93,7 +95,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.50';
+const APP_VERSION = '1.13.52';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -388,7 +390,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null },
   unitPlans: loadUnitPlansState(),
   unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   driveSync: { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 },
@@ -1061,6 +1063,16 @@ function renderView() {
 
 const PLANNER_WEEK_STORAGE_KEY = 'ct_planner_week_v1';
 
+// Inline SVG (not an emoji glyph) so the date-picker trigger renders consistently
+// across browsers/fonts without relying on emoji font support; stroke="currentColor"
+// picks up the .btn text colour, including its hover state, for free.
+const PLANNER_CALENDAR_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px">
+  <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+  <line x1="16" y1="2" x2="16" y2="6"></line>
+  <line x1="8" y1="2" x2="8" y2="6"></line>
+  <line x1="3" y1="10" x2="21" y2="10"></line>
+</svg>`;
+
 // Escape a value for safe interpolation inside a single-quoted JS string in an
 // inline on* handler (guards against ids containing a backslash or apostrophe).
 function plannerJsStr(value) {
@@ -1177,6 +1189,11 @@ function renderPlanner(main) {
         <button class="btn" type="button" onclick="plannerShiftWeek(-1)">‹ Prev</button>
         <button class="btn" type="button" onclick="plannerGoToThisWeek()">This week</button>
         <button class="btn" type="button" onclick="plannerShiftWeek(1)">Next ›</button>
+        <div style="position:relative">
+          <button class="btn" id="planner-date-picker-btn" type="button" title="Jump to date"
+            aria-label="Jump to date" onclick="event.stopPropagation();plannerToggleDatePicker()">${PLANNER_CALENDAR_ICON_SVG}</button>
+          ${state.plannerUi.datePickerOpen ? plannerDatePickerHtml() : ''}
+        </div>
         <button class="btn btn-primary" id="planner-add-lesson-btn" type="button" onclick="plannerAddLesson()">+ Add Lesson</button>
       </div>
     </div>
@@ -1784,6 +1801,8 @@ function plannerEnsureUiState() {
   if (typeof state.plannerUi.icShowAllYears !== 'boolean') state.plannerUi.icShowAllYears = false;
   if (typeof state.plannerUi.pendingStubForLessonId === 'undefined') state.plannerUi.pendingStubForLessonId = null;
   if (!isValidIsoDate(state.plannerUi.weekKey)) state.plannerUi.weekKey = plannerNormalizeWeekStart(loadPlannerWeek());
+  if (typeof state.plannerUi.datePickerOpen !== 'boolean') state.plannerUi.datePickerOpen = false;
+  if (!isValidIsoDate(state.plannerUi.datePickerMonth)) state.plannerUi.datePickerMonth = null;
 }
 
 function plannerSelectedWeekKey() {
@@ -1825,6 +1844,148 @@ function loadPlannerWeek() {
 function savePlannerWeek() {
   try { localStorage.setItem(PLANNER_WEEK_STORAGE_KEY, state.plannerUi.weekKey); } catch (e) {}
 }
+
+// ── Calendar picker (jump to any week) ──
+// Opens a compact popover next to Prev/This week/Next. Picking a date routes through
+// the same plannerNormalizeWeekStart() used by plannerShiftWeek/plannerGoToThisWeek,
+// so "which week is displayed" always has one source of truth.
+function plannerToggleDatePicker() {
+  plannerEnsureUiState();
+  state.plannerUi.datePickerOpen = !state.plannerUi.datePickerOpen;
+  // Re-anchor the popover's displayed month to the current week each time it opens.
+  if (state.plannerUi.datePickerOpen) {
+    state.plannerUi.datePickerMonth = plannerMonthStartIso(state.plannerUi.weekKey);
+  }
+  renderView();
+}
+
+function plannerCloseDatePicker() {
+  if (!state.plannerUi || !state.plannerUi.datePickerOpen) return;
+  state.plannerUi.datePickerOpen = false;
+  renderView();
+}
+
+function plannerShiftDatePickerMonth(deltaMonths) {
+  plannerEnsureUiState();
+  const current = parseIsoDateLocal(state.plannerUi.datePickerMonth) || parseIsoDateLocal(plannerMonthStartIso(state.plannerUi.weekKey));
+  state.plannerUi.datePickerMonth = toIsoDate(new Date(current.getFullYear(), current.getMonth() + deltaMonths, 1));
+  renderView();
+}
+
+function plannerGoToDate(isoDate) {
+  plannerEnsureUiState();
+  if (!isValidIsoDate(isoDate)) return;
+  state.plannerUi.weekKey = plannerNormalizeWeekStart(isoDate);
+  state.plannerUi.datePickerOpen = false;
+  savePlannerWeek();
+  renderView();
+}
+
+function plannerMonthStartIso(isoDate) {
+  const d = parseIsoDateLocal(isoDate) || new Date();
+  return toIsoDate(new Date(d.getFullYear(), d.getMonth(), 1));
+}
+
+// Lesson count for one calendar day, from the same lessonPlans data the board itself
+// reads (standalone lessons by weekKey+dayKey, unit lessons via scheduledSlots) — no
+// separate data source. Only Mon-Fri can hold lessons; weekends always return 0.
+function plannerLessonCountForDate(isoDate) {
+  const weekKey = plannerNormalizeWeekStart(isoDate);
+  // Match isoDate to a weekday by the same addDaysToDate() the board columns use
+  // (see plannerDays.map in renderPlanner) rather than diffing Date objects in ms,
+  // which is DST-unsafe.
+  const dayIndex = PLANNER_SCHEDULABLE_DAYS.findIndex((_, i) => addDaysToDate(weekKey, i) === isoDate);
+  const dayKey = PLANNER_SCHEDULABLE_DAYS[dayIndex];
+  if (!dayKey) return 0;
+  let count = 0;
+  (state.lessonPlans || []).forEach(lesson => {
+    if (lesson.unitId) {
+      (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).forEach(slot => {
+        if (isValidScheduledSlot(slot) && slot.weekKey === weekKey && slot.dayKey === dayKey) count++;
+      });
+    } else if (lesson.weekKey === weekKey && lesson.dayKey === dayKey) {
+      count++;
+    }
+  });
+  return count;
+}
+
+const PLANNER_DATE_PICKER_WEEKDAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+
+function plannerDatePickerHtml() {
+  const monthIso = state.plannerUi.datePickerMonth || plannerMonthStartIso(state.plannerUi.weekKey);
+  const monthStart = parseIsoDateLocal(monthIso) || new Date();
+  const month = monthStart.getMonth();
+  const monthLabel = monthStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+  const gridStartIso = plannerNormalizeWeekStart(toIsoDate(monthStart));
+  const todayIso = toIsoDate(new Date());
+  const selectedWeekKey = state.plannerUi.weekKey;
+
+  const dates = [];
+  for (let i = 0; i < 42; i++) {
+    const cellIso = addDaysToDate(gridStartIso, i);
+    dates.push({ iso: cellIso, date: parseIsoDateLocal(cellIso) });
+  }
+  // Drop the trailing row if it's entirely outside the displayed month, so the popover
+  // stays compact for the common 5-row-month case.
+  const lastRowOutsideMonth = dates.slice(35, 42).every(entry => entry.date.getMonth() !== month);
+  const visibleDates = lastRowOutsideMonth ? dates.slice(0, 35) : dates;
+
+  const cellsHtml = visibleDates.map(({ iso, date }) => {
+    const inMonth = date.getMonth() === month;
+    const count = plannerLessonCountForDate(iso);
+    const intensity = Math.min(count, 10) / 10;
+    const isToday = iso === todayIso;
+    const isSelectedWeek = plannerNormalizeWeekStart(iso) === selectedWeekKey;
+    // Mix from the same --surface-alt base the unshaded (0-lesson) cells use via CSS,
+    // so shading is a continuous gradient from 0 lessons rather than jumping tone the
+    // moment a cell goes from 0 to 1.
+    const shadeStyle = intensity > 0
+      ? ` style="background:color-mix(in srgb, var(--blue) ${Math.round(intensity * 100)}%, var(--surface-alt))"`
+      : '';
+    // Only switch the day number to the on-blue contrast colour once the mix is mostly
+    // --blue: dark theme's --blue is a light accent blended from a dark --surface-alt, so
+    // at low/mid intensity the background is still too dark for that (dark) contrast
+    // colour — see PR #68 review discussion.
+    const isDense = intensity >= 0.8;
+    const classes = [
+      'planner-date-picker-cell',
+      inMonth ? '' : 'is-outside-month',
+      isToday ? 'is-today' : '',
+      isSelectedWeek ? 'is-selected-week' : '',
+      isDense ? 'is-dense' : '',
+    ].filter(Boolean).join(' ');
+    const title = date.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const densityLabel = count === 0 ? 'no lessons scheduled'
+      : count <= 3 ? 'light lesson load'
+      : count <= 6 ? 'moderate lesson load'
+      : 'heavy lesson load';
+    return `<button type="button" class="${classes}"${shadeStyle} title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}, ${densityLabel}"
+      onclick="event.stopPropagation();plannerGoToDate('${plannerJsStr(iso)}')">${date.getDate()}</button>`;
+  }).join('');
+
+  return `
+    <div class="planner-date-picker" id="planner-date-picker-popover" onclick="event.stopPropagation()">
+      <div class="planner-date-picker-head">
+        <button type="button" class="planner-date-picker-nav" aria-label="Previous month" onclick="event.stopPropagation();plannerShiftDatePickerMonth(-1)">‹</button>
+        <span class="planner-date-picker-month">${escapeHtml(monthLabel)}</span>
+        <button type="button" class="planner-date-picker-nav" aria-label="Next month" onclick="event.stopPropagation();plannerShiftDatePickerMonth(1)">›</button>
+        <button type="button" class="modal-close planner-date-picker-close" aria-label="Close date picker" onclick="event.stopPropagation();plannerCloseDatePicker()">×</button>
+      </div>
+      <div class="planner-date-picker-weekdays">
+        ${PLANNER_DATE_PICKER_WEEKDAY_LABELS.map(l => `<span>${l}</span>`).join('')}
+      </div>
+      <div class="planner-date-picker-grid">${cellsHtml}</div>
+    </div>
+  `;
+}
+
+document.addEventListener('click', function() {
+  // Scoped to the planner view: without this, leaving the picker open and switching
+  // views would still run plannerCloseDatePicker()'s renderView() on whatever screen
+  // the nav click just landed on.
+  if (state.currentView === 'planner' && state.plannerUi && state.plannerUi.datePickerOpen) plannerCloseDatePicker();
+});
 
 function plannerOpenLessonDrawer(lessonId) {
   if (!state.lessonPlans.some(lesson => lesson.id === lessonId)) return;

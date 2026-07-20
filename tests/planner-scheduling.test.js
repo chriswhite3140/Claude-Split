@@ -971,6 +971,55 @@ test('unit lessons never appear as standalone board cards', () => {
   assert.ok(!html.includes("plannerOpenLessonDrawer('ul_1')"), 'unit lesson must not render as a standalone board card');
 });
 
+// ── Calendar picker: per-day lesson count ────────────────────────────────────────
+console.log('Calendar picker lesson-count-per-day');
+
+test('weekend dates always return 0, even in a week with lessons', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  const saturdayIso = sandbox.addDaysToDate(WEEK_A, 5);
+  const sundayIso = sandbox.addDaysToDate(WEEK_A, 6);
+  assert.strictEqual(sandbox.plannerLessonCountForDate(saturdayIso), 0);
+  assert.strictEqual(sandbox.plannerLessonCountForDate(sundayIso), 0);
+});
+
+test('counts a standalone lesson only on its own day, not neighbouring days', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'mon');
+  assert.strictEqual(sandbox.plannerLessonCountForDate(WEEK_A), 1, 'Monday (WEEK_A) should count sa_2');
+  assert.strictEqual(sandbox.plannerLessonCountForDate(sandbox.addDaysToDate(WEEK_A, 1)), 0, 'Tuesday should be unaffected');
+});
+
+test('counts a unit lesson only through its valid scheduledSlots entries', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  assert.strictEqual(sandbox.plannerLessonCountForDate(WEEK_A), 1);
+
+  // A malformed slot (bad weekKey/dayKey) on another lesson must not be counted.
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_2');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [{ weekKey: 'oops', dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'zzz' }] };
+  assert.strictEqual(sandbox.plannerLessonCountForDate(WEEK_A), 1, 'malformed slots must not inflate the count');
+});
+
+test('a date is scoped to its own week — same weekday in a different week is unaffected', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'mon');
+  const nextWeekMonday = sandbox.addDaysToDate(WEEK_A, 7);
+  assert.strictEqual(nextWeekMonday, WEEK_B);
+  assert.strictEqual(sandbox.plannerLessonCountForDate(WEEK_B), 0, 'WEEK_B Monday must not pick up a WEEK_A lesson');
+});
+
+test('multiple lessons on the same day are all counted, uncapped', () => {
+  resetState();
+  addStandaloneLesson('sa_2', 'B lesson', 'mon');
+  addStandaloneLesson('sa_3', 'C lesson', 'mon');
+  addStandaloneLesson('sa_4', 'D lesson', 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  assert.strictEqual(sandbox.plannerLessonCountForDate(WEEK_A), 4, 'count is a raw total, not clamped — clamping happens at the display layer');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
