@@ -1147,12 +1147,32 @@ body[data-text-size="large"] {
 
 .planner-lesson-column-head {
   border-bottom: 1px solid var(--border);
+  border-top: 3px solid transparent;
+  border-radius: 9px 9px 0 0;
   padding: 8px 10px;
   font-family: 'DM Mono', monospace;
   font-size: var(--label-size);
   color: var(--text3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.planner-column-day-date {
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+/* Today's column — subtle tint + accent border, using the same info tokens as the
+   drag-over highlight elsewhere on the board. Only ever applied to a column whose
+   calendar date matches the current date, so at most one column per rendered week. */
+.planner-lesson-column-head.is-today {
+  background: var(--status-info-bg);
+  border-top-color: var(--status-info-border);
+  color: var(--status-info-text);
 }
 
 .planner-lesson-column-body {
