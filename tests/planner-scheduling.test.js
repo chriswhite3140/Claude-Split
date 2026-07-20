@@ -1104,6 +1104,59 @@ test('the unit lesson row renders a Duplicate button wired to unitDuplicateLesso
   assert.ok(/onclick="event\.stopPropagation\(\);unitDuplicateLesson/.test(html), 'the Duplicate button must stop propagation so it does not also open the row\'s edit drawer');
 });
 
+test('a failed save does not roll back the in-memory duplicate, and surfaces a retryable failure banner instead of failing silently', () => {
+  resetState();
+  const realSaveLessonPlansState = sandbox.saveLessonPlansState;
+  sandbox.saveLessonPlansState = () => false; // simulate a localStorage write failure (quota/security error)
+
+  let shownMessage = null, shownRetry = null;
+  const realShowBanner = sandbox.showLessonSaveFailureBanner;
+  sandbox.showLessonSaveFailureBanner = (message, onRetry) => { shownMessage = message; shownRetry = onRetry; };
+
+  sandbox.unitDuplicateLesson('unit_1', 'ul_1');
+
+  const unit = getState().unitPlans.find(u => u.id === 'unit_1');
+  assert.strictEqual(unit.lessonIds.length, 3, 'the in-memory duplicate must not be rolled back on a save failure');
+  const copy = lessonById(unit.lessonIds[1]);
+  assert.ok(copy, 'the duplicated lesson should still exist in memory even though persistence failed');
+
+  assert.ok(shownMessage && /could not be saved/i.test(shownMessage), 'a failure banner explaining the save failed should be shown, not swallowed silently');
+  assert.strictEqual(typeof shownRetry, 'function', 'the banner should be given a retry callback, not just a dismissing message');
+
+  sandbox.saveLessonPlansState = realSaveLessonPlansState;
+  sandbox.showLessonSaveFailureBanner = realShowBanner;
+});
+
+test('retrying a failed duplicate save re-attempts the write (not the duplication itself) and clears the banner on success', () => {
+  resetState();
+  const realSaveLessonPlansState = sandbox.saveLessonPlansState;
+  let saveShouldFail = true;
+  sandbox.saveLessonPlansState = (...args) => saveShouldFail ? false : realSaveLessonPlansState(...args);
+
+  let hideCalled = false;
+  const realHideBanner = sandbox.hideLessonSaveFailureBanner;
+  sandbox.hideLessonSaveFailureBanner = (...args) => { hideCalled = true; return realHideBanner(...args); };
+
+  sandbox.unitDuplicateLesson('unit_1', 'ul_1');
+  const unit = getState().unitPlans.find(u => u.id === 'unit_1');
+  const copyId = unit.lessonIds[1];
+  assert.strictEqual(unit.lessonIds.length, 3, 'the duplicate should exist in memory despite the failed save');
+
+  // showLessonSaveFailureBanner() itself clears any stale banner before showing a new
+  // one, so it also invokes hide once during the failing call above — reset the flag
+  // here so the assertion below is only about the retry's own success path.
+  hideCalled = false;
+  saveShouldFail = false;
+  sandbox.retryLessonSave(); // simulates clicking "Retry" on the banner
+
+  assert.strictEqual(hideCalled, true, 'the failure banner should be hidden once the retry succeeds');
+  const savedLessons = JSON.parse(localStorageStub.getItem('ct_planner_lessons_v2'));
+  assert.ok(savedLessons.some(l => l.id === copyId), 'the retried save should persist the same duplicate — retry must not re-run the duplication');
+
+  sandbox.saveLessonPlansState = realSaveLessonPlansState;
+  sandbox.hideLessonSaveFailureBanner = realHideBanner;
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
