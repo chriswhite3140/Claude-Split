@@ -2149,7 +2149,7 @@ body[data-text-size="large"] {
 .planner-date-picker-weekdays {
   margin-bottom: 4px;
   font-family: 'DM Mono', monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text3);
   text-align: center;
 }

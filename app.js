@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.51
+ * THIS FILE IS VERSION: 1.13.52
  * Last updated: 2026-07-20
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.52 - Calendar picker fixes from PR review: shaded cells now mix from --surface-alt (matching unshaded cells, no more tone jump at 1 lesson); dense on-blue text colour only kicks in at 8+/10 lessons instead of 5+, since dark theme's lighter --blue only gets light enough to need it near the top of the scale; date cells get an aria-label with a coarse light/moderate/heavy hint (not colour-only); the outside-click handler is scoped to the planner view so it doesn't force a redundant re-render after navigating away with the picker left open
  * v1.13.51 - Weekly Planner: calendar icon next to Prev/This week/Next opens a compact date-picker popover; picking a date jumps the Week Board to that date's Monday-start week via the existing plannerNormalizeWeekStart() week-range logic; each day cell is shaded by that day's scheduled lesson count (0-10+, from existing lessonPlans data, no exact count shown)
  * v1.13.33 - Fix: unit IC picker "Taught" badge now uses the most-recent taughtICs status per student+IC and ignores cleared (empty-status) outcomes, so an IC whose outcome was cleared no longer shows as taught (matches getTaughtICStatus)
  * v1.13.32 - Unit Plans: IC picker cards show an "In lesson N" tag when the IC is already linked to another lesson in the unit, and a "Taught" badge when it has been taught to the class (from existing state.taughtICs — no new fetch); Weekly Planner cards unchanged
@@ -94,7 +95,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.51';
+const APP_VERSION = '1.13.52';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1936,18 +1937,30 @@ function plannerDatePickerHtml() {
     const intensity = Math.min(count, 10) / 10;
     const isToday = iso === todayIso;
     const isSelectedWeek = plannerNormalizeWeekStart(iso) === selectedWeekKey;
+    // Mix from the same --surface-alt base the unshaded (0-lesson) cells use via CSS,
+    // so shading is a continuous gradient from 0 lessons rather than jumping tone the
+    // moment a cell goes from 0 to 1.
     const shadeStyle = intensity > 0
-      ? ` style="background:color-mix(in srgb, var(--blue) ${Math.round(intensity * 100)}%, var(--surface))"`
+      ? ` style="background:color-mix(in srgb, var(--blue) ${Math.round(intensity * 100)}%, var(--surface-alt))"`
       : '';
+    // Only switch the day number to the on-blue contrast colour once the mix is mostly
+    // --blue: dark theme's --blue is a light accent blended from a dark --surface-alt, so
+    // at low/mid intensity the background is still too dark for that (dark) contrast
+    // colour — see PR #68 review discussion.
+    const isDense = intensity >= 0.8;
     const classes = [
       'planner-date-picker-cell',
       inMonth ? '' : 'is-outside-month',
       isToday ? 'is-today' : '',
       isSelectedWeek ? 'is-selected-week' : '',
-      intensity >= 0.5 ? 'is-dense' : '',
+      isDense ? 'is-dense' : '',
     ].filter(Boolean).join(' ');
     const title = date.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    return `<button type="button" class="${classes}"${shadeStyle} title="${escapeHtml(title)}"
+    const densityLabel = count === 0 ? 'no lessons scheduled'
+      : count <= 3 ? 'light lesson load'
+      : count <= 6 ? 'moderate lesson load'
+      : 'heavy lesson load';
+    return `<button type="button" class="${classes}"${shadeStyle} title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}, ${densityLabel}"
       onclick="event.stopPropagation();plannerGoToDate('${plannerJsStr(iso)}')">${date.getDate()}</button>`;
   }).join('');
 
@@ -1968,7 +1981,10 @@ function plannerDatePickerHtml() {
 }
 
 document.addEventListener('click', function() {
-  if (state.plannerUi && state.plannerUi.datePickerOpen) plannerCloseDatePicker();
+  // Scoped to the planner view: without this, leaving the picker open and switching
+  // views would still run plannerCloseDatePicker()'s renderView() on whatever screen
+  // the nav click just landed on.
+  if (state.currentView === 'planner' && state.plannerUi && state.plannerUi.datePickerOpen) plannerCloseDatePicker();
 });
 
 function plannerOpenLessonDrawer(lessonId) {
