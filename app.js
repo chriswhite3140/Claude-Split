@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.54
+ * THIS FILE IS VERSION: 1.13.55
  * Last updated: 2026-07-20
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.55 - Weekly Planner: topbar now shows the "Last synced to Drive" indicator (with the same failed/retry state) that Unit Plans and Admin already show, reusing driveSyncIndicatorHtml() directly — no sync logic duplicated, so the same driveBackupSave() retry and updateDriveSyncIndicator() refresh already cover this location too
  * v1.13.54 - Fix: unitDuplicateLesson now checks both save*State() return values instead of assuming success; a localStorage write failure (quota/security error) no longer renders silently as if the duplicate had persisted — it shows a persistent Retry banner (mirrors the Drive-restore persist-failure banner's convention) and leaves the in-memory duplicate in place rather than rolling it back
  * v1.13.53 - Unit Plans: "Duplicate" action on lesson sequence rows copies title/subject/intention/linked ICs into a new lesson inserted right after the source, with teaching status reset to Planned and no inherited scheduledSlots (starts unscheduled); title gets a " (copy)" suffix
  * v1.13.52 - Calendar picker fixes from PR review: shaded cells now mix from --surface-alt (matching unshaded cells, no more tone jump at 1 lesson); dense on-blue text colour only kicks in at 8+/10 lessons instead of 5+, since dark theme's lighter --blue only gets light enough to need it near the top of the scale; date cells get an aria-label with a coarse light/moderate/heavy hint (not colour-only); the outside-click handler is scoped to the planner view so it doesn't force a redundant re-render after navigating away with the picker left open
@@ -97,7 +98,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.54';
+const APP_VERSION = '1.13.55';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1186,6 +1187,7 @@ function renderPlanner(main) {
       <div>
         <div class="topbar-title">Weekly Planner</div>
         <div style="font-size:12px;color:var(--text3);margin-top:2px">${escapeHtml(plannerWeekRangeLabel(weekKey))}</div>
+        <div class="drive-sync-indicator">${driveSyncIndicatorHtml()}</div>
       </div>
       <div class="topbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn" type="button" onclick="plannerShiftWeek(-1)">‹ Prev</button>
