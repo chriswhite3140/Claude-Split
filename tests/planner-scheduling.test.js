@@ -1157,6 +1157,54 @@ test('retrying a failed duplicate save re-attempts the write (not the duplicatio
   sandbox.hideLessonSaveFailureBanner = realHideBanner;
 });
 
+// ── Weekly Planner: Drive sync status indicator ─────────────────────────────────
+console.log('Weekly Planner Drive sync indicator');
+
+test('the Weekly Planner topbar renders a .drive-sync-indicator using the same driveSyncIndicatorHtml() as Unit Plans', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+  sandbox.driveSyncEnsureState().lastSyncedAt = '2026-06-29T10:00:00.000Z';
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('class="drive-sync-indicator"'), 'the Weekly Planner topbar should render a .drive-sync-indicator element');
+  assert.ok(html.includes(sandbox.driveSyncIndicatorHtml()), 'it should render the exact same markup driveSyncIndicatorHtml() produces, not a re-implementation');
+  assert.ok(/Last synced to Drive:/.test(html), 'it should reflect the current sync state, same as Unit Plans');
+});
+
+test('a Drive sync failure shows the same "failed — retry" indicator on the Weekly Planner as on Unit Plans', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+  const ds = sandbox.driveSyncEnsureState();
+  ds.consecutiveFailures = 2;
+  realRenderView();
+  const plannerHtml = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(/Drive sync failed/.test(plannerHtml), 'the Weekly Planner should show the failed-sync state');
+  assert.ok(plannerHtml.includes('driveBackupSave()'), 'the retry button should call the existing driveBackupSave(), not a new retry path');
+
+  st.currentView = 'unit-plans';
+  sandbox.unitPlansEnsureUiState();
+  realRenderView();
+  const unitPlansHtml = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(/Drive sync failed/.test(unitPlansHtml), 'sanity check: Unit Plans shows the identical failed-sync state from the same shared state.driveSync');
+});
+
+test('updateDriveSyncIndicator() refreshes the Weekly Planner indicator too, via the existing shared mechanism', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+  realRenderView();
+
+  // Simulate the DOM query the real updateDriveSyncIndicator() runs against: any
+  // element carrying the shared .drive-sync-indicator class gets its innerHTML
+  // refreshed. The stub document doesn't track real class-based queries, so this
+  // confirms the planner's element uses that exact class (not a new one) by
+  // asserting the class string appears verbatim in the rendered board.
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('<div class="drive-sync-indicator">'), 'the planner topbar indicator must carry the shared class so updateDriveSyncIndicator()\'s querySelectorAll(\'.drive-sync-indicator\') picks it up alongside the Unit Plans and Admin ones');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
