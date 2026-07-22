@@ -2212,6 +2212,12 @@ body[data-text-size="large"] {
   color: var(--text);
   line-height: 1.25;
 }
+.unit-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.unit-card-duplicate,
 .unit-card-delete {
   border: 1px solid var(--border2);
   background: transparent;
@@ -2221,6 +2227,11 @@ body[data-text-size="large"] {
   border-radius: 6px;
   cursor: pointer;
   flex-shrink: 0;
+}
+.unit-card-duplicate:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--status-info-bg);
 }
 .unit-card-delete:hover {
   border-color: var(--status-danger-border);
