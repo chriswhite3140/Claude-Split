@@ -1363,6 +1363,11 @@ test('the unit list renders a Duplicate button wired to unitDuplicate, separate 
   assert.ok(html.includes("unitDuplicate('unit_1')"), 'the Duplicate button should call unitDuplicate with the unit id');
   assert.ok(/Duplicate<\/button>[\s\S]*?unitDelete/.test(html), 'Duplicate and Delete should both be present as separate controls');
   assert.ok(/onclick="event\.stopPropagation\(\);unitDuplicate/.test(html), 'the Duplicate button must stop propagation so it does not also open the unit detail view');
+  // keydown bubbles independently of click (same gap already fixed for
+  // .planner-occ-remove) — without this, pressing Enter/Space on the focused
+  // Duplicate button would also fire the parent .unit-card's onkeydown (open detail)
+  // in the same keystroke, since the card's own handler treats Enter/Space as "open".
+  assert.ok(/unit-card-duplicate[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(html), 'the Duplicate button must stop keydown propagation too, not just click');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────

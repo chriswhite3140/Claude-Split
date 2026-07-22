@@ -3136,7 +3136,8 @@ function renderUnitList(main) {
           <div class="unit-card-title">${escapeHtml(unit.title || 'Untitled unit')}</div>
           <div class="unit-card-actions">
             <button class="unit-card-duplicate" type="button" title="Duplicate unit"
-              onclick="event.stopPropagation();unitDuplicate('${plannerJsStr(unit.id)}')">Duplicate</button>
+              onclick="event.stopPropagation();unitDuplicate('${plannerJsStr(unit.id)}')"
+              onkeydown="event.stopPropagation()">Duplicate</button>
             <button class="unit-card-delete" type="button" title="Delete unit"
               onclick="event.stopPropagation();unitDelete('${plannerJsStr(unit.id)}')">Delete</button>
           </div>
