@@ -2428,6 +2428,12 @@ body[data-text-size="large"] {
   border-color: var(--status-danger-border);
   color: var(--status-danger-text);
 }
+.unit-lesson-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
 .unit-lesson-delete {
   border: none;
   background: transparent;

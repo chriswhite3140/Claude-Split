@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.52
+ * THIS FILE IS VERSION: 1.13.54
  * Last updated: 2026-07-20
  * ============================================================
  *
@@ -10,6 +10,8 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.54 - Fix: unitDuplicateLesson now checks both save*State() return values instead of assuming success; a localStorage write failure (quota/security error) no longer renders silently as if the duplicate had persisted — it shows a persistent Retry banner (mirrors the Drive-restore persist-failure banner's convention) and leaves the in-memory duplicate in place rather than rolling it back
+ * v1.13.53 - Unit Plans: "Duplicate" action on lesson sequence rows copies title/subject/intention/linked ICs into a new lesson inserted right after the source, with teaching status reset to Planned and no inherited scheduledSlots (starts unscheduled); title gets a " (copy)" suffix
  * v1.13.52 - Calendar picker fixes from PR review: shaded cells now mix from --surface-alt (matching unshaded cells, no more tone jump at 1 lesson); dense on-blue text colour only kicks in at 8+/10 lessons instead of 5+, since dark theme's lighter --blue only gets light enough to need it near the top of the scale; date cells get an aria-label with a coarse light/moderate/heavy hint (not colour-only); the outside-click handler is scoped to the planner view so it doesn't force a redundant re-render after navigating away with the picker left open
  * v1.13.51 - Weekly Planner: calendar icon next to Prev/This week/Next opens a compact date-picker popover; picking a date jumps the Week Board to that date's Monday-start week via the existing plannerNormalizeWeekStart() week-range logic; each day cell is shaded by that day's scheduled lesson count (0-10+, from existing lessonPlans data, no exact count shown)
  * v1.13.33 - Fix: unit IC picker "Taught" badge now uses the most-recent taughtICs status per student+IC and ignores cleared (empty-status) outcomes, so an IC whose outcome was cleared no longer shows as taught (matches getTaughtICStatus)
@@ -95,7 +97,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.52';
+const APP_VERSION = '1.13.54';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -3223,8 +3225,12 @@ function unitLessonRowHtml(unit, lesson) {
           <span class="unit-lesson-chip">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
         </div>
       </div>
-      <button class="unit-lesson-delete" type="button" title="Remove lesson from unit"
-        onclick="event.stopPropagation();unitDeleteLesson('${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')">✕</button>
+      <div class="unit-lesson-actions">
+        <button class="planner-mini-btn" type="button" title="Duplicate lesson"
+          onclick="event.stopPropagation();unitDuplicateLesson('${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')">Duplicate</button>
+        <button class="unit-lesson-delete" type="button" title="Remove lesson from unit"
+          onclick="event.stopPropagation();unitDeleteLesson('${plannerJsStr(unit.id)}','${plannerJsStr(lesson.id)}')">✕</button>
+      </div>
     </div>
   `;
 }
@@ -3399,6 +3405,85 @@ function unitAddLesson(unitId) {
   state.plannerUi.expandedICId = null;
   state.plannerUi.icShowAllYears = false;
   renderView();
+}
+
+// Copies a lesson's content (title, subject, intention, linked ICs) into a new lesson
+// inserted immediately after the source in the unit's sequence. Teaching status always
+// resets to "planned" regardless of the source's status, and scheduledSlots are
+// deliberately dropped — the duplicate starts unscheduled; placing it on the Weekly
+// Planner is a separate, deliberate action. Reuses normalizeLessonPlan so the copy gets
+// the exact same shape/defaults as any other lesson (see unitAddLesson).
+function unitDuplicateLesson(unitId, lessonId) {
+  const unitIdx = state.unitPlans.findIndex(u => u.id === unitId);
+  if (unitIdx < 0) return;
+  const unit = state.unitPlans[unitIdx];
+  const source = state.lessonPlans.find(l => l.id === lessonId);
+  if (!source) return;
+  const copy = normalizeLessonPlan({
+    title: `${source.title || 'Untitled lesson'} (copy)`,
+    subject: source.subject || '',
+    intention: source.intention || '',
+    linkedICIds: Array.isArray(source.linkedICIds) ? [...source.linkedICIds] : [],
+    unitId: unit.id,
+    teachingStatus: 'planned',
+  });
+  state.lessonPlans.push(copy);
+  const lessonIds = Array.isArray(unit.lessonIds) ? [...unit.lessonIds] : [];
+  const sourcePos = lessonIds.indexOf(lessonId);
+  const insertAt = sourcePos >= 0 ? sourcePos + 1 : lessonIds.length;
+  lessonIds.splice(insertAt, 0, copy.id);
+  state.unitPlans[unitIdx] = { ...unit, lessonIds };
+  persistUnitDuplicate();
+}
+
+// Persists the lesson + unit stores after a duplicate. Split out so the failure
+// banner's Retry button can call it again without re-running the duplicate itself —
+// the in-memory copy is already correct; only the write needs retrying. Mirrors the
+// existing Drive-restore persist-failure banner's convention (a persistent, explicit
+// Retry affordance rather than an auto-dismissing toast) for the same underlying
+// failure mode — a save*State() call not reaching localStorage (quota/security error)
+// — without sharing its restore-specific retry wiring.
+function persistUnitDuplicate() {
+  const lessonsSaved = saveLessonPlansState();
+  const unitsSaved = saveUnitPlansState();
+  if (!lessonsSaved || !unitsSaved) {
+    showLessonSaveFailureBanner(
+      'The duplicated lesson could not be saved in this browser (storage may be full) — it only exists in memory and will be lost if you reload. Retry saving before doing anything else.',
+      persistUnitDuplicate
+    );
+  } else {
+    hideLessonSaveFailureBanner();
+  }
+  renderView();
+}
+
+let pendingLessonSaveRetry = null;
+
+function showLessonSaveFailureBanner(message, onRetry) {
+  hideLessonSaveFailureBanner();
+  pendingLessonSaveRetry = onRetry;
+  const banner = document.createElement('div');
+  banner.id = 'lesson-save-failure-banner';
+  banner.style.cssText = "background:var(--status-danger-bg);color:var(--status-danger-text);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:'Instrument Sans',sans-serif;font-size:13px;font-weight:500;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--status-danger-border)";
+  banner.innerHTML = `
+    <span>${escapeHtml(message)}</span>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button onclick="retryLessonSave()"
+        style="padding:4px 12px;border-radius:4px;border:1px solid currentColor;background:none;color:inherit;font-size:12px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600">
+        Retry
+      </button>
+    </div>`;
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+
+function hideLessonSaveFailureBanner() {
+  pendingLessonSaveRetry = null;
+  const banner = document.getElementById('lesson-save-failure-banner');
+  if (banner) banner.remove();
+}
+
+function retryLessonSave() {
+  if (typeof pendingLessonSaveRetry === 'function') pendingLessonSaveRetry();
 }
 
 function unitDeleteLesson(unitId, lessonId) {
