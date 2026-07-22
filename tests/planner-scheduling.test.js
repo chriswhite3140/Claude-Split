@@ -1196,13 +1196,25 @@ test('updateDriveSyncIndicator() refreshes the Weekly Planner indicator too, via
   st.currentView = 'planner';
   realRenderView();
 
-  // Simulate the DOM query the real updateDriveSyncIndicator() runs against: any
-  // element carrying the shared .drive-sync-indicator class gets its innerHTML
-  // refreshed. The stub document doesn't track real class-based queries, so this
-  // confirms the planner's element uses that exact class (not a new one) by
-  // asserting the class string appears verbatim in the rendered board.
-  const html = documentStub.getElementById('main-content').innerHTML;
-  assert.ok(html.includes('<div class="drive-sync-indicator">'), 'the planner topbar indicator must carry the shared class so updateDriveSyncIndicator()\'s querySelectorAll(\'.drive-sync-indicator\') picks it up alongside the Unit Plans and Admin ones');
+  // Sanity check: the planner topbar carries the exact class updateDriveSyncIndicator()
+  // queries for — same class as Unit Plans/Admin.
+  const initialHtml = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(initialHtml.includes('<div class="drive-sync-indicator">'));
+
+  // The stub document has no real DOM tree to query by class (querySelectorAll()
+  // always returns []), so stand in for the one element updateDriveSyncIndicator()
+  // would find in a real browser. This exercises the actual shared updater function
+  // — untouched, pre-existing code — rather than only re-inspecting static markup.
+  const fakeIndicatorEl = { innerHTML: '' };
+  const realQuerySelectorAll = documentStub.querySelectorAll;
+  documentStub.querySelectorAll = (selector) => selector === '.drive-sync-indicator' ? [fakeIndicatorEl] : realQuerySelectorAll(selector);
+
+  sandbox.driveSyncEnsureState().lastSyncedAt = '2026-06-29T10:00:00.000Z';
+  sandbox.updateDriveSyncIndicator();
+
+  assert.strictEqual(fakeIndicatorEl.innerHTML, sandbox.driveSyncIndicatorHtml(), 'the shared updater must actually refresh an element carrying the planner\'s indicator class to the current sync state');
+
+  documentStub.querySelectorAll = realQuerySelectorAll;
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────
