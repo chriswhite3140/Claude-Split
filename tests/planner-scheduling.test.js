@@ -1217,6 +1217,154 @@ test('updateDriveSyncIndicator() refreshes the Weekly Planner indicator too, via
   documentStub.querySelectorAll = realQuerySelectorAll;
 });
 
+// ── Unit Plans: "Duplicate" whole-unit action ────────────────────────────────────
+console.log('Unit Plans duplicate unit action');
+
+test('duplicate copies the unit\'s own fields (title with a " (copy)" suffix, subject, yearLevel, term, linkedCDIds, assessmentNotes) into a new unit', () => {
+  resetState();
+  const st = getState();
+  const idx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[idx] = { ...st.unitPlans[idx], linkedCDIds: ['AC9M3N01'], assessmentNotes: 'Exit ticket each fortnight.' };
+
+  const beforeCount = st.unitPlans.length;
+  sandbox.unitDuplicate('unit_1');
+  const units = getState().unitPlans;
+  assert.strictEqual(units.length, beforeCount + 1, 'a new unit should be added');
+  const copy = units.find(u => u.id !== 'unit_1');
+  assert.ok(copy, 'a duplicated unit should exist');
+  assert.strictEqual(copy.title, 'Fractions (copy)');
+  assert.strictEqual(copy.subject, 'Mathematics');
+  assert.strictEqual(copy.yearLevel, '3');
+  eqJson(copy.linkedCDIds, ['AC9M3N01']);
+  assert.strictEqual(copy.assessmentNotes, 'Exit ticket each fortnight.');
+});
+
+test('duplicate copies every lesson in the unit via the same per-lesson rules as unitDuplicateLesson (title suffix, teachingStatus reset, no scheduledSlots), each with a fresh id', () => {
+  resetState();
+  const st = getState();
+  const lidx = st.lessonPlans.findIndex(l => l.id === 'ul_2');
+  st.lessonPlans[lidx] = { ...st.lessonPlans[lidx], intention: 'Compare fractions with the same denominator.', linkedICIds: ['ic_1'] };
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'mon'); // give it a slot to prove it's not inherited
+
+  sandbox.unitDuplicate('unit_1');
+  const copy = getState().unitPlans.find(u => u.id !== 'unit_1');
+  const copyLessons = sandbox.unitGetLessons(copy);
+
+  assert.strictEqual(copyLessons.length, 2, 'both lessons in the source unit should be duplicated');
+  assert.deepStrictEqual(copyLessons.map(l => l.title), ['Intro to fractions (copy)', 'Equivalent fractions (copy)'], 'lessons should be copied in the same order, each with the " (copy)" suffix');
+  assert.ok(copyLessons.every(l => l.teachingStatus === 'planned'), 'every duplicated lesson resets teachingStatus to planned, including the one that was "reteach"');
+  assert.ok(copyLessons.every(l => (l.scheduledSlots || []).length === 0), 'no duplicated lesson should inherit scheduledSlots');
+  assert.ok(copyLessons.every(l => l.unitId === copy.id), 'every duplicated lesson should belong to the new unit, not the original');
+
+  const copiedSecond = copyLessons[1];
+  assert.strictEqual(copiedSecond.intention, 'Compare fractions with the same denominator.');
+  eqJson(copiedSecond.linkedICIds, ['ic_1']);
+  assert.notStrictEqual(copiedSecond.id, 'ul_2', 'the duplicated lesson must get its own fresh id, not reuse the source\'s');
+});
+
+test('duplicate does not share ids or references with the source — editing the copy leaves the original untouched', () => {
+  resetState();
+  sandbox.unitDuplicate('unit_1');
+  const copy = getState().unitPlans.find(u => u.id !== 'unit_1');
+  assert.notStrictEqual(copy.id, 'unit_1', 'the duplicated unit must get its own fresh unitId');
+
+  const copyLessonIds = copy.lessonIds;
+  assert.ok(!copyLessonIds.includes('ul_1') && !copyLessonIds.includes('ul_2'), 'the copy must reference its own lessons, not the originals');
+
+  // Mutate the copy's first lesson and confirm the original is unaffected.
+  const copyFirstLessonId = copyLessonIds[0];
+  sandbox.unitUpdateField(copy.id, 'title', 'Renamed copy');
+  const lidx = getState().lessonPlans.findIndex(l => l.id === copyFirstLessonId);
+  getState().lessonPlans[lidx] = { ...getState().lessonPlans[lidx], title: 'Edited only on the copy' };
+
+  assert.strictEqual(getState().unitPlans.find(u => u.id === 'unit_1').title, 'Fractions', 'the original unit title must be unaffected by editing the copy');
+  assert.strictEqual(getState().lessonPlans.find(l => l.id === 'ul_1').title, 'Intro to fractions', 'the original lesson must be unaffected by editing the copy\'s lesson');
+});
+
+test('duplicating a unit with no lessons yet produces a unit with an empty lessonIds array (no crash)', () => {
+  resetState();
+  const st = getState();
+  st.unitPlans.push({ id: 'unit_empty', title: 'Empty unit', subject: '', yearLevel: '', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: [], createdAt: '2026-01-01T00:00:00.000Z' });
+  assert.doesNotThrow(() => sandbox.unitDuplicate('unit_empty'));
+  const copy = getState().unitPlans.find(u => u.title === 'Empty unit (copy)');
+  assert.ok(copy);
+  eqJson(copy.lessonIds, []);
+});
+
+test('duplicate persists both the new unit and its new lessons to localStorage', () => {
+  resetState();
+  sandbox.unitDuplicate('unit_1');
+  const copy = getState().unitPlans.find(u => u.id !== 'unit_1');
+
+  const savedUnits = JSON.parse(localStorageStub.getItem('ct_unit_plans_v1'));
+  assert.ok(savedUnits.some(u => u.id === copy.id), 'the duplicated unit should be persisted to the units store');
+
+  const savedLessons = JSON.parse(localStorageStub.getItem('ct_planner_lessons_v2'));
+  copy.lessonIds.forEach(id => {
+    assert.ok(savedLessons.some(l => l.id === id), `duplicated lesson ${id} should be persisted to the lessons store`);
+  });
+});
+
+test('a failed save does not roll back the in-memory unit duplicate, and surfaces the same retryable banner as a lesson duplicate', () => {
+  resetState();
+  const realSaveUnitPlansState = sandbox.saveUnitPlansState;
+  sandbox.saveUnitPlansState = () => false; // simulate a localStorage write failure
+
+  let shownMessage = null, shownRetry = null;
+  const realShowBanner = sandbox.showLessonSaveFailureBanner;
+  sandbox.showLessonSaveFailureBanner = (message, onRetry) => { shownMessage = message; shownRetry = onRetry; };
+
+  sandbox.unitDuplicate('unit_1');
+
+  const units = getState().unitPlans;
+  assert.strictEqual(units.length, 2, 'the in-memory duplicated unit must not be rolled back on a save failure');
+  assert.ok(shownMessage && /could not be saved/i.test(shownMessage), 'a failure banner explaining the save failed should be shown, not swallowed silently');
+  assert.strictEqual(typeof shownRetry, 'function', 'the banner should be given a retry callback');
+
+  sandbox.saveUnitPlansState = realSaveUnitPlansState;
+  sandbox.showLessonSaveFailureBanner = realShowBanner;
+});
+
+test('retrying a failed unit duplicate save re-attempts the write (not the duplication itself)', () => {
+  resetState();
+  const realSaveUnitPlansState = sandbox.saveUnitPlansState;
+  let saveShouldFail = true;
+  sandbox.saveUnitPlansState = (...args) => saveShouldFail ? false : realSaveUnitPlansState(...args);
+
+  let hideCalled = false;
+  const realHideBanner = sandbox.hideLessonSaveFailureBanner;
+  sandbox.hideLessonSaveFailureBanner = (...args) => { hideCalled = true; return realHideBanner(...args); };
+
+  sandbox.unitDuplicate('unit_1');
+  const unitsAfterFailure = getState().unitPlans.length;
+  assert.strictEqual(unitsAfterFailure, 2, 'the duplicate should exist in memory despite the failed save');
+
+  hideCalled = false; // showLessonSaveFailureBanner() itself calls hide once before showing — reset for a clean read of the retry's own outcome
+  saveShouldFail = false;
+  sandbox.retryLessonSave(); // simulates clicking "Retry" on the banner
+
+  assert.strictEqual(hideCalled, true, 'the failure banner should be hidden once the retry succeeds');
+  assert.strictEqual(getState().unitPlans.length, unitsAfterFailure, 'retrying must not duplicate the unit again — only the write is retried');
+  const savedUnits = JSON.parse(localStorageStub.getItem('ct_unit_plans_v1'));
+  assert.strictEqual(savedUnits.length, unitsAfterFailure, 'the retried save should persist the same duplicate, not a second one');
+
+  sandbox.saveUnitPlansState = realSaveUnitPlansState;
+  sandbox.hideLessonSaveFailureBanner = realHideBanner;
+});
+
+test('the unit list renders a Duplicate button wired to unitDuplicate, separate from Delete', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'unit-plans';
+  sandbox.unitPlansEnsureUiState();
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('>Duplicate<'), 'a "Duplicate" button should render on the unit card');
+  assert.ok(html.includes("unitDuplicate('unit_1')"), 'the Duplicate button should call unitDuplicate with the unit id');
+  assert.ok(/Duplicate<\/button>[\s\S]*?unitDelete/.test(html), 'Duplicate and Delete should both be present as separate controls');
+  assert.ok(/onclick="event\.stopPropagation\(\);unitDuplicate/.test(html), 'the Duplicate button must stop propagation so it does not also open the unit detail view');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

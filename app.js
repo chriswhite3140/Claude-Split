@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.55
- * Last updated: 2026-07-20
+ * THIS FILE IS VERSION: 1.13.56
+ * Last updated: 2026-07-22
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.56 - Unit Plans: "Duplicate" action on unit cards copies the unit's own fields (title/subject/yearLevel/term/linkedCDIds/assessmentNotes) plus every lesson inside it, reusing the same per-lesson copy rules as unitDuplicateLesson (title " (copy)" suffix, teachingStatus reset to Planned, scheduledSlots dropped) via a new shared buildDuplicateLessonForUnit() helper; the new unit and its lessons get entirely fresh ids, and a failed save shows the same retryable banner as a lesson duplicate instead of failing silently
  * v1.13.55 - Weekly Planner: topbar now shows the "Last synced to Drive" indicator (with the same failed/retry state) that Unit Plans and Admin already show, reusing driveSyncIndicatorHtml() directly — no sync logic duplicated, so the same driveBackupSave() retry and updateDriveSyncIndicator() refresh already cover this location too
  * v1.13.54 - Fix: unitDuplicateLesson now checks both save*State() return values instead of assuming success; a localStorage write failure (quota/security error) no longer renders silently as if the duplicate had persisted — it shows a persistent Retry banner (mirrors the Drive-restore persist-failure banner's convention) and leaves the in-memory duplicate in place rather than rolling it back
  * v1.13.53 - Unit Plans: "Duplicate" action on lesson sequence rows copies title/subject/intention/linked ICs into a new lesson inserted right after the source, with teaching status reset to Planned and no inherited scheduledSlots (starts unscheduled); title gets a " (copy)" suffix
@@ -98,7 +99,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.55';
+const APP_VERSION = '1.13.56';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -3055,6 +3056,50 @@ function unitDelete(unitId) {
   renderView();
 }
 
+// Duplicates an entire unit: its own fields (title, subject, yearLevel, term,
+// linkedCDIds, assessmentNotes) plus every lesson inside it. Each lesson is copied
+// via buildDuplicateLessonForUnit() — the same helper unitDuplicateLesson uses — so
+// it gets the identical " (copy)" title suffix, teachingStatus reset to "planned",
+// and dropped scheduledSlots, just targeted at the new unit instead of the
+// original. The new unit gets a fresh unitId and every lesson a fresh lessonId (via
+// normalizeUnitPlan / normalizeLessonPlan's own id generation), so nothing is
+// shared between original and copy — editing one can never affect the other.
+function unitDuplicate(unitId) {
+  const source = state.unitPlans.find(u => u.id === unitId);
+  if (!source) return;
+  const newUnit = normalizeUnitPlan({
+    title: `${source.title || 'Untitled unit'} (copy)`,
+    subject: source.subject || '',
+    yearLevel: source.yearLevel || '',
+    term: source.term || '',
+    linkedCDIds: Array.isArray(source.linkedCDIds) ? [...source.linkedCDIds] : [],
+    assessmentNotes: source.assessmentNotes || '',
+  });
+  const newLessons = unitGetLessons(source).map(lesson => buildDuplicateLessonForUnit(lesson, newUnit.id));
+  state.lessonPlans.push(...newLessons);
+  state.unitPlans.push({ ...newUnit, lessonIds: newLessons.map(l => l.id) });
+  persistUnitCopy();
+}
+
+// Persists the lesson + unit stores after duplicating a whole unit. Same
+// check-both-then-banner-or-hide shape as persistUnitDuplicate (the single-lesson
+// duplicate) — kept as its own function so the failure message stays accurate to
+// what actually failed to save, while both reuse the same underlying banner
+// (showLessonSaveFailureBanner/hideLessonSaveFailureBanner/retryLessonSave).
+function persistUnitCopy() {
+  const lessonsSaved = saveLessonPlansState();
+  const unitsSaved = saveUnitPlansState();
+  if (!lessonsSaved || !unitsSaved) {
+    showLessonSaveFailureBanner(
+      'The duplicated unit could not be saved in this browser (storage may be full) — it only exists in memory and will be lost if you reload. Retry saving before doing anything else.',
+      persistUnitCopy
+    );
+  } else {
+    hideLessonSaveFailureBanner();
+  }
+  renderView();
+}
+
 function unitUpdateField(unitId, field, value) {
   const editable = new Set(['title', 'subject', 'yearLevel', 'term', 'assessmentNotes']);
   if (!editable.has(field)) return;
@@ -3089,8 +3134,12 @@ function renderUnitList(main) {
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showUnitDetail('${plannerJsStr(unit.id)}')}">
         <div class="unit-card-head">
           <div class="unit-card-title">${escapeHtml(unit.title || 'Untitled unit')}</div>
-          <button class="unit-card-delete" type="button" title="Delete unit"
-            onclick="event.stopPropagation();unitDelete('${plannerJsStr(unit.id)}')">Delete</button>
+          <div class="unit-card-actions">
+            <button class="unit-card-duplicate" type="button" title="Duplicate unit"
+              onclick="event.stopPropagation();unitDuplicate('${plannerJsStr(unit.id)}')">Duplicate</button>
+            <button class="unit-card-delete" type="button" title="Delete unit"
+              onclick="event.stopPropagation();unitDelete('${plannerJsStr(unit.id)}')">Delete</button>
+          </div>
         </div>
         <div class="unit-card-meta">${metaBits ? escapeHtml(metaBits) : 'No subject set'}</div>
         <div class="unit-card-stats">${stats.total} lesson${stats.total === 1 ? '' : 's'} · ${stats.taught} taught</div>
@@ -3409,26 +3458,34 @@ function unitAddLesson(unitId) {
   renderView();
 }
 
-// Copies a lesson's content (title, subject, intention, linked ICs) into a new lesson
-// inserted immediately after the source in the unit's sequence. Teaching status always
-// resets to "planned" regardless of the source's status, and scheduledSlots are
-// deliberately dropped — the duplicate starts unscheduled; placing it on the Weekly
-// Planner is a separate, deliberate action. Reuses normalizeLessonPlan so the copy gets
-// the exact same shape/defaults as any other lesson (see unitAddLesson).
+// Builds a duplicated lesson's normalized object — title gets a " (copy)" suffix,
+// teachingStatus resets to "planned" regardless of the source's status, and
+// scheduledSlots are deliberately dropped (the duplicate starts unscheduled;
+// placing it on the Weekly Planner is a separate, deliberate action). Pure: does
+// not push to state.lessonPlans or touch any unit's lessonIds — callers do that.
+// Shared by unitDuplicateLesson (one lesson) and unitDuplicate (every lesson in a
+// duplicated unit) so both copy a lesson the exact same way.
+function buildDuplicateLessonForUnit(source, targetUnitId) {
+  return normalizeLessonPlan({
+    title: `${source.title || 'Untitled lesson'} (copy)`,
+    subject: source.subject || '',
+    intention: source.intention || '',
+    linkedICIds: Array.isArray(source.linkedICIds) ? [...source.linkedICIds] : [],
+    unitId: targetUnitId,
+    teachingStatus: 'planned',
+  });
+}
+
+// Copies a lesson's content into a new lesson inserted immediately after the
+// source in the unit's sequence. See buildDuplicateLessonForUnit() for the copy
+// rules (title suffix, teaching status reset, scheduledSlots dropped).
 function unitDuplicateLesson(unitId, lessonId) {
   const unitIdx = state.unitPlans.findIndex(u => u.id === unitId);
   if (unitIdx < 0) return;
   const unit = state.unitPlans[unitIdx];
   const source = state.lessonPlans.find(l => l.id === lessonId);
   if (!source) return;
-  const copy = normalizeLessonPlan({
-    title: `${source.title || 'Untitled lesson'} (copy)`,
-    subject: source.subject || '',
-    intention: source.intention || '',
-    linkedICIds: Array.isArray(source.linkedICIds) ? [...source.linkedICIds] : [],
-    unitId: unit.id,
-    teachingStatus: 'planned',
-  });
+  const copy = buildDuplicateLessonForUnit(source, unit.id);
   state.lessonPlans.push(copy);
   const lessonIds = Array.isArray(unit.lessonIds) ? [...unit.lessonIds] : [];
   const sourcePos = lessonIds.indexOf(lessonId);
