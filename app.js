@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.59
- * Last updated: 2026-07-25
+ * THIS FILE IS VERSION: 1.13.60
+ * Last updated: 2026-07-26
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.60 - Lessons can now carry Resource Links (label + url, no cap) — new "Resource Links" section in the Lesson Drawer for both standalone and unit lessons, persisted via the existing lessonPlans save path (no new Drive sync hook needed); unitDuplicateLesson, plannerDuplicateLesson, and unitDuplicate (via buildDuplicateLessonForUnit) all copy resourceLinks along with the other content fields, each duplicate getting a fresh, decoupled array
  * v1.13.59 - Unit Plans: whole-unit "Duplicate" no longer appends " (copy)" to lesson titles inside the copy — only the unit's own title gets the suffix, lesson titles stay exactly as in the source; buildDuplicateLessonForUnit() takes a suffixTitle option (default true, unchanged) so the single-lesson unitDuplicateLesson keeps its existing " (copy)" behaviour
  * v1.13.58 - Fix: Class Settings' Year Level(s) checkboxes rendered Foundation last instead of first (Object.keys(YLM) enumerates integer-like string keys '1'-'6' before non-numeric 'F', regardless of source order) — now uses an explicit YEAR_LEVEL_ORDER array so Foundation always renders before Year 1, matching real school order
  * v1.13.57 - Class Settings: restored a Year Level(s) field on the active group (Data & Settings, checkboxes F-6, multi-select for composite classes) so there's a single source of truth again; Weekly Planner's plannerSuggestICsFromIntention() now filters ranked descriptors to the class's set year level(s) before scoring (banded-subject aware), falling back to no restriction when none are set — Unit Plans' own IC picker year-level defaulting is unrelated and untouched
@@ -102,7 +103,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.59';
+const APP_VERSION = '1.13.60';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1464,6 +1465,8 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
         <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
       </div>
 
+      ${plannerResourceLinksHtml(lesson)}
+
       <div class="form-group" style="margin-bottom:0;display:flex;gap:10px;align-items:center">
         ${isTaught
           ? `<button class="btn" type="button" onclick="plannerSetLessonStatus('planned')">Mark as planned</button>`
@@ -2177,6 +2180,12 @@ function isValidScheduledSlot(s) {
     && PLANNER_SCHEDULABLE_DAYS.includes(s.dayKey);
 }
 
+// A resource link needs a non-empty url — don't silently keep/save a link with
+// nothing to point at. label is optional (falls back to the url itself when displayed).
+function isValidResourceLink(link) {
+  return !!link && typeof link === 'object' && typeof link.url === 'string' && link.url.trim() !== '';
+}
+
 // Append a {weekKey, dayKey} slot to a lesson, de-duping an identical entry so the
 // same lesson cannot stack two cards on one day. Returns a new lesson object.
 function lessonWithScheduledSlot(lesson, weekKey, dayKey) {
@@ -2368,6 +2377,7 @@ function plannerAddLesson(dayKey) {
     dayKey: targetDay,
     intention: '',
     linkedICIds: [],
+    resourceLinks: [],
     status: 'planned',
     position: maxPos + 1,
   };
@@ -2395,6 +2405,7 @@ function plannerDuplicateLesson(lessonId) {
     dayKey: lesson.dayKey || 'unscheduled',
     intention: lesson.intention || '',
     linkedICIds: Array.isArray(lesson.linkedICIds) ? [...lesson.linkedICIds] : [],
+    resourceLinks: Array.isArray(lesson.resourceLinks) ? lesson.resourceLinks.map(link => ({ label: link.label || '', url: link.url || '' })) : [],
     status: 'planned',
     position: maxPos + 1,
   };
@@ -2469,6 +2480,67 @@ function plannerSetLessonStatus(status) {
   state.lessonPlans[idx] = { ...state.lessonPlans[idx], status: next };
   saveLessonPlansState();
   renderView();
+}
+
+// Reads the label/url inputs in the currently-open drawer's Resource Links section
+// and appends a new link to the selected lesson. A blank url is rejected (not
+// silently saved) rather than validated as a well-formed URL — the spec calls for
+// basic sanity only, not full URL validation.
+function plannerAddResourceLink() {
+  const selectedId = state.plannerUi?.selectedLessonId;
+  if (!selectedId) return;
+  const idx = state.lessonPlans.findIndex(lesson => lesson.id === selectedId);
+  if (idx < 0) return;
+  const urlInput = document.getElementById('planner-resource-url');
+  const labelInput = document.getElementById('planner-resource-label');
+  const url = (urlInput?.value || '').trim();
+  if (!url) { toast('Add a URL before saving the link', 'error'); return; }
+  const label = (labelInput?.value || '').trim();
+  const current = Array.isArray(state.lessonPlans[idx].resourceLinks) ? [...state.lessonPlans[idx].resourceLinks] : [];
+  current.push({ label, url });
+  state.lessonPlans[idx] = { ...state.lessonPlans[idx], resourceLinks: current };
+  saveLessonPlansState();
+  renderView();
+}
+
+function plannerRemoveResourceLink(index) {
+  const selectedId = state.plannerUi?.selectedLessonId;
+  if (!selectedId) return;
+  const idx = state.lessonPlans.findIndex(lesson => lesson.id === selectedId);
+  if (idx < 0) return;
+  const current = Array.isArray(state.lessonPlans[idx].resourceLinks) ? [...state.lessonPlans[idx].resourceLinks] : [];
+  if (index < 0 || index >= current.length) return;
+  current.splice(index, 1);
+  state.lessonPlans[idx] = { ...state.lessonPlans[idx], resourceLinks: current };
+  saveLessonPlansState();
+  renderView();
+}
+
+// Shared Resource Links section — same markup for the standalone lesson drawer and
+// the unit lesson fields (Weekly Planner's own unit drawer + Unit Plans' drawer),
+// consistent with how the IC picker sections are already shared across both.
+function plannerResourceLinksHtml(lesson) {
+  const links = Array.isArray(lesson.resourceLinks) ? lesson.resourceLinks : [];
+  const listHtml = links.length
+    ? links.map((link, i) => `
+        <div class="planner-resource-link">
+          <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label || link.url)}</a>
+          <button class="planner-resource-remove" type="button" title="Remove this link"
+            aria-label="Remove resource link ${escapeHtml(link.label || link.url)}"
+            onclick="plannerRemoveResourceLink(${i})">✕</button>
+        </div>`).join('')
+    : `<div class="planner-resource-empty">No resource links yet.</div>`;
+  return `
+    <div class="form-group">
+      <label class="form-label">Resource Links</label>
+      <div class="planner-resource-list">${listHtml}</div>
+      <div class="planner-resource-controls">
+        <input class="form-input" id="planner-resource-label" type="text" placeholder="Label (optional)">
+        <input class="form-input" id="planner-resource-url" type="text" placeholder="https://...">
+        <button class="btn" type="button" onclick="plannerAddResourceLink()">Add link</button>
+      </div>
+    </div>
+  `;
 }
 
 // Search input updates only the results container so the field keeps focus.
@@ -2603,6 +2675,11 @@ function normalizeLessonPlan(raw = {}) {
     scheduledSlots: (Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots.filter(isValidScheduledSlot) : [])
       .filter((s, i, arr) => arr.findIndex(o => o.weekKey === s.weekKey && o.dayKey === s.dayKey) === i),
     teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned'),
+    // Reference material for the lesson (video/worksheet/slides/etc). [] by default.
+    // Drop malformed entries (see isValidResourceLink) and rebuild fresh {label,url}
+    // objects so a duplicated lesson never shares link objects with its source.
+    resourceLinks: (Array.isArray(raw.resourceLinks) ? raw.resourceLinks.filter(isValidResourceLink) : [])
+      .map(link => ({ label: String(link.label || ''), url: String(link.url).trim() })),
   };
 }
 
@@ -3373,6 +3450,8 @@ function plannerUnitLessonFieldsHtml(lesson) {
         ${icYearToggle}
         <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
       </div>
+
+      ${plannerResourceLinksHtml(lesson)}
   `;
 }
 
@@ -3510,6 +3589,9 @@ function buildDuplicateLessonForUnit(source, targetUnitId, { suffixTitle = true 
     subject: source.subject || '',
     intention: source.intention || '',
     linkedICIds: Array.isArray(source.linkedICIds) ? [...source.linkedICIds] : [],
+    // normalizeLessonPlan rebuilds fresh {label,url} objects per link, so this
+    // shallow copy still leaves the duplicate sharing nothing with the source.
+    resourceLinks: Array.isArray(source.resourceLinks) ? [...source.resourceLinks] : [],
     unitId: targetUnitId,
     teachingStatus: 'planned',
   });
