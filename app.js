@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.57
- * Last updated: 2026-07-22
+ * THIS FILE IS VERSION: 1.13.58
+ * Last updated: 2026-07-25
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.58 - Fix: Class Settings' Year Level(s) checkboxes rendered Foundation last instead of first (Object.keys(YLM) enumerates integer-like string keys '1'-'6' before non-numeric 'F', regardless of source order) — now uses an explicit YEAR_LEVEL_ORDER array so Foundation always renders before Year 1, matching real school order
  * v1.13.57 - Class Settings: restored a Year Level(s) field on the active group (Data & Settings, checkboxes F-6, multi-select for composite classes) so there's a single source of truth again; Weekly Planner's plannerSuggestICsFromIntention() now filters ranked descriptors to the class's set year level(s) before scoring (banded-subject aware), falling back to no restriction when none are set — Unit Plans' own IC picker year-level defaulting is unrelated and untouched
  * v1.13.56 - Unit Plans: "Duplicate" action on unit cards copies the unit's own fields (title/subject/yearLevel/term/linkedCDIds/assessmentNotes) plus every lesson inside it, reusing the same per-lesson copy rules as unitDuplicateLesson (title " (copy)" suffix, teachingStatus reset to Planned, scheduledSlots dropped) via a new shared buildDuplicateLessonForUnit() helper; the new unit and its lessons get entirely fresh ids, and a failed save shows the same retryable banner as a lesson duplicate instead of failing silently
  * v1.13.55 - Weekly Planner: topbar now shows the "Last synced to Drive" indicator (with the same failed/retry state) that Unit Plans and Admin already show, reusing driveSyncIndicatorHtml() directly — no sync logic duplicated, so the same driveBackupSave() retry and updateDriveSyncIndicator() refresh already cover this location too
@@ -100,7 +101,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.57';
+const APP_VERSION = '1.13.58';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -248,6 +249,11 @@ const YLM = {
   'F':'Foundation','1':'Year 1','2':'Year 2','3':'Year 3',
   '4':'Year 4','5':'Year 5','6':'Year 6',
 };
+// School-order list of YLM's keys. Object.keys(YLM) is NOT safe for this: JS always
+// enumerates integer-like string keys ('1'..'6') first in ascending order, before any
+// non-numeric key ('F') — regardless of insertion order — so Object.keys(YLM) actually
+// yields ['1','2','3','4','5','6','F'], putting Foundation last instead of first.
+const YEAR_LEVEL_ORDER = ['F', '1', '2', '3', '4', '5', '6'];
 const PLANNER_SUBJECTS = ['English','Mathematics','Science','HASS','The Arts','Technologies','Health & PE','Languages'];
 function subjectCol(subj)   { return (SUBJECT_COLOURS[subj] || {col:'var(--blue)'}).col; }
 function subjectBg(subj)    { return (SUBJECT_COLOURS[subj] || {bg:'var(--surface-alt)'}).bg; }
@@ -8235,7 +8241,7 @@ function buildClassSettingsSection() {
       <!-- Year level(s) — used to restrict Weekly Planner IC suggestions -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;padding:10px 12px;background:var(--surface-alt);border-radius:6px;flex-wrap:wrap">
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">YEAR LEVEL(S)</span>
-        ${Object.keys(YLM).map(yl => `
+        ${YEAR_LEVEL_ORDER.map(yl => `
           <label style="font-size:11px;color:${(activeGroup.yearLevels || []).includes(yl) ? 'var(--text)' : 'var(--text3)'};display:flex;align-items:center;gap:5px;cursor:pointer">
             <input type="checkbox" data-cs-action="toggleYearLevel" data-cs-key="${yl}" ${(activeGroup.yearLevels || []).includes(yl) ? 'checked' : ''}
               style="accent-color:var(--blue)">

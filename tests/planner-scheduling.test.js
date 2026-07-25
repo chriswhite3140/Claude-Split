@@ -1424,6 +1424,9 @@ test('the class settings panel renders a checkbox per year level, checked to mat
   assert.ok(/data-cs-action="toggleYearLevel" data-cs-key="2"[^>]*checked/.test(html), 'Year 2 should render checked');
   assert.ok(!/data-cs-action="toggleYearLevel" data-cs-key="5"[^>]*checked/.test(html), 'Year 5 should render unchecked');
   assert.ok(html.includes('Foundation') && html.includes('Year 6'), 'all year levels F-6 should be offered');
+  // Object.keys(YLM) is NOT school order here: JS enumerates integer-like string keys
+  // ('1'..'6') before non-numeric ones ('F'), which would silently put Foundation last.
+  assert.ok(html.indexOf('Foundation') < html.indexOf('Year 1'), 'Foundation must render before Year 1, matching real school order');
 });
 
 // Minimal fixture for plannerSuggestICsFromIntention: two Mathematics descriptors
