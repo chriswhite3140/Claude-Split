@@ -1370,6 +1370,112 @@ test('the unit list renders a Duplicate button wired to unitDuplicate, separate 
   assert.ok(/unit-card-duplicate[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(html), 'the Duplicate button must stop keydown propagation too, not just click');
 });
 
+// ── Class Settings: year level field + Weekly Planner IC suggestion filter ──────
+console.log('Class year level: settings field + IC suggestion filter');
+
+// classSettings isn't touched by resetState() (it's independent of the lesson/unit
+// fixtures), so each test in this section resets it explicitly to a single known
+// group with no year level set, to avoid bleeding state between tests.
+function resetClassSettings() {
+  const st = getState();
+  st.classSettings = {
+    groups: [{ id: 'main', name: 'My Class', color: '#4f8ef7', disabledSubjects: {}, disabledStrands: {}, disabledAreas: {}, yearLevels: [] }],
+    activeGroup: 'main',
+  };
+}
+
+test('loadClassSettings() normalises yearLevels from stored data, defaulting to []', () => {
+  localStorageStub.setItem('ct_class_settings', JSON.stringify({
+    groups: [{ id: 'main', name: 'My Class', yearLevels: ['3', '4'] }],
+    activeGroup: 'main',
+  }));
+  const loaded = sandbox.loadClassSettings();
+  eqJson(loaded.groups[0].yearLevels, ['3', '4']);
+
+  localStorageStub.setItem('ct_class_settings', JSON.stringify({
+    groups: [{ id: 'main', name: 'My Class' }], // no yearLevels field at all — legacy/pre-existing data
+    activeGroup: 'main',
+  }));
+  const loadedLegacy = sandbox.loadClassSettings();
+  eqJson(loadedLegacy.groups[0].yearLevels, [], 'legacy stored groups without yearLevels should default to []');
+
+  localStorageStub.removeItem('ct_class_settings');
+});
+
+test('toggleYearLevel adds/removes a year level on the active group and persists it', () => {
+  resetClassSettings();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '3', checked: true });
+  eqJson(sandbox.getActiveGroupYearLevels(), ['3']);
+  const saved = JSON.parse(localStorageStub.getItem('ct_class_settings'));
+  eqJson(saved.groups[0].yearLevels, ['3'], 'the toggle should persist to localStorage');
+
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '4', checked: true });
+  eqJson(sandbox.getActiveGroupYearLevels(), ['3', '4']);
+
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '3', checked: false });
+  eqJson(sandbox.getActiveGroupYearLevels(), ['4'], 'unticking should remove just that year level');
+});
+
+test('the class settings panel renders a checkbox per year level, checked to match the active group, wired to toggleYearLevel', () => {
+  resetClassSettings();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+  const html = sandbox.buildClassSettingsSection();
+  assert.ok(html.includes('YEAR LEVEL(S)'), 'a year level section should render');
+  assert.ok(/data-cs-action="toggleYearLevel" data-cs-key="2"[^>]*checked/.test(html), 'Year 2 should render checked');
+  assert.ok(!/data-cs-action="toggleYearLevel" data-cs-key="5"[^>]*checked/.test(html), 'Year 5 should render unchecked');
+  assert.ok(html.includes('Foundation') && html.includes('Year 6'), 'all year levels F-6 should be offered');
+});
+
+// Minimal fixture for plannerSuggestICsFromIntention: two Mathematics descriptors
+// with near-identical wording (so token scoring treats them equally) but different
+// Year Level values, isolating the year-level filter as the only differentiator.
+function setSuggestICsFixture() {
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'AC9M2N01', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 2', Descriptor: 'partition numbers using place value' },
+    { Code: 'AC9M5N01', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 5', Descriptor: 'partition numbers using place value' },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partition numbers using place value understanding.' };
+  st.plannerUi.selectedLessonId = 'sa_1';
+}
+
+test('plannerSuggestICsFromIntention excludes descriptors outside the class\'s set year level(s)', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'), 'the Year 2 descriptor should be ranked');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'the Year 5 descriptor must be excluded even though it scores identically on tokens');
+});
+
+test('plannerSuggestICsFromIntention falls back to no year restriction when the class has no year level set', () => {
+  resetState();
+  resetClassSettings(); // yearLevels: [] — nothing set
+  setSuggestICsFixture();
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'), 'Year 2 descriptor should still be ranked');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'Year 5 descriptor should also be ranked — no year level set means no restriction, not "show nothing"');
+});
+
+test('plannerSuggestICsFromIntention supports multiple set year levels (composite class)', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '5', checked: true });
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'));
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'both set year levels should be included, not just the first');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
