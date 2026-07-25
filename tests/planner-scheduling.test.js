@@ -1579,6 +1579,49 @@ test('normalizeLessonPlan trims the url and defaults a missing label to \'\', re
   assert.notStrictEqual(normalized.resourceLinks[0], source, 'normalize must rebuild a fresh object, not reuse the source reference');
 });
 
+test('normalizeLessonPlan rejects javascript:/data: (and other non-http(s)) schemes, so a hand-edited or synced-in link can never render as an executable href', () => {
+  const normalized = sandbox.normalizeLessonPlan({
+    id: 'rl_4',
+    resourceLinks: [
+      { label: 'Safe', url: 'https://example.com/ok' },
+      { label: 'XSS', url: 'javascript:alert(document.cookie)' },
+      { label: 'Data URI', url: 'data:text/html,<script>alert(1)</script>' },
+      { label: 'Weird scheme', url: 'vbscript:msgbox(1)' },
+    ],
+  });
+  eqJson(normalized.resourceLinks, [{ label: 'Safe', url: 'https://example.com/ok' }], 'only the safe http(s) link should survive normalization');
+});
+
+test('normalizeLessonPlan treats a scheme-less url as https:// for convenience', () => {
+  const normalized = sandbox.normalizeLessonPlan({ id: 'rl_5', resourceLinks: [{ label: 'Bare domain', url: 'example.com/worksheet' }] });
+  assert.strictEqual(normalized.resourceLinks[0].url, 'https://example.com/worksheet');
+});
+
+test('plannerAddResourceLink() rejects a javascript: url with an error toast instead of saving an executable link', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'sa_1';
+  documentStub.getElementById('planner-resource-label').value = 'Malicious';
+  documentStub.getElementById('planner-resource-url').value = 'javascript:alert(document.cookie)';
+
+  sandbox.plannerAddResourceLink();
+
+  eqJson(lessonById('sa_1').resourceLinks, [], 'a javascript: url must never be saved');
+  assert.ok(toasts.some(t => t.type === 'error'), 'an error toast should explain why nothing was added');
+});
+
+test('plannerAddResourceLink() auto-prefixes a scheme-less url the teacher typed with https://', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'sa_1';
+  documentStub.getElementById('planner-resource-label').value = 'Bare domain';
+  documentStub.getElementById('planner-resource-url').value = 'example.com/worksheet';
+
+  sandbox.plannerAddResourceLink();
+
+  eqJson(lessonById('sa_1').resourceLinks, [{ label: 'Bare domain', url: 'https://example.com/worksheet' }]);
+});
+
 test('plannerAddResourceLink() appends a link read from the drawer inputs and persists it', () => {
   resetState();
   const st = getState();

@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.60
+ * THIS FILE IS VERSION: 1.13.61
  * Last updated: 2026-07-26
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.61 - Fix: lesson Resource Links now reject javascript:/data:/other unsafe url schemes (a saved link renders as a real <a href>, so an unsafe scheme could execute in the app's own context if clicked) — new sanitizeResourceUrl() enforces http(s)-only, auto-prefixing a scheme-less url with https:// for convenience; applied both when adding a link and when normalizing restored/synced lesson data
  * v1.13.60 - Lessons can now carry Resource Links (label + url, no cap) — new "Resource Links" section in the Lesson Drawer for both standalone and unit lessons, persisted via the existing lessonPlans save path (no new Drive sync hook needed); unitDuplicateLesson, plannerDuplicateLesson, and unitDuplicate (via buildDuplicateLessonForUnit) all copy resourceLinks along with the other content fields, each duplicate getting a fresh, decoupled array
  * v1.13.59 - Unit Plans: whole-unit "Duplicate" no longer appends " (copy)" to lesson titles inside the copy — only the unit's own title gets the suffix, lesson titles stay exactly as in the source; buildDuplicateLessonForUnit() takes a suffixTitle option (default true, unchanged) so the single-lesson unitDuplicateLesson keeps its existing " (copy)" behaviour
  * v1.13.58 - Fix: Class Settings' Year Level(s) checkboxes rendered Foundation last instead of first (Object.keys(YLM) enumerates integer-like string keys '1'-'6' before non-numeric 'F', regardless of source order) — now uses an explicit YEAR_LEVEL_ORDER array so Foundation always renders before Year 1, matching real school order
@@ -103,7 +104,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.60';
+const APP_VERSION = '1.13.61';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2180,10 +2181,26 @@ function isValidScheduledSlot(s) {
     && PLANNER_SCHEDULABLE_DAYS.includes(s.dayKey);
 }
 
-// A resource link needs a non-empty url — don't silently keep/save a link with
-// nothing to point at. label is optional (falls back to the url itself when displayed).
+// Only http(s) links are accepted — javascript:, data:, and other schemes are
+// rejected outright, since a saved link renders as a real, clickable <a href> that
+// would execute in the app's own context if clicked. A url with no scheme at all
+// (e.g. a bare "example.com/worksheet") is treated as https:// for convenience
+// rather than rejected, since typing the full prefix is easy to forget. Returns ''
+// for anything unsafe or empty.
+function sanitizeResourceUrl(url) {
+  const trimmed = String(url || '').trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return ''; // some other explicit scheme — reject
+  return `https://${trimmed}`;
+}
+
+// A resource link needs a url that resolves to a safe http(s) address (see
+// sanitizeResourceUrl) — don't silently keep/save a link with nothing to point at,
+// or one that could execute script when clicked. label is optional (falls back to
+// the url itself when displayed).
 function isValidResourceLink(link) {
-  return !!link && typeof link === 'object' && typeof link.url === 'string' && link.url.trim() !== '';
+  return !!link && typeof link === 'object' && typeof link.url === 'string' && sanitizeResourceUrl(link.url) !== '';
 }
 
 // Append a {weekKey, dayKey} slot to a lesson, de-duping an identical entry so the
@@ -2484,8 +2501,9 @@ function plannerSetLessonStatus(status) {
 
 // Reads the label/url inputs in the currently-open drawer's Resource Links section
 // and appends a new link to the selected lesson. A blank url is rejected (not
-// silently saved) rather than validated as a well-formed URL — the spec calls for
-// basic sanity only, not full URL validation.
+// silently saved), as is anything that isn't a safe http(s) address (see
+// sanitizeResourceUrl) — a saved link renders as a real, clickable <a href>, so a
+// javascript:/data: url could execute in the app's own context if clicked.
 function plannerAddResourceLink() {
   const selectedId = state.plannerUi?.selectedLessonId;
   if (!selectedId) return;
@@ -2493,8 +2511,12 @@ function plannerAddResourceLink() {
   if (idx < 0) return;
   const urlInput = document.getElementById('planner-resource-url');
   const labelInput = document.getElementById('planner-resource-label');
-  const url = (urlInput?.value || '').trim();
-  if (!url) { toast('Add a URL before saving the link', 'error'); return; }
+  const rawUrl = (urlInput?.value || '').trim();
+  const url = sanitizeResourceUrl(rawUrl);
+  if (!url) {
+    toast(rawUrl ? 'Only http(s) links are supported' : 'Add a URL before saving the link', 'error');
+    return;
+  }
   const label = (labelInput?.value || '').trim();
   const current = Array.isArray(state.lessonPlans[idx].resourceLinks) ? [...state.lessonPlans[idx].resourceLinks] : [];
   current.push({ label, url });
@@ -2679,7 +2701,7 @@ function normalizeLessonPlan(raw = {}) {
     // Drop malformed entries (see isValidResourceLink) and rebuild fresh {label,url}
     // objects so a duplicated lesson never shares link objects with its source.
     resourceLinks: (Array.isArray(raw.resourceLinks) ? raw.resourceLinks.filter(isValidResourceLink) : [])
-      .map(link => ({ label: String(link.label || ''), url: String(link.url).trim() })),
+      .map(link => ({ label: String(link.label || ''), url: sanitizeResourceUrl(link.url) })),
   };
 }
 
