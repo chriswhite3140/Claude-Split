@@ -1476,6 +1476,44 @@ test('plannerSuggestICsFromIntention supports multiple set year levels (composit
   assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'both set year levels should be included, not just the first');
 });
 
+test('excludes an IC merely tethered to an in-year descriptor but actually homed on an out-of-year descriptor (cross-year leak via linkedDescriptorIds)', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true }); // Year 2 only
+
+  const st = getState();
+  st.instructionalComponents = [
+    // Homed on the in-year (Year 2) descriptor — must still be suggested.
+    { id: 'ic_valid', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    // Homed on the out-of-year (Year 5) descriptor, but tethered to the in-year one —
+    // getICsForDescriptor('AC9M2N01') would surface this via linkedDescriptorIds even
+    // though its real home content is Year 5, not Year 2.
+    { id: 'ic_leaked', homeDescriptorId: 'AC9M5N01', linkedDescriptorIds: ['AC9M2N01'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.includes('ic_valid'), 'an IC actually homed on the in-year descriptor should still be suggested');
+  assert.ok(!suggested.includes('ic_leaked'), 'an IC homed on an out-of-year descriptor must not leak through just because it is tethered to an in-year one');
+});
+
+test('a tethered IC whose home descriptor cannot be resolved fails open (still suggested) rather than being silently hidden', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+
+  const st = getState();
+  st.instructionalComponents = [
+    { id: 'ic_orphaned_home', homeDescriptorId: 'AC9DOES_NOT_EXIST', linkedDescriptorIds: ['AC9M2N01'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.includes('ic_orphaned_home'), 'a data gap (unresolvable home descriptor) should not silently hide the IC');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

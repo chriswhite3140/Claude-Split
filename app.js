@@ -2488,6 +2488,20 @@ function plannerScoreDescriptor(row, tokens) {
   return score;
 }
 
+// True if a curriculum descriptor row's own Year Level matches one of the given
+// class year levels (normalised keys, e.g. ['2'] or ['2','3']) — banded-subject
+// aware, using the same bandYearLevel()/BANDED_SUBJECTS convention already used
+// elsewhere in the file for this comparison. classYearLevels === [] (not set) or
+// a missing/unresolvable row both mean "no restriction" -> true, so a data gap
+// fails open (still suggested) rather than silently hiding content.
+function plannerDescriptorMatchesYearLevels(row, classYearLevels) {
+  if (!row || classYearLevels.length === 0) return true;
+  return classYearLevels.some(yl => {
+    const csvYear = YLM[yl] || yl;
+    return (row['Year Level'] || '').trim() === (BANDED_SUBJECTS.has(row.Subject) ? bandYearLevel(csvYear) : csvYear);
+  });
+}
+
 function plannerSuggestICsFromIntention() {
   plannerEnsureUiState();
   const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
@@ -2507,10 +2521,7 @@ function plannerSuggestICsFromIntention() {
 
   const ranked = state.curriculumCodes
     .filter(c => c.Subject === lesson.subject && isCurriculumCodeEnabled(c))
-    .filter(c => classYearLevels.length === 0 || classYearLevels.some(yl => {
-      const csvYear = YLM[yl] || yl;
-      return (c['Year Level'] || '').trim() === (BANDED_SUBJECTS.has(c.Subject) ? bandYearLevel(csvYear) : csvYear);
-    }))
+    .filter(c => plannerDescriptorMatchesYearLevels(c, classYearLevels))
     .map(row => ({ code: row.Code, score: plannerScoreDescriptor(row, tokens) }))
     .filter(r => r.score > 0)
     .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code))
@@ -2521,7 +2532,16 @@ function plannerSuggestICsFromIntention() {
 
   const suggested = [];
   ranked.forEach(({ code }) => {
-    getICsForDescriptor(code).forEach(ic => { if (!suggested.includes(ic.id)) suggested.push(ic.id); });
+    getICsForDescriptor(code).forEach(ic => {
+      if (suggested.includes(ic.id)) return;
+      // getICsForDescriptor() also returns ICs merely *tethered* to this in-year
+      // descriptor via linkedDescriptorIds — their actual home descriptor could be a
+      // different one outside the class's year level(s). Check the home descriptor
+      // itself so a cross-year IC can't leak through via a same-year tether.
+      const homeCd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+      if (!plannerDescriptorMatchesYearLevels(homeCd, classYearLevels)) return;
+      suggested.push(ic.id);
+    });
   });
 
   state.plannerUi.icSearch = '';
