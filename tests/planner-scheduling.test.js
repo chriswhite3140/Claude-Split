@@ -1239,7 +1239,7 @@ test('duplicate copies the unit\'s own fields (title with a " (copy)" suffix, su
   assert.strictEqual(copy.assessmentNotes, 'Exit ticket each fortnight.');
 });
 
-test('duplicate copies every lesson in the unit via the same per-lesson rules as unitDuplicateLesson (title suffix, teachingStatus reset, no scheduledSlots), each with a fresh id', () => {
+test('duplicate copies every lesson in the unit (titles unchanged, teachingStatus reset, no scheduledSlots), each with a fresh id', () => {
   resetState();
   const st = getState();
   const lidx = st.lessonPlans.findIndex(l => l.id === 'ul_2');
@@ -1251,7 +1251,10 @@ test('duplicate copies every lesson in the unit via the same per-lesson rules as
   const copyLessons = sandbox.unitGetLessons(copy);
 
   assert.strictEqual(copyLessons.length, 2, 'both lessons in the source unit should be duplicated');
-  assert.deepStrictEqual(copyLessons.map(l => l.title), ['Intro to fractions (copy)', 'Equivalent fractions (copy)'], 'lessons should be copied in the same order, each with the " (copy)" suffix');
+  // Unlike the single-lesson duplicate, a whole-unit duplicate must NOT suffix
+  // lesson titles — only the unit's own title gets " (copy)". Lesson titles inside
+  // stay exactly as they were in the source.
+  assert.deepStrictEqual(copyLessons.map(l => l.title), ['Intro to fractions', 'Equivalent fractions'], 'lesson titles must be copied unchanged, with no " (copy)" suffix');
   assert.ok(copyLessons.every(l => l.teachingStatus === 'planned'), 'every duplicated lesson resets teachingStatus to planned, including the one that was "reteach"');
   assert.ok(copyLessons.every(l => (l.scheduledSlots || []).length === 0), 'no duplicated lesson should inherit scheduledSlots');
   assert.ok(copyLessons.every(l => l.unitId === copy.id), 'every duplicated lesson should belong to the new unit, not the original');

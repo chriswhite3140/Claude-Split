@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.58
+ * THIS FILE IS VERSION: 1.13.59
  * Last updated: 2026-07-25
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.59 - Unit Plans: whole-unit "Duplicate" no longer appends " (copy)" to lesson titles inside the copy — only the unit's own title gets the suffix, lesson titles stay exactly as in the source; buildDuplicateLessonForUnit() takes a suffixTitle option (default true, unchanged) so the single-lesson unitDuplicateLesson keeps its existing " (copy)" behaviour
  * v1.13.58 - Fix: Class Settings' Year Level(s) checkboxes rendered Foundation last instead of first (Object.keys(YLM) enumerates integer-like string keys '1'-'6' before non-numeric 'F', regardless of source order) — now uses an explicit YEAR_LEVEL_ORDER array so Foundation always renders before Year 1, matching real school order
  * v1.13.57 - Class Settings: restored a Year Level(s) field on the active group (Data & Settings, checkboxes F-6, multi-select for composite classes) so there's a single source of truth again; Weekly Planner's plannerSuggestICsFromIntention() now filters ranked descriptors to the class's set year level(s) before scoring (banded-subject aware), falling back to no restriction when none are set — Unit Plans' own IC picker year-level defaulting is unrelated and untouched
  * v1.13.56 - Unit Plans: "Duplicate" action on unit cards copies the unit's own fields (title/subject/yearLevel/term/linkedCDIds/assessmentNotes) plus every lesson inside it, reusing the same per-lesson copy rules as unitDuplicateLesson (title " (copy)" suffix, teachingStatus reset to Planned, scheduledSlots dropped) via a new shared buildDuplicateLessonForUnit() helper; the new unit and its lessons get entirely fresh ids, and a failed save shows the same retryable banner as a lesson duplicate instead of failing silently
@@ -101,7 +102,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.58';
+const APP_VERSION = '1.13.59';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -3111,7 +3112,7 @@ function unitDuplicate(unitId) {
     linkedCDIds: Array.isArray(source.linkedCDIds) ? [...source.linkedCDIds] : [],
     assessmentNotes: source.assessmentNotes || '',
   });
-  const newLessons = unitGetLessons(source).map(lesson => buildDuplicateLessonForUnit(lesson, newUnit.id));
+  const newLessons = unitGetLessons(source).map(lesson => buildDuplicateLessonForUnit(lesson, newUnit.id, { suffixTitle: false }));
   state.lessonPlans.push(...newLessons);
   state.unitPlans.push({ ...newUnit, lessonIds: newLessons.map(l => l.id) });
   persistUnitCopy();
@@ -3495,16 +3496,17 @@ function unitAddLesson(unitId) {
   renderView();
 }
 
-// Builds a duplicated lesson's normalized object — title gets a " (copy)" suffix,
-// teachingStatus resets to "planned" regardless of the source's status, and
-// scheduledSlots are deliberately dropped (the duplicate starts unscheduled;
-// placing it on the Weekly Planner is a separate, deliberate action). Pure: does
-// not push to state.lessonPlans or touch any unit's lessonIds — callers do that.
-// Shared by unitDuplicateLesson (one lesson) and unitDuplicate (every lesson in a
-// duplicated unit) so both copy a lesson the exact same way.
-function buildDuplicateLessonForUnit(source, targetUnitId) {
+// Builds a duplicated lesson's normalized object — teachingStatus resets to
+// "planned" regardless of the source's status, and scheduledSlots are deliberately
+// dropped (the duplicate starts unscheduled; placing it on the Weekly Planner is a
+// separate, deliberate action). Pure: does not push to state.lessonPlans or touch
+// any unit's lessonIds — callers do that. Shared by unitDuplicateLesson (one
+// lesson, title gets a " (copy)" suffix — the default here) and unitDuplicate
+// (every lesson in a duplicated unit, suffixTitle:false — only the unit's own
+// title gets suffixed there, lesson titles inside stay exactly as they were).
+function buildDuplicateLessonForUnit(source, targetUnitId, { suffixTitle = true } = {}) {
   return normalizeLessonPlan({
-    title: `${source.title || 'Untitled lesson'} (copy)`,
+    title: suffixTitle ? `${source.title || 'Untitled lesson'} (copy)` : (source.title || ''),
     subject: source.subject || '',
     intention: source.intention || '',
     linkedICIds: Array.isArray(source.linkedICIds) ? [...source.linkedICIds] : [],
