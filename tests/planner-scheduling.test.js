@@ -1476,6 +1476,37 @@ test('plannerSuggestICsFromIntention supports multiple set year levels (composit
   assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'both set year levels should be included, not just the first');
 });
 
+test('the year-level filter is banded-subject aware — a BANDED_SUBJECTS subject compares via bandYearLevel(), not the raw class year', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  // 'Design and Technologies' is in BANDED_SUBJECTS; bandYearLevel() maps 'Year 1'
+  // -> 'Foundation' and 'Year 2' -> 'Year 2' (see bandYearLevel()), so these two
+  // descriptors are only reachable through the banded comparison, not a direct match.
+  st.curriculumCodes = [
+    { Code: 'DT_FOUND', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Foundation', Descriptor: 'explore materials and tools for making simple objects' },
+    { Code: 'DT_YEAR2', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Year 2', Descriptor: 'explore materials and tools for making simple objects' },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Design and Technologies', intention: 'Explore materials and tools for making simple objects.' };
+  st.plannerUi.selectedLessonId = 'sa_1';
+
+  // A Year 1 class bands to Foundation for this subject.
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '1', checked: true });
+  sandbox.plannerSuggestICsFromIntention();
+  let scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'DT_FOUND'), 'Year 1 bands to Foundation and should match the Foundation descriptor');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'DT_YEAR2'), 'Year 1 (banded to Foundation) must not match a Year 2 descriptor');
+
+  // Switch the class to Year 2 (bands to itself) — now the Year 2 descriptor matches instead.
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '1', checked: false });
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+  sandbox.plannerSuggestICsFromIntention();
+  scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'DT_YEAR2'), 'Year 2 bands to itself and should match the Year 2 descriptor');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'DT_FOUND'), 'Year 2 must not match the Foundation descriptor');
+});
+
 test('excludes an IC merely tethered to an in-year descriptor but actually homed on an out-of-year descriptor (cross-year leak via linkedDescriptorIds)', () => {
   resetState();
   resetClassSettings();
