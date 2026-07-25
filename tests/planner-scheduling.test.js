@@ -1551,6 +1551,221 @@ test('a tethered IC whose home descriptor cannot be resolved fails open (still s
   assert.ok(suggested.includes('ic_orphaned_home'), 'a data gap (unresolvable home descriptor) should not silently hide the IC');
 });
 
+// ── Lesson Resource Links ────────────────────────────────────────────────────────
+console.log('Lesson resource links');
+
+test('normalizeLessonPlan defaults resourceLinks to [] and drops entries with no url', () => {
+  const normalized = sandbox.normalizeLessonPlan({
+    id: 'rl_1',
+    resourceLinks: [
+      { label: 'Video', url: 'https://example.com/video' },
+      { label: 'Bad — no url' },
+      { label: 'Blank url', url: '   ' },
+      null,
+      'not an object',
+    ],
+  });
+  eqJson(normalized.resourceLinks, [{ label: 'Video', url: 'https://example.com/video' }]);
+
+  const withNone = sandbox.normalizeLessonPlan({ id: 'rl_2' });
+  eqJson(withNone.resourceLinks, [], 'a lesson with no resourceLinks field at all should default to []');
+});
+
+test('normalizeLessonPlan trims the url and defaults a missing label to \'\', rebuilding a fresh object', () => {
+  const source = { label: undefined, url: '  https://example.com/worksheet.pdf  ' };
+  const normalized = sandbox.normalizeLessonPlan({ id: 'rl_3', resourceLinks: [source] });
+  assert.strictEqual(normalized.resourceLinks[0].label, '');
+  assert.strictEqual(normalized.resourceLinks[0].url, 'https://example.com/worksheet.pdf');
+  assert.notStrictEqual(normalized.resourceLinks[0], source, 'normalize must rebuild a fresh object, not reuse the source reference');
+});
+
+test('normalizeLessonPlan rejects javascript:/data: (and other non-http(s)) schemes, so a hand-edited or synced-in link can never render as an executable href', () => {
+  const normalized = sandbox.normalizeLessonPlan({
+    id: 'rl_4',
+    resourceLinks: [
+      { label: 'Safe', url: 'https://example.com/ok' },
+      { label: 'XSS', url: 'javascript:alert(document.cookie)' },
+      { label: 'Data URI', url: 'data:text/html,<script>alert(1)</script>' },
+      { label: 'Weird scheme', url: 'vbscript:msgbox(1)' },
+    ],
+  });
+  eqJson(normalized.resourceLinks, [{ label: 'Safe', url: 'https://example.com/ok' }], 'only the safe http(s) link should survive normalization');
+});
+
+test('normalizeLessonPlan treats a scheme-less url as https:// for convenience', () => {
+  const normalized = sandbox.normalizeLessonPlan({ id: 'rl_5', resourceLinks: [{ label: 'Bare domain', url: 'example.com/worksheet' }] });
+  assert.strictEqual(normalized.resourceLinks[0].url, 'https://example.com/worksheet');
+});
+
+test('normalizeLessonPlan rejects a schemed url with no host (nothing to actually point at)', () => {
+  const normalized = sandbox.normalizeLessonPlan({
+    id: 'rl_6',
+    resourceLinks: [
+      { label: 'Bare scheme', url: 'https://' },
+      { label: 'No host before query', url: 'http://?x' },
+    ],
+  });
+  eqJson(normalized.resourceLinks, [], 'a url with a scheme but no host must not be persisted as a usable link');
+});
+
+test('normalizeLessonPlan treats a scheme-less host:port url as https://, not as an unrecognised scheme', () => {
+  const normalized = sandbox.normalizeLessonPlan({ id: 'rl_7', resourceLinks: [{ label: 'Port', url: 'example.com:8080/worksheet' }] });
+  assert.strictEqual(normalized.resourceLinks[0].url, 'https://example.com:8080/worksheet', 'the "example.com" before the colon must not be mistaken for a URI scheme');
+});
+
+test('plannerAddResourceLink() rejects a javascript: url with an error toast instead of saving an executable link', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'sa_1';
+  documentStub.getElementById('planner-resource-label').value = 'Malicious';
+  documentStub.getElementById('planner-resource-url').value = 'javascript:alert(document.cookie)';
+
+  sandbox.plannerAddResourceLink();
+
+  eqJson(lessonById('sa_1').resourceLinks, [], 'a javascript: url must never be saved');
+  assert.ok(toasts.some(t => t.type === 'error'), 'an error toast should explain why nothing was added');
+});
+
+test('plannerAddResourceLink() auto-prefixes a scheme-less url the teacher typed with https://', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'sa_1';
+  documentStub.getElementById('planner-resource-label').value = 'Bare domain';
+  documentStub.getElementById('planner-resource-url').value = 'example.com/worksheet';
+
+  sandbox.plannerAddResourceLink();
+
+  eqJson(lessonById('sa_1').resourceLinks, [{ label: 'Bare domain', url: 'https://example.com/worksheet' }]);
+});
+
+test('plannerAddResourceLink() appends a link read from the drawer inputs and persists it', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'sa_1';
+  documentStub.getElementById('planner-resource-label').value = 'Slides';
+  documentStub.getElementById('planner-resource-url').value = 'https://example.com/slides';
+
+  sandbox.plannerAddResourceLink();
+
+  const lesson = lessonById('sa_1');
+  eqJson(lesson.resourceLinks, [{ label: 'Slides', url: 'https://example.com/slides' }]);
+  const saved = JSON.parse(localStorageStub.getItem('ct_planner_lessons_v2'));
+  eqJson(saved.find(l => l.id === 'sa_1').resourceLinks, [{ label: 'Slides', url: 'https://example.com/slides' }], 'the link should be persisted');
+});
+
+test('plannerAddResourceLink() rejects a blank url rather than silently saving it', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'sa_1';
+  documentStub.getElementById('planner-resource-label').value = 'No URL';
+  documentStub.getElementById('planner-resource-url').value = '   ';
+
+  sandbox.plannerAddResourceLink();
+
+  eqJson(lessonById('sa_1').resourceLinks, [], 'a blank url must not be saved');
+  assert.ok(toasts.some(t => t.type === 'error'), 'an error toast should explain why nothing was added');
+});
+
+test('plannerAddResourceLink() supports adding multiple links (no cap)', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'sa_1';
+  ['a', 'b', 'c', 'd'].forEach(letter => {
+    documentStub.getElementById('planner-resource-label').value = `Link ${letter}`;
+    documentStub.getElementById('planner-resource-url').value = `https://example.com/${letter}`;
+    sandbox.plannerAddResourceLink();
+  });
+  assert.strictEqual(lessonById('sa_1').resourceLinks.length, 4, 'there should be no hard cap on the number of links');
+});
+
+test('plannerRemoveResourceLink() removes only the targeted link by index', () => {
+  resetState();
+  const idx = getState().lessonPlans.findIndex(l => l.id === 'sa_1');
+  getState().lessonPlans[idx] = {
+    ...getState().lessonPlans[idx],
+    resourceLinks: [
+      { label: 'First', url: 'https://example.com/1' },
+      { label: 'Second', url: 'https://example.com/2' },
+      { label: 'Third', url: 'https://example.com/3' },
+    ],
+  };
+  getState().plannerUi.selectedLessonId = 'sa_1';
+
+  sandbox.plannerRemoveResourceLink(1);
+
+  eqJson(lessonById('sa_1').resourceLinks, [
+    { label: 'First', url: 'https://example.com/1' },
+    { label: 'Third', url: 'https://example.com/3' },
+  ]);
+});
+
+test('plannerResourceLinksHtml renders links as anchors with a remove control, and an empty-state message when none', () => {
+  resetState();
+  const withLinks = sandbox.normalizeLessonPlan({ id: 'x', resourceLinks: [{ label: 'Worksheet', url: 'https://example.com/w' }] });
+  const html = sandbox.plannerResourceLinksHtml(withLinks);
+  assert.ok(html.includes('Resource Links'));
+  assert.ok(/<a href="https:\/\/example\.com\/w"[^>]*>Worksheet<\/a>/.test(html));
+  assert.ok(html.includes('plannerRemoveResourceLink(0)'));
+
+  const empty = sandbox.normalizeLessonPlan({ id: 'y' });
+  const emptyHtml = sandbox.plannerResourceLinksHtml(empty);
+  assert.ok(emptyHtml.includes('No resource links yet.'));
+});
+
+test('the Lesson Drawer renders the Resource Links section for both standalone and unit lessons', () => {
+  resetState();
+  const standaloneHtml = sandbox.plannerStandaloneLessonEditHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(standaloneHtml.includes('Resource Links'), 'standalone lesson drawer should include the section');
+
+  const unitFieldsHtml = sandbox.plannerUnitLessonFieldsHtml(lessonById('ul_1'));
+  assert.ok(unitFieldsHtml.includes('Resource Links'), 'unit lesson fields (shared by both unit drawers) should include the section');
+});
+
+test('unitDuplicateLesson copies resourceLinks with a fresh, decoupled array', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  const source = [{ label: 'Video', url: 'https://example.com/video' }];
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], resourceLinks: source };
+
+  sandbox.unitDuplicateLesson('unit_1', 'ul_1');
+  const unit = getState().unitPlans.find(u => u.id === 'unit_1');
+  const copy = lessonById(unit.lessonIds[1]);
+
+  eqJson(copy.resourceLinks, [{ label: 'Video', url: 'https://example.com/video' }]);
+  assert.notStrictEqual(copy.resourceLinks, source, 'the copy must not share the source array reference');
+  assert.notStrictEqual(copy.resourceLinks[0], source[0], 'the copy must not share the source link object reference');
+});
+
+test('unitDuplicate (whole-unit) copies each lesson\'s resourceLinks too, inherited via buildDuplicateLessonForUnit', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_2');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], resourceLinks: [{ label: 'Slides', url: 'https://example.com/slides' }] };
+
+  sandbox.unitDuplicate('unit_1');
+  const copyUnit = getState().unitPlans.find(u => u.id !== 'unit_1');
+  const copyLessons = sandbox.unitGetLessons(copyUnit);
+  const copiedSecond = copyLessons[1];
+
+  eqJson(copiedSecond.resourceLinks, [{ label: 'Slides', url: 'https://example.com/slides' }]);
+});
+
+test('plannerDuplicateLesson (standalone) copies resourceLinks with a fresh, decoupled array', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  const source = [{ label: 'Reading', url: 'https://example.com/reading' }];
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], resourceLinks: source };
+
+  sandbox.plannerDuplicateLesson('sa_1');
+  const copy = getState().lessonPlans.find(l => l.id !== 'sa_1' && l.title === st.lessonPlans[idx].title);
+
+  eqJson(copy.resourceLinks, [{ label: 'Reading', url: 'https://example.com/reading' }]);
+  assert.notStrictEqual(copy.resourceLinks, source, 'the copy must not share the source array reference');
+  assert.notStrictEqual(copy.resourceLinks[0], source[0], 'the copy must not share the source link object reference');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

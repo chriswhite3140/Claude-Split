@@ -1538,6 +1538,55 @@ body[data-text-size="large"] {
 }
 .planner-schedule-controls select { flex: 1; min-width: 120px; }
 
+.planner-resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.planner-resource-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+}
+.planner-resource-link a {
+  color: var(--blue);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.planner-resource-link a:hover { text-decoration: underline; }
+.planner-resource-remove {
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.planner-resource-remove:hover { color: var(--status-danger-text); }
+.planner-resource-empty {
+  font-size: var(--helper-size);
+  color: var(--text3);
+  margin-bottom: 8px;
+}
+.planner-resource-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.planner-resource-controls input { flex: 1; min-width: 120px; }
+
 .planner-ic-chip {
   font-family: 'DM Mono', monospace;
   font-size: 9px;
