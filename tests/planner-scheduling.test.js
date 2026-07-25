@@ -1597,6 +1597,22 @@ test('normalizeLessonPlan treats a scheme-less url as https:// for convenience',
   assert.strictEqual(normalized.resourceLinks[0].url, 'https://example.com/worksheet');
 });
 
+test('normalizeLessonPlan rejects a schemed url with no host (nothing to actually point at)', () => {
+  const normalized = sandbox.normalizeLessonPlan({
+    id: 'rl_6',
+    resourceLinks: [
+      { label: 'Bare scheme', url: 'https://' },
+      { label: 'No host before query', url: 'http://?x' },
+    ],
+  });
+  eqJson(normalized.resourceLinks, [], 'a url with a scheme but no host must not be persisted as a usable link');
+});
+
+test('normalizeLessonPlan treats a scheme-less host:port url as https://, not as an unrecognised scheme', () => {
+  const normalized = sandbox.normalizeLessonPlan({ id: 'rl_7', resourceLinks: [{ label: 'Port', url: 'example.com:8080/worksheet' }] });
+  assert.strictEqual(normalized.resourceLinks[0].url, 'https://example.com:8080/worksheet', 'the "example.com" before the colon must not be mistaken for a URI scheme');
+});
+
 test('plannerAddResourceLink() rejects a javascript: url with an error toast instead of saving an executable link', () => {
   resetState();
   const st = getState();

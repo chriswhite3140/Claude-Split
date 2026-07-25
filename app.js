@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.61
+ * THIS FILE IS VERSION: 1.13.62
  * Last updated: 2026-07-26
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.62 - Fix: sanitizeResourceUrl() (lesson Resource Links) no longer accepts a schemed url with no host (e.g. "https://" or "http://?x" would have been saved as a useless link), and no longer mistakes a scheme-less "host:port" url (e.g. "example.com:8080/worksheet") for an unrecognised URI scheme and wrongly rejects it — the two checks are now precise enough to tell a real scheme (javascript:, data:, mailto:, ...) apart from a port number
  * v1.13.61 - Fix: lesson Resource Links now reject javascript:/data:/other unsafe url schemes (a saved link renders as a real <a href>, so an unsafe scheme could execute in the app's own context if clicked) — new sanitizeResourceUrl() enforces http(s)-only, auto-prefixing a scheme-less url with https:// for convenience; applied both when adding a link and when normalizing restored/synced lesson data
  * v1.13.60 - Lessons can now carry Resource Links (label + url, no cap) — new "Resource Links" section in the Lesson Drawer for both standalone and unit lessons, persisted via the existing lessonPlans save path (no new Drive sync hook needed); unitDuplicateLesson, plannerDuplicateLesson, and unitDuplicate (via buildDuplicateLessonForUnit) all copy resourceLinks along with the other content fields, each duplicate getting a fresh, decoupled array
  * v1.13.59 - Unit Plans: whole-unit "Duplicate" no longer appends " (copy)" to lesson titles inside the copy — only the unit's own title gets the suffix, lesson titles stay exactly as in the source; buildDuplicateLessonForUnit() takes a suffixTitle option (default true, unchanged) so the single-lesson unitDuplicateLesson keeps its existing " (copy)" behaviour
@@ -104,7 +105,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.61';
+const APP_VERSION = '1.13.62';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2184,14 +2185,19 @@ function isValidScheduledSlot(s) {
 // Only http(s) links are accepted — javascript:, data:, and other schemes are
 // rejected outright, since a saved link renders as a real, clickable <a href> that
 // would execute in the app's own context if clicked. A url with no scheme at all
-// (e.g. a bare "example.com/worksheet") is treated as https:// for convenience
-// rather than rejected, since typing the full prefix is easy to forget. Returns ''
-// for anything unsafe or empty.
+// (e.g. a bare "example.com/worksheet", or "example.com:8080/worksheet" with a
+// port) is treated as https:// for convenience rather than rejected, since typing
+// the full prefix is easy to forget. Returns '' for anything unsafe or empty —
+// including a schemed url with no host (e.g. "https://" or "http://?x").
 function sanitizeResourceUrl(url) {
   const trimmed = String(url || '').trim();
   if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return ''; // some other explicit scheme — reject
+  if (/^https?:\/\/[^\/?\s]+/i.test(trimmed)) return trimmed;
+  // A leading "word:" is a real URI scheme (javascript:, data:, mailto:, ...) UNLESS
+  // what immediately follows the colon is a run of digits — that's a port on a bare
+  // host (e.g. "example.com:8080/..."), not a scheme, so it falls through below.
+  const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):(.*)$/i);
+  if (schemeMatch && !/^\d/.test(schemeMatch[2])) return '';
   return `https://${trimmed}`;
 }
 
