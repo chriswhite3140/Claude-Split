@@ -1370,6 +1370,181 @@ test('the unit list renders a Duplicate button wired to unitDuplicate, separate 
   assert.ok(/unit-card-duplicate[\s\S]*?onkeydown="event\.stopPropagation\(\)"/.test(html), 'the Duplicate button must stop keydown propagation too, not just click');
 });
 
+// ── Class Settings: year level field + Weekly Planner IC suggestion filter ──────
+console.log('Class year level: settings field + IC suggestion filter');
+
+// classSettings isn't touched by resetState() (it's independent of the lesson/unit
+// fixtures), so each test in this section resets it explicitly to a single known
+// group with no year level set, to avoid bleeding state between tests.
+function resetClassSettings() {
+  const st = getState();
+  st.classSettings = {
+    groups: [{ id: 'main', name: 'My Class', color: '#4f8ef7', disabledSubjects: {}, disabledStrands: {}, disabledAreas: {}, yearLevels: [] }],
+    activeGroup: 'main',
+  };
+}
+
+test('loadClassSettings() normalises yearLevels from stored data, defaulting to []', () => {
+  localStorageStub.setItem('ct_class_settings', JSON.stringify({
+    groups: [{ id: 'main', name: 'My Class', yearLevels: ['3', '4'] }],
+    activeGroup: 'main',
+  }));
+  const loaded = sandbox.loadClassSettings();
+  eqJson(loaded.groups[0].yearLevels, ['3', '4']);
+
+  localStorageStub.setItem('ct_class_settings', JSON.stringify({
+    groups: [{ id: 'main', name: 'My Class' }], // no yearLevels field at all — legacy/pre-existing data
+    activeGroup: 'main',
+  }));
+  const loadedLegacy = sandbox.loadClassSettings();
+  eqJson(loadedLegacy.groups[0].yearLevels, [], 'legacy stored groups without yearLevels should default to []');
+
+  localStorageStub.removeItem('ct_class_settings');
+});
+
+test('toggleYearLevel adds/removes a year level on the active group and persists it', () => {
+  resetClassSettings();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '3', checked: true });
+  eqJson(sandbox.getActiveGroupYearLevels(), ['3']);
+  const saved = JSON.parse(localStorageStub.getItem('ct_class_settings'));
+  eqJson(saved.groups[0].yearLevels, ['3'], 'the toggle should persist to localStorage');
+
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '4', checked: true });
+  eqJson(sandbox.getActiveGroupYearLevels(), ['3', '4']);
+
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '3', checked: false });
+  eqJson(sandbox.getActiveGroupYearLevels(), ['4'], 'unticking should remove just that year level');
+});
+
+test('the class settings panel renders a checkbox per year level, checked to match the active group, wired to toggleYearLevel', () => {
+  resetClassSettings();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+  const html = sandbox.buildClassSettingsSection();
+  assert.ok(html.includes('YEAR LEVEL(S)'), 'a year level section should render');
+  assert.ok(/data-cs-action="toggleYearLevel" data-cs-key="2"[^>]*checked/.test(html), 'Year 2 should render checked');
+  assert.ok(!/data-cs-action="toggleYearLevel" data-cs-key="5"[^>]*checked/.test(html), 'Year 5 should render unchecked');
+  assert.ok(html.includes('Foundation') && html.includes('Year 6'), 'all year levels F-6 should be offered');
+});
+
+// Minimal fixture for plannerSuggestICsFromIntention: two Mathematics descriptors
+// with near-identical wording (so token scoring treats them equally) but different
+// Year Level values, isolating the year-level filter as the only differentiator.
+function setSuggestICsFixture() {
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'AC9M2N01', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 2', Descriptor: 'partition numbers using place value' },
+    { Code: 'AC9M5N01', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 5', Descriptor: 'partition numbers using place value' },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partition numbers using place value understanding.' };
+  st.plannerUi.selectedLessonId = 'sa_1';
+}
+
+test('plannerSuggestICsFromIntention excludes descriptors outside the class\'s set year level(s)', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'), 'the Year 2 descriptor should be ranked');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'the Year 5 descriptor must be excluded even though it scores identically on tokens');
+});
+
+test('plannerSuggestICsFromIntention falls back to no year restriction when the class has no year level set', () => {
+  resetState();
+  resetClassSettings(); // yearLevels: [] — nothing set
+  setSuggestICsFixture();
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'), 'Year 2 descriptor should still be ranked');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'Year 5 descriptor should also be ranked — no year level set means no restriction, not "show nothing"');
+});
+
+test('plannerSuggestICsFromIntention supports multiple set year levels (composite class)', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '5', checked: true });
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'));
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'both set year levels should be included, not just the first');
+});
+
+test('the year-level filter is banded-subject aware — a BANDED_SUBJECTS subject compares via bandYearLevel(), not the raw class year', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  // 'Design and Technologies' is in BANDED_SUBJECTS; bandYearLevel() maps 'Year 1'
+  // -> 'Foundation' and 'Year 2' -> 'Year 2' (see bandYearLevel()), so these two
+  // descriptors are only reachable through the banded comparison, not a direct match.
+  st.curriculumCodes = [
+    { Code: 'DT_FOUND', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Foundation', Descriptor: 'explore materials and tools for making simple objects' },
+    { Code: 'DT_YEAR2', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Year 2', Descriptor: 'explore materials and tools for making simple objects' },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Design and Technologies', intention: 'Explore materials and tools for making simple objects.' };
+  st.plannerUi.selectedLessonId = 'sa_1';
+
+  // A Year 1 class bands to Foundation for this subject.
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '1', checked: true });
+  sandbox.plannerSuggestICsFromIntention();
+  let scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'DT_FOUND'), 'Year 1 bands to Foundation and should match the Foundation descriptor');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'DT_YEAR2'), 'Year 1 (banded to Foundation) must not match a Year 2 descriptor');
+
+  // Switch the class to Year 2 (bands to itself) — now the Year 2 descriptor matches instead.
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '1', checked: false });
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+  sandbox.plannerSuggestICsFromIntention();
+  scores = getState().plannerUi.suggestionScores;
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'DT_YEAR2'), 'Year 2 bands to itself and should match the Year 2 descriptor');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'DT_FOUND'), 'Year 2 must not match the Foundation descriptor');
+});
+
+test('excludes an IC merely tethered to an in-year descriptor but actually homed on an out-of-year descriptor (cross-year leak via linkedDescriptorIds)', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true }); // Year 2 only
+
+  const st = getState();
+  st.instructionalComponents = [
+    // Homed on the in-year (Year 2) descriptor — must still be suggested.
+    { id: 'ic_valid', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    // Homed on the out-of-year (Year 5) descriptor, but tethered to the in-year one —
+    // getICsForDescriptor('AC9M2N01') would surface this via linkedDescriptorIds even
+    // though its real home content is Year 5, not Year 2.
+    { id: 'ic_leaked', homeDescriptorId: 'AC9M5N01', linkedDescriptorIds: ['AC9M2N01'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.includes('ic_valid'), 'an IC actually homed on the in-year descriptor should still be suggested');
+  assert.ok(!suggested.includes('ic_leaked'), 'an IC homed on an out-of-year descriptor must not leak through just because it is tethered to an in-year one');
+});
+
+test('a tethered IC whose home descriptor cannot be resolved fails open (still suggested) rather than being silently hidden', () => {
+  resetState();
+  resetClassSettings();
+  setSuggestICsFixture();
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+
+  const st = getState();
+  st.instructionalComponents = [
+    { id: 'ic_orphaned_home', homeDescriptorId: 'AC9DOES_NOT_EXIST', linkedDescriptorIds: ['AC9M2N01'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.includes('ic_orphaned_home'), 'a data gap (unresolvable home descriptor) should not silently hide the IC');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

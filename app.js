@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.56
+ * THIS FILE IS VERSION: 1.13.57
  * Last updated: 2026-07-22
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.57 - Class Settings: restored a Year Level(s) field on the active group (Data & Settings, checkboxes F-6, multi-select for composite classes) so there's a single source of truth again; Weekly Planner's plannerSuggestICsFromIntention() now filters ranked descriptors to the class's set year level(s) before scoring (banded-subject aware), falling back to no restriction when none are set — Unit Plans' own IC picker year-level defaulting is unrelated and untouched
  * v1.13.56 - Unit Plans: "Duplicate" action on unit cards copies the unit's own fields (title/subject/yearLevel/term/linkedCDIds/assessmentNotes) plus every lesson inside it, reusing the same per-lesson copy rules as unitDuplicateLesson (title " (copy)" suffix, teachingStatus reset to Planned, scheduledSlots dropped) via a new shared buildDuplicateLessonForUnit() helper; the new unit and its lessons get entirely fresh ids, and a failed save shows the same retryable banner as a lesson duplicate instead of failing silently
  * v1.13.55 - Weekly Planner: topbar now shows the "Last synced to Drive" indicator (with the same failed/retry state) that Unit Plans and Admin already show, reusing driveSyncIndicatorHtml() directly — no sync logic duplicated, so the same driveBackupSave() retry and updateDriveSyncIndicator() refresh already cover this location too
  * v1.13.54 - Fix: unitDuplicateLesson now checks both save*State() return values instead of assuming success; a localStorage write failure (quota/security error) no longer renders silently as if the duplicate had persisted — it shows a persistent Retry banner (mirrors the Drive-restore persist-failure banner's convention) and leaves the in-memory duplicate in place rather than rolling it back
@@ -99,7 +100,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.56';
+const APP_VERSION = '1.13.57';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2487,6 +2488,20 @@ function plannerScoreDescriptor(row, tokens) {
   return score;
 }
 
+// True if a curriculum descriptor row's own Year Level matches one of the given
+// class year levels (normalised keys, e.g. ['2'] or ['2','3']) — banded-subject
+// aware, using the same bandYearLevel()/BANDED_SUBJECTS convention already used
+// elsewhere in the file for this comparison. classYearLevels === [] (not set) or
+// a missing/unresolvable row both mean "no restriction" -> true, so a data gap
+// fails open (still suggested) rather than silently hiding content.
+function plannerDescriptorMatchesYearLevels(row, classYearLevels) {
+  if (!row || classYearLevels.length === 0) return true;
+  return classYearLevels.some(yl => {
+    const csvYear = YLM[yl] || yl;
+    return (row['Year Level'] || '').trim() === (BANDED_SUBJECTS.has(row.Subject) ? bandYearLevel(csvYear) : csvYear);
+  });
+}
+
 function plannerSuggestICsFromIntention() {
   plannerEnsureUiState();
   const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
@@ -2499,8 +2514,14 @@ function plannerSuggestICsFromIntention() {
     intention.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4)
   )].slice(0, 25);
 
+  // Restrict candidates to the class's own year level(s) before scoring, so e.g.
+  // Year 5 decimals content can't surface for a Year 2 lesson. [] (not set) means
+  // no restriction — same behaviour as before this field existed.
+  const classYearLevels = getActiveGroupYearLevels();
+
   const ranked = state.curriculumCodes
     .filter(c => c.Subject === lesson.subject && isCurriculumCodeEnabled(c))
+    .filter(c => plannerDescriptorMatchesYearLevels(c, classYearLevels))
     .map(row => ({ code: row.Code, score: plannerScoreDescriptor(row, tokens) }))
     .filter(r => r.score > 0)
     .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code))
@@ -2511,7 +2532,16 @@ function plannerSuggestICsFromIntention() {
 
   const suggested = [];
   ranked.forEach(({ code }) => {
-    getICsForDescriptor(code).forEach(ic => { if (!suggested.includes(ic.id)) suggested.push(ic.id); });
+    getICsForDescriptor(code).forEach(ic => {
+      if (suggested.includes(ic.id)) return;
+      // getICsForDescriptor() also returns ICs merely *tethered* to this in-year
+      // descriptor via linkedDescriptorIds — their actual home descriptor could be a
+      // different one outside the class's year level(s). Check the home descriptor
+      // itself so a cross-year IC can't leak through via a same-year tether.
+      const homeCd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
+      if (!plannerDescriptorMatchesYearLevels(homeCd, classYearLevels)) return;
+      suggested.push(ic.id);
+    });
   });
 
   state.plannerUi.icSearch = '';
@@ -8001,6 +8031,10 @@ function loadClassSettings() {
       disabledSubjects: g.disabledSubjects || {},
       disabledStrands: g.disabledStrands || {},
       disabledAreas: g.disabledAreas || {},
+      // Year level(s) this group's class is in (normalised keys: 'F','1'..'6'; [] =
+      // not set). Used by plannerSuggestICsFromIntention() to restrict IC suggestions
+      // to the class's own year level(s) instead of ranking across every year.
+      yearLevels: Array.isArray(g.yearLevels) ? g.yearLevels.map(String) : [],
     };
   }
 
@@ -8030,6 +8064,14 @@ function saveClassSettings() {
 function getActiveGroup() {
   const s = state.classSettings;
   return s.groups.find(g => g.id === s.activeGroup) || s.groups[0];
+}
+
+// The active group's set year level(s) (normalised keys, e.g. ['3'] or ['3','4']
+// for a composite class), or [] if none are set — callers should treat [] as "no
+// restriction", not "no matches".
+function getActiveGroupYearLevels() {
+  const g = getActiveGroup();
+  return (g && Array.isArray(g.yearLevels)) ? g.yearLevels : [];
 }
 
 function isStrandEnabled(subject, strand) {
@@ -8190,6 +8232,19 @@ function buildClassSettingsSection() {
         <button onclick="saveActiveGroupMeta()" style="padding:4px 12px;border-radius:5px;border:1px solid var(--blue);background:var(--blue-dim);color:var(--blue);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">Save</button>
       </div>
 
+      <!-- Year level(s) — used to restrict Weekly Planner IC suggestions -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;padding:10px 12px;background:var(--surface-alt);border-radius:6px;flex-wrap:wrap">
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">YEAR LEVEL(S)</span>
+        ${Object.keys(YLM).map(yl => `
+          <label style="font-size:11px;color:${(activeGroup.yearLevels || []).includes(yl) ? 'var(--text)' : 'var(--text3)'};display:flex;align-items:center;gap:5px;cursor:pointer">
+            <input type="checkbox" data-cs-action="toggleYearLevel" data-cs-key="${yl}" ${(activeGroup.yearLevels || []).includes(yl) ? 'checked' : ''}
+              style="accent-color:var(--blue)">
+            <span>${YLM[yl]}</span>
+          </label>
+        `).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin:0 0 16px 2px">Restricts Weekly Planner IC suggestions to these year level(s). Leave all unticked to suggest from any year level.</div>
+
       <!-- Subject/strand toggles -->
       <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.1em">
         Subjects &amp; Strands — <span style="color:${activeGroup.color || 'var(--blue)'};">${activeGroup.name}</span>
@@ -8252,6 +8307,16 @@ function applyClassSettingAction(action, { val, key, enabled, checked } = {}) {
     return;
   }
 
+  if (action === 'toggleYearLevel') {
+    const g = getActiveGroup();
+    if (!Array.isArray(g.yearLevels)) g.yearLevels = [];
+    if (checked) { if (!g.yearLevels.includes(key)) g.yearLevels.push(key); }
+    else g.yearLevels = g.yearLevels.filter(y => y !== key);
+    saveClassSettings();
+    renderAdmin(document.getElementById('main-content'));
+    return;
+  }
+
   if (action === 'toggleStrand') {
     const g = getActiveGroup();
     if (!g.disabledStrands) g.disabledStrands = {};
@@ -8297,7 +8362,7 @@ function applyClassSettingAction(action, { val, key, enabled, checked } = {}) {
     const name = prompt('Group name (e.g. Specialist — Art):');
     if (!name) return;
     const id = 'group_' + Date.now();
-    cs.groups.push({ id, name, color: '#a78bfa', disabledSubjects: {}, disabledStrands: {}, disabledAreas: {} });
+    cs.groups.push({ id, name, color: '#a78bfa', disabledSubjects: {}, disabledStrands: {}, disabledAreas: {}, yearLevels: [] });
     cs.activeGroup = id;
     saveClassSettings();
     renderAdmin(document.getElementById('main-content'));
