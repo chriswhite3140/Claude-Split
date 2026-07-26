@@ -1851,6 +1851,65 @@ test('group open/collapsed state resets to defaults on a fresh plannerSuggestICs
   assert.ok(!html.includes('data-ic-id="ic_so"'), 'a fresh suggestion run must reset group state back to defaults, not carry over a previous manual toggle');
 });
 
+test('a tethered IC (suggested via linkedDescriptorIds) inherits confidence from whichever of its descriptors ranked best, not just its own homeDescriptorId', () => {
+  // getICsForDescriptor() can surface an IC because a *linked* descriptor matched, even
+  // when the IC's own homeDescriptorId never individually ranked (e.g. it's a different,
+  // unscored descriptor). Reading only scores[ic.homeDescriptorId] would then read 0 —
+  // "Other matches" and no confidence badge — even though the descriptor that actually
+  // caused the suggestion was a strong match.
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'CD_STRONG', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value understanding for addition strategies' },
+    // A real, existing descriptor (so the IC still passes plannerICResultsHtml's own
+    // subject filter, which looks it up by homeDescriptorId) but with wording that
+    // shares no tokens with the intention below, so it scores 0 and never ranks.
+    { Code: 'CD_UNSCORED_HOME', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'completely unrelated wording with no overlap at all' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_tethered', homeDescriptorId: 'CD_UNSCORED_HOME', linkedDescriptorIds: ['CD_STRONG'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    subject: 'Mathematics',
+    intention: 'Partition numbers using place value understanding for addition strategies.',
+  };
+  st.plannerUi.selectedLessonId = 'ul_1';
+  // unit_1.linkedCDIds stays [] (resetState()'s default) — isolates the score fix from
+  // the linked/unlinked bucketing.
+
+  sandbox.plannerSuggestICsFromIntention();
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(html.includes('Strong matches (1)'), 'the tethered IC must count as a strong match via CD_STRONG (the descriptor that actually caused it to be suggested)');
+  assert.ok(html.includes('data-ic-id="ic_tethered"'), 'the Strong group is open by default, so the tethered IC should render immediately, not be buried in a collapsed "Other matches" group');
+  assert.ok(/data-ic-id="ic_tethered"[\s\S]*?is-strong/.test(html), 'its confidence badge should read Strong, inherited from the linked descriptor that actually matched');
+});
+
+test('toggling a suggestion group restores focus to its heading, so a keyboard user isn\'t dropped out of the results list on every expand/collapse', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+  sandbox.plannerSuggestICsFromIntention();
+
+  // The stub results container's querySelector always returns null (no real DOM tree)
+  // — stand in for the heading button plannerToggleICSuggestionGroup would re-focus in
+  // a real browser, same convention used for the Drive sync indicator stub elsewhere.
+  const container = documentStub.getElementById('planner-ic-results');
+  const fakeHeading = { focused: false, focus() { this.focused = true; } };
+  const realQuerySelector = container.querySelector;
+  container.querySelector = (selector) => selector === '[data-group-key="strongOther"]' ? fakeHeading : realQuerySelector(selector);
+
+  sandbox.plannerToggleICSuggestionGroup('strongOther', false);
+
+  assert.ok(fakeHeading.focused, 'the toggled group\'s heading should be re-focused after the results container rebuild, same as plannerToggleICExpand already does for IC rows');
+  container.querySelector = realQuerySelector;
+});
+
 // ── Lesson Resource Links ────────────────────────────────────────────────────────
 console.log('Lesson resource links');
 
