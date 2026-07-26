@@ -1969,6 +1969,44 @@ body[data-text-size="large"] {
   background: var(--status-info-bg);
 }
 
+/* Collapsible result groups on the "Suggest from intention" path (strong/other
+   confidence x linked/not-linked to this unit's CDs) — distinct from the plain
+   .planner-ic-group-heading div above (browse mode, not clickable, no toggle). */
+.planner-ic-suggestion-group {
+  margin-top: 4px;
+}
+.planner-ic-suggestion-group-heading {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 6px 2px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--label-size);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text3);
+  cursor: pointer;
+  text-align: left;
+}
+.planner-ic-results > .planner-ic-suggestion-group:first-child .planner-ic-suggestion-group-heading {
+  margin-top: 0;
+  border-top: none;
+}
+.planner-ic-suggestion-group-heading:hover {
+  color: var(--text);
+}
+.planner-ic-suggestion-group-toggle {
+  flex-shrink: 0;
+  font-size: 10px;
+  width: 10px;
+  text-align: center;
+}
+
 
 /* ── WEEKLY PLANNER ── */
 .planner-week-nav {
