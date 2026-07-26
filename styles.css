@@ -1122,6 +1122,17 @@ body[data-text-size="large"] {
   min-height: 300px;
 }
 
+/* Override the base .card's overflow: hidden (used elsewhere only to round off square
+   child corners, which the box's own border-radius already does on its own background/
+   border regardless of this property) — these two cards can host an absolutely
+   positioned resource-link popover that needs to render past a card/pill's edge
+   instead of being clipped. Neither container relies on clipping for layout (no fixed
+   height, align-items: start above), so this is safe. */
+.planner-shell-board,
+.planner-unit-rail {
+  overflow: visible;
+}
+
 .planner-shell-placeholder {
   padding: 14px;
   color: var(--text3);
@@ -1348,6 +1359,66 @@ body[data-text-size="large"] {
 }
 .planner-lesson-card.is-incomplete {
   border-left: 3px solid var(--status-warning-border);
+}
+
+/* Small link icon on a lesson card/pill, shown only when resourceLinks is non-empty.
+   Exactly one link opens directly; more than one opens the popover below instead of
+   guessing which one the teacher meant. */
+.planner-resource-indicator-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.planner-resource-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text3);
+  border-radius: 4px;
+  padding: 1px 4px;
+  line-height: 1;
+  cursor: pointer;
+}
+.planner-resource-indicator:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+  background: var(--surface);
+}
+.planner-resource-indicator-count {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+}
+.planner-resource-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 160px;
+  max-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+  padding: 6px;
+}
+.planner-resource-popover-link {
+  display: block;
+  font-size: 12px;
+  color: var(--blue);
+  text-decoration: none;
+  padding: 4px 6px;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-resource-popover-link:hover {
+  background: var(--surface-alt);
+  text-decoration: underline;
 }
 
 /* ── Unit lessons on the weekly board (PR2 scheduling) ── */

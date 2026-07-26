@@ -52,11 +52,13 @@ const localStorageStub = {
   clear() { for (const k of Object.keys(store)) delete store[k]; },
 };
 
+let windowOpenCalls = [];
 const windowStub = {
   addEventListener() {}, removeEventListener() {},
   matchMedia() { return { matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }; },
   localStorage: localStorageStub,
   document: documentStub,
+  open(url, target, features) { windowOpenCalls.push({ url, target, features }); },
 };
 
 const sandbox = {
@@ -113,6 +115,7 @@ let passed = 0;
 const failures = [];
 function test(name, fn) {
   toasts = [];
+  windowOpenCalls = [];
   try { fn(); passed++; console.log('  ✓ ' + name); }
   catch (e) { failures.push({ name, e }); console.log('  ✗ ' + name + '\n      ' + (e && e.message)); }
 }
@@ -144,6 +147,7 @@ function resetState() {
   st.plannerUi.draggingSlot = null;
   st.plannerUi.insertionTarget = null;
   st.plannerUi.dayOrder = {};
+  st.plannerUi.openResourcePopoverCardKey = null;
 }
 
 function lessonById(id) { return getState().lessonPlans.find(l => l.id === id); }
@@ -1774,6 +1778,170 @@ test('plannerDuplicateLesson (standalone) copies resourceLinks with a fresh, dec
   eqJson(copy.resourceLinks, [{ label: 'Reading', url: 'https://example.com/reading' }]);
   assert.notStrictEqual(copy.resourceLinks, source, 'the copy must not share the source array reference');
   assert.notStrictEqual(copy.resourceLinks[0], source[0], 'the copy must not share the source link object reference');
+});
+
+console.log('Lesson card quick-access resource link indicator');
+
+test('the resource indicator renders nothing when a lesson has no resourceLinks, on all three card types', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  assert.ok(!sandbox.plannerLessonCardHtml(lessonById('sa_1')).includes('planner-resource-indicator'), 'standalone card should render no indicator');
+  assert.ok(!sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon').includes('planner-resource-indicator'), 'unit occurrence card should render no indicator');
+  assert.ok(!sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_1')).includes('planner-resource-indicator'), 'unit sidebar pill should render no indicator');
+});
+
+test('a single resource link renders the indicator, and clicking it opens the link directly via window.open instead of showing a popover', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], resourceLinks: [{ label: 'Slides', url: 'https://example.com/slides' }] };
+
+  const html = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(html.includes('planner-resource-indicator'), 'the indicator should render');
+  assert.ok(!html.includes('planner-resource-popover'), 'the popover should not be open yet');
+
+  sandbox.plannerHandleResourceIndicatorClick('sa_1');
+  eqJson(windowOpenCalls, [{ url: 'https://example.com/slides', target: '_blank', features: 'noopener,noreferrer' }]);
+  assert.strictEqual(st.plannerUi.openResourcePopoverCardKey, null, 'a single link must not toggle the popover open');
+});
+
+test('multiple resource links show a count badge, and clicking the indicator opens a popover listing every link instead of guessing which to open', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    resourceLinks: [
+      { label: 'Slides', url: 'https://example.com/slides' },
+      { label: 'Worksheet', url: 'https://example.com/worksheet' },
+    ],
+  };
+
+  const closedHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(/planner-resource-indicator-count[^>]*>2</.test(closedHtml), 'the indicator should show a count of 2');
+  assert.ok(!closedHtml.includes('planner-resource-popover'), 'the popover should not render until opened');
+
+  sandbox.plannerHandleResourceIndicatorClick('sa_1', 'sa_1::card');
+  assert.strictEqual(windowOpenCalls.length, 0, 'multiple links must never guess and call window.open directly');
+  assert.strictEqual(st.plannerUi.openResourcePopoverCardKey, 'sa_1::card', 'clicking with multiple links should open this card\'s popover');
+
+  const openHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(/<a class="planner-resource-popover-link" href="https:\/\/example\.com\/slides"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Slides<\/a>/.test(openHtml), 'the popover should list the first link with its label');
+  assert.ok(/<a class="planner-resource-popover-link" href="https:\/\/example\.com\/worksheet"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Worksheet<\/a>/.test(openHtml), 'the popover should list the second link with its label');
+
+  sandbox.plannerHandleResourceIndicatorClick('sa_1', 'sa_1::card');
+  assert.strictEqual(st.plannerUi.openResourcePopoverCardKey, null, 'clicking the indicator again should toggle the popover closed');
+});
+
+test('only one lesson\'s resource popover can be open at a time', () => {
+  resetState();
+  const st = getState();
+  const links = [{ label: 'A', url: 'https://example.com/a' }, { label: 'B', url: 'https://example.com/b' }];
+  const saIdx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  const ulIdx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[saIdx] = { ...st.lessonPlans[saIdx], resourceLinks: links };
+  st.lessonPlans[ulIdx] = { ...st.lessonPlans[ulIdx], resourceLinks: links };
+
+  sandbox.plannerToggleResourcePopover('sa_1');
+  assert.strictEqual(st.plannerUi.openResourcePopoverCardKey, 'sa_1');
+  sandbox.plannerToggleResourcePopover('ul_1');
+  assert.strictEqual(st.plannerUi.openResourcePopoverCardKey, 'ul_1', 'opening a second lesson\'s popover must close the first');
+});
+
+test('the resource indicator stops click and keydown propagation, on all three card types, so it never also opens the Lesson Drawer', () => {
+  resetState();
+  const st = getState();
+  const link = [{ label: 'Slides', url: 'https://example.com/slides' }];
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const saIdx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  const ulIdx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[saIdx] = { ...st.lessonPlans[saIdx], resourceLinks: link };
+  st.lessonPlans[ulIdx] = { ...st.lessonPlans[ulIdx], resourceLinks: link };
+
+  const stopPatternClick = /planner-resource-indicator[\s\S]*?onclick="event\.stopPropagation\(\);plannerHandleResourceIndicatorClick/;
+  const stopPatternKeydown = /planner-resource-indicator[\s\S]*?onkeydown="event\.stopPropagation\(\)"/;
+
+  const standaloneHtml = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(stopPatternClick.test(standaloneHtml), 'standalone card indicator must stop click propagation before opening the link');
+  assert.ok(stopPatternKeydown.test(standaloneHtml), 'standalone card indicator must stop keydown propagation too');
+
+  const occHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  assert.ok(stopPatternClick.test(occHtml), 'unit occurrence card indicator must stop click propagation');
+  assert.ok(stopPatternKeydown.test(occHtml), 'unit occurrence card indicator must stop keydown propagation');
+
+  const pillHtml = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_1'));
+  assert.ok(stopPatternClick.test(pillHtml), 'unit sidebar pill indicator must stop click propagation');
+  assert.ok(stopPatternKeydown.test(pillHtml), 'unit sidebar pill indicator must stop keydown propagation');
+});
+
+test('the open popover itself stops click and keydown propagation, so interacting with a listed link does not also close it, bubble into the card, or get hijacked by the card\'s Enter/Space handler', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    resourceLinks: [{ label: 'A', url: 'https://example.com/a' }, { label: 'B', url: 'https://example.com/b' }],
+  };
+  st.plannerUi.openResourcePopoverCardKey = 'sa_1::card';
+  const html = sandbox.plannerLessonCardHtml(lessonById('sa_1'));
+  assert.ok(html.includes('<div class="planner-resource-popover" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">'), 'the popover wrapper must stop both click and keydown propagation — without the latter, pressing Enter on a focused link bubbles into the card\'s own onkeydown and opens the Lesson Drawer instead of following the link');
+});
+
+test('plannerCloseResourcePopover() clears whichever lesson\'s popover is open, and is a no-op when none is open', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.openResourcePopoverCardKey = 'sa_1';
+  sandbox.plannerCloseResourcePopover();
+  assert.strictEqual(st.plannerUi.openResourcePopoverCardKey, null);
+  assert.doesNotThrow(() => sandbox.plannerCloseResourcePopover(), 'closing again with nothing open must not throw');
+});
+
+test('the full render pipeline does not throw with a resource popover open on a scheduled unit lesson', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    resourceLinks: [{ label: 'A', url: 'https://example.com/a' }, { label: 'B', url: 'https://example.com/b' }],
+  };
+  st.plannerUi.openResourcePopoverCardKey = 'ul_1::' + WEEK_A + '::mon';
+  assert.doesNotThrow(() => realRenderView());
+});
+
+test('opening the popover on one occurrence of a multi-slot unit lesson does not also open it on that lesson\'s other occurrence or its sidebar pill', () => {
+  // Regression test: a unit lesson scheduled on two different days renders two separate
+  // occurrence cards for the same lesson.id (plus one sidebar pill) at once. The open-popover
+  // state must be keyed by the specific card clicked, not just the lesson id, or clicking one
+  // copy's indicator would pop the popover open on every other rendered copy of the same lesson.
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    resourceLinks: [{ label: 'A', url: 'https://example.com/a' }, { label: 'B', url: 'https://example.com/b' }],
+  };
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+
+  // Click the Monday occurrence's indicator (the literal card-key it renders with).
+  sandbox.plannerHandleResourceIndicatorClick('ul_1', 'ul_1::' + WEEK_A + '::mon');
+
+  const monHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  const wedHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'wed');
+  const pillHtml = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_1'));
+
+  assert.ok(monHtml.includes('planner-resource-popover'), 'the clicked Monday occurrence should show its popover');
+  assert.ok(!wedHtml.includes('planner-resource-popover'), 'the Wednesday occurrence of the same lesson must not also show a popover');
+  assert.ok(!pillHtml.includes('planner-resource-popover'), 'the sidebar pill for the same lesson must not also show a popover');
+});
+
+test('duplicating a lesson or unit does not carry over an open resource popover reference (sanity: popover state is keyed by id, and stale ids just render nothing)', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.openResourcePopoverCardKey = 'not-a-real-lesson-id';
+  assert.doesNotThrow(() => sandbox.plannerLessonCardHtml(lessonById('sa_1')));
+  assert.ok(!sandbox.plannerLessonCardHtml(lessonById('sa_1')).includes('planner-resource-popover'), 'a stale/foreign open id must not force this lesson\'s popover open');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────
