@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.62
+ * THIS FILE IS VERSION: 1.13.63
  * Last updated: 2026-07-26
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.63 - Lesson Drawer: Resource Links section moved up to sit right after Title/Subject/Day (standalone) or Title/Subject/Teaching status (unit lessons), instead of below the full ICs list and CD selections — visible without scrolling now, in both the standalone and unit Lesson Drawers; pure reordering, the section's own markup/behaviour is unchanged
  * v1.13.62 - Fix: sanitizeResourceUrl() (lesson Resource Links) no longer accepts a schemed url with no host (e.g. "https://" or "http://?x" would have been saved as a useless link), and no longer mistakes a scheme-less "host:port" url (e.g. "example.com:8080/worksheet") for an unrecognised URI scheme and wrongly rejects it — the two checks are now precise enough to tell a real scheme (javascript:, data:, mailto:, ...) apart from a port number
  * v1.13.61 - Fix: lesson Resource Links now reject javascript:/data:/other unsafe url schemes (a saved link renders as a real <a href>, so an unsafe scheme could execute in the app's own context if clicked) — new sanitizeResourceUrl() enforces http(s)-only, auto-prefixing a scheme-less url with https:// for convenience; applied both when adding a link and when normalizing restored/synced lesson data
  * v1.13.60 - Lessons can now carry Resource Links (label + url, no cap) — new "Resource Links" section in the Lesson Drawer for both standalone and unit lessons, persisted via the existing lessonPlans save path (no new Drive sync hook needed); unitDuplicateLesson, plannerDuplicateLesson, and unitDuplicate (via buildDuplicateLessonForUnit) all copy resourceLinks along with the other content fields, each duplicate getting a fresh, decoupled array
@@ -105,7 +106,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.62';
+const APP_VERSION = '1.13.63';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1451,6 +1452,9 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
           ${dayOptions}
         </select>
       </div>
+
+      ${plannerResourceLinksHtml(lesson)}
+
       <div class="form-group">
         <label class="form-label">Learning intention</label>
         <textarea class="form-input" rows="3" placeholder="What am I trying to get kids to do or learn?" oninput="plannerUpdateSelectedLessonField('intention', this.value)">${escapeHtml(lesson.intention || '')}</textarea>
@@ -1466,8 +1470,6 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
         </div>
         <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
       </div>
-
-      ${plannerResourceLinksHtml(lesson)}
 
       <div class="form-group" style="margin-bottom:0;display:flex;gap:10px;align-items:center">
         ${isTaught
@@ -3462,6 +3464,9 @@ function plannerUnitLessonFieldsHtml(lesson) {
           ${UNIT_TEACHING_STATUSES.map(s => `<option value="${s.key}" ${lesson.teachingStatus === s.key ? 'selected' : ''}>${s.label}</option>`).join('')}
         </select>
       </div>
+
+      ${plannerResourceLinksHtml(lesson)}
+
       <div class="form-group">
         <label class="form-label">Learning intention</label>
         <textarea class="form-input" rows="3" placeholder="What am I trying to get kids to do or learn?" oninput="plannerUpdateSelectedLessonField('intention', this.value)">${escapeHtml(lesson.intention || '')}</textarea>
@@ -3478,8 +3483,6 @@ function plannerUnitLessonFieldsHtml(lesson) {
         ${icYearToggle}
         <div id="planner-ic-results" class="planner-ic-results">${plannerICResultsHtml(lesson)}</div>
       </div>
-
-      ${plannerResourceLinksHtml(lesson)}
   `;
 }
 
