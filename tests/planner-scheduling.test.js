@@ -1595,6 +1595,49 @@ test('plannerSuggestICsFromIntention boosts a unit lesson\'s unit-linked CDs to 
   assert.ok(suggested.indexOf('ic_unitcd') < suggested.indexOf('ic_high'), 'the unit-linked descriptor\'s IC must be boosted ahead of the higher-scoring non-unit descriptor');
 });
 
+test('the boost survives into the rendered IC results HTML, not just the internal suggestedICIds order', () => {
+  // plannerICResultsHtml() rebuilds its own render order from resultIcs/scores rather
+  // than reusing suggestedICIds's order — so the internal-order assertion above isn't
+  // proof the teacher actually sees the boost. Use a fixture where both ICs land in the
+  // same confidence tier ("strong"), so a same-tier score-only sort would still put the
+  // higher-scoring non-unit IC first — a regression here would look identical to the
+  // pre-fix behaviour Codex flagged (the render path silently discarding the boost).
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'AC9M_HIGH', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value understanding for addition strategies' },
+    { Code: 'AC9M_UNITCD', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value for addition strategies' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_high', homeDescriptorId: 'AC9M_HIGH', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_unitcd', homeDescriptorId: 'AC9M_UNITCD', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    subject: 'Mathematics',
+    intention: 'Partition numbers using place value understanding for addition strategies.',
+  };
+  st.plannerUi.selectedLessonId = 'ul_1';
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['AC9M_UNITCD'] };
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  // Sanity: both ICs must land in the same ("strong") confidence tier, or this test
+  // would pass/fail for the wrong reason (tier bucketing, not the boost, deciding order).
+  const maxScore = Math.max(scores.AC9M_HIGH, scores.AC9M_UNITCD);
+  assert.ok(scores.AC9M_UNITCD / maxScore >= 0.8, 'fixture sanity: both descriptors must be in the "strong" tier for this test to isolate the boost');
+  assert.ok(scores.AC9M_HIGH > scores.AC9M_UNITCD, 'fixture sanity: AC9M_HIGH must still genuinely outscore AC9M_UNITCD');
+
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  const unitcdPos = html.indexOf('data-ic-id="ic_unitcd"');
+  const highPos = html.indexOf('data-ic-id="ic_high"');
+  assert.ok(unitcdPos !== -1 && highPos !== -1, 'both ICs should render');
+  assert.ok(unitcdPos < highPos, 'the unit-linked IC must render before the higher-scoring non-unit IC in the actual HTML, not just in the internal suggestedICIds order');
+});
+
 test('plannerSuggestICsFromIntention leaves standalone lessons (no unitId) ordered by score alone', () => {
   resetState();
   resetClassSettings();
