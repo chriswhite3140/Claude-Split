@@ -1631,11 +1631,21 @@ test('the boost survives into the rendered IC results HTML, not just the interna
   assert.ok(scores.AC9M_UNITCD / maxScore >= 0.8, 'fixture sanity: both descriptors must be in the "strong" tier for this test to isolate the boost');
   assert.ok(scores.AC9M_HIGH > scores.AC9M_UNITCD, 'fixture sanity: AC9M_HIGH must still genuinely outscore AC9M_UNITCD');
 
+  // The boost now surfaces as its own group ("Strong matches - this unit's CDs"),
+  // open by default and ordered ahead of the non-unit "Strong matches - other CDs"
+  // group (which starts collapsed) — see the group-based rendering tests below for
+  // full coverage of that structure. Here we just confirm the boosted IC's group
+  // heading precedes the other group's heading, and the boosted IC actually renders
+  // (open by default) while the higher-scoring non-unit IC does not until expanded.
   const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
-  const unitcdPos = html.indexOf('data-ic-id="ic_unitcd"');
-  const highPos = html.indexOf('data-ic-id="ic_high"');
-  assert.ok(unitcdPos !== -1 && highPos !== -1, 'both ICs should render');
-  assert.ok(unitcdPos < highPos, 'the unit-linked IC must render before the higher-scoring non-unit IC in the actual HTML, not just in the internal suggestedICIds order');
+  // escapeHtml() turns the heading's apostrophe into &#39; — match on "this unit" alone
+  // to avoid a false failure from the entity encoding rather than the actual ordering.
+  const linkedHeadingPos = html.indexOf('this unit');
+  const otherHeadingPos = html.indexOf('other CDs');
+  assert.ok(linkedHeadingPos !== -1 && otherHeadingPos !== -1, 'both group headings should render');
+  assert.ok(linkedHeadingPos < otherHeadingPos, 'the unit-linked group must be ordered ahead of the other-CDs group');
+  assert.ok(html.includes('data-ic-id="ic_unitcd"'), 'the unit-linked IC\'s group is open by default, so it should render');
+  assert.ok(!html.includes('data-ic-id="ic_high"'), 'the higher-scoring non-unit IC\'s group starts collapsed, so its row should not render yet');
 });
 
 test('plannerSuggestICsFromIntention leaves standalone lessons (no unitId) ordered by score alone', () => {
@@ -1686,6 +1696,218 @@ test('the unit-CD priority boost does not bypass the class year-level filter —
   const scores = getState().plannerUi.suggestionScores;
   assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'AC9M_YEAR5'), 'a unit-linked CD outside the class\'s year level must still be excluded — the boost only reorders descriptors that already passed the year filter');
   assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M_YEAR2'), 'the in-year descriptor should still be ranked normally');
+});
+
+// ── IC suggestion collapsible groups ─────────────────────────────────────────────
+console.log('Suggest from intention: collapsible result groups');
+
+// Four descriptors, one per bucket (strong/other x linked/not-linked-to-the-unit's-CDs),
+// scored via the same token-overlap mechanism as the other suggestion fixtures above.
+// Intention token budget (13 max: partition=2, numbers=2, using=1, place=1, value=1,
+// understanding=2, addition=2, strategies=2):
+//   CD_SL (strong, linked):     all 8 tokens -> 13 (ratio 1.00 -> strong)
+//   CD_SO (strong, other):      7 tokens (no "understanding") -> 11 (ratio 0.85 -> strong)
+//   CD_OL (other/weak, linked): 2 tokens ("addition","strategies") -> 4 (ratio 0.31 -> weak/other)
+//   CD_OO (other/weak, other):  3 tokens ("using","place","value") -> 3 (ratio 0.23 -> weak/other)
+function setFourBucketFixture() {
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'CD_SL', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value understanding for addition strategies' },
+    { Code: 'CD_SO', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value for addition strategies' },
+    { Code: 'CD_OL', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'addition strategies with regrouping' },
+    { Code: 'CD_OO', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'using place value concepts' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_sl', homeDescriptorId: 'CD_SL', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_so', homeDescriptorId: 'CD_SO', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_ol', homeDescriptorId: 'CD_OL', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_oo', homeDescriptorId: 'CD_OO', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    subject: 'Mathematics',
+    intention: 'Partition numbers using place value understanding for addition strategies.',
+  };
+  st.plannerUi.selectedLessonId = 'ul_1';
+}
+
+test('renders four collapsible groups in order (strong+linked, strong+other, other+linked, other+other), each headed with its count', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+
+  sandbox.plannerSuggestICsFromIntention();
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+
+  const posStrongLinked = html.indexOf('Strong matches - this unit');
+  const posStrongOther = html.indexOf('Strong matches - other CDs');
+  const posOtherLinked = html.indexOf('Other matches - this unit');
+  const posOtherOther = html.indexOf('Other matches - other CDs');
+  assert.ok([posStrongLinked, posStrongOther, posOtherLinked, posOtherOther].every(p => p !== -1), 'all four group headings should render');
+  assert.ok(posStrongLinked < posStrongOther && posStrongOther < posOtherLinked && posOtherLinked < posOtherOther, 'groups must render in order: strong+linked, strong+other, other+linked, other+other');
+  assert.ok(html.includes('this unit') && /\(1\)/.test(html.slice(posStrongLinked, posStrongLinked + 40)), 'each group heading should show its own count');
+});
+
+test('only the lead group (strong matches linked to this unit) is open by default — the other three start collapsed', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+
+  sandbox.plannerSuggestICsFromIntention();
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(html.includes('data-ic-id="ic_sl"'), 'the strong+linked IC should render — its group is open by default');
+  assert.ok(!html.includes('data-ic-id="ic_so"'), 'the strong+other IC should not render yet — collapsed by default');
+  assert.ok(!html.includes('data-ic-id="ic_ol"'), 'the other+linked IC should not render yet — collapsed by default');
+  assert.ok(!html.includes('data-ic-id="ic_oo"'), 'the other+other IC should not render yet — collapsed by default');
+});
+
+test('clicking a collapsed group heading (plannerToggleICSuggestionGroup) opens it and reveals its rows; clicking again re-collapses it', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+  sandbox.plannerSuggestICsFromIntention();
+
+  // The heading itself carries the exact onclick call to invoke — matching the toggle
+  // convention already used elsewhere in this file (fireInlineKeydown / extractAttr).
+  sandbox.plannerToggleICSuggestionGroup('strongOther', false);
+  let html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(html.includes('data-ic-id="ic_so"'), 'toggling the strong+other group open should reveal its row');
+
+  sandbox.plannerToggleICSuggestionGroup('strongOther', false);
+  html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(!html.includes('data-ic-id="ic_so"'), 'toggling it again should re-collapse it');
+});
+
+test('a group with zero matching results is omitted entirely, not shown with a "(0)" count', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  // Drop the other+linked IC entirely, so that bucket is empty.
+  st.instructionalComponents = st.instructionalComponents.filter(ic => ic.id !== 'ic_ol');
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+
+  sandbox.plannerSuggestICsFromIntention();
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(!html.includes('Other matches - this unit'), 'an empty group must not render at all, not even collapsed');
+  assert.ok(html.includes('Strong matches - this unit') && html.includes('Strong matches - other CDs') && html.includes('Other matches - other CDs'), 'the three non-empty groups should still render');
+});
+
+test('standalone lessons (and unit lessons with no linkedCDIds) collapse to two groups — Strong open, Other collapsed', () => {
+  resetState();
+  resetClassSettings();
+  setUnitCDBoostFixture(); // 'AC9M_HIGH' (strong) + 'AC9M_UNITCD' (weaker, still >0)
+  // unit_1.linkedCDIds stays [] (resetState()'s default) — no linked distinction to make.
+
+  sandbox.plannerSuggestICsFromIntention();
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(!html.includes("this unit") && !html.includes('other CDs'), 'with no linkedCDIds set, headings must not mention a unit-CD distinction at all');
+  assert.ok(html.includes('Strong matches (1)'), 'the strong group should render as a plain "Strong matches" heading');
+  assert.ok(html.includes('data-ic-id="ic_high"'), 'the Strong group is open by default');
+  assert.ok(!html.includes('data-ic-id="ic_unitcd"'), 'the Other group starts collapsed');
+});
+
+test('"+ Create new IC" stays pinned below all suggestion groups, open or collapsed', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+  sandbox.plannerSuggestICsFromIntention();
+  sandbox.plannerToggleICSuggestionGroup('otherOther', false); // open the very last group too
+
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  const createPos = html.indexOf('planner-ic-create');
+  const lastGroupPos = html.lastIndexOf('planner-ic-suggestion-group-heading');
+  assert.ok(createPos > lastGroupPos, 'the Create new IC action must render after every group, regardless of which groups are open');
+});
+
+test('group open/collapsed state resets to defaults on a fresh plannerSuggestICsFromIntention() run', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+  sandbox.plannerSuggestICsFromIntention();
+
+  sandbox.plannerToggleICSuggestionGroup('strongOther', false); // manually open a normally-collapsed group
+  assert.ok(sandbox.plannerICResultsHtml(lessonById('ul_1')).includes('data-ic-id="ic_so"'), 'sanity: the manual toggle should have opened it');
+
+  sandbox.plannerSuggestICsFromIntention(); // a fresh suggestion run
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(!html.includes('data-ic-id="ic_so"'), 'a fresh suggestion run must reset group state back to defaults, not carry over a previous manual toggle');
+});
+
+test('a tethered IC (suggested via linkedDescriptorIds) inherits confidence from whichever of its descriptors ranked best, not just its own homeDescriptorId', () => {
+  // getICsForDescriptor() can surface an IC because a *linked* descriptor matched, even
+  // when the IC's own homeDescriptorId never individually ranked (e.g. it's a different,
+  // unscored descriptor). Reading only scores[ic.homeDescriptorId] would then read 0 —
+  // "Other matches" and no confidence badge — even though the descriptor that actually
+  // caused the suggestion was a strong match.
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'CD_STRONG', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value understanding for addition strategies' },
+    // A real, existing descriptor (so the IC still passes plannerICResultsHtml's own
+    // subject filter, which looks it up by homeDescriptorId) but with wording that
+    // shares no tokens with the intention below, so it scores 0 and never ranks.
+    { Code: 'CD_UNSCORED_HOME', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'completely unrelated wording with no overlap at all' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_tethered', homeDescriptorId: 'CD_UNSCORED_HOME', linkedDescriptorIds: ['CD_STRONG'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    subject: 'Mathematics',
+    intention: 'Partition numbers using place value understanding for addition strategies.',
+  };
+  st.plannerUi.selectedLessonId = 'ul_1';
+  // unit_1.linkedCDIds stays [] (resetState()'s default) — isolates the score fix from
+  // the linked/unlinked bucketing.
+
+  sandbox.plannerSuggestICsFromIntention();
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(html.includes('Strong matches (1)'), 'the tethered IC must count as a strong match via CD_STRONG (the descriptor that actually caused it to be suggested)');
+  assert.ok(html.includes('data-ic-id="ic_tethered"'), 'the Strong group is open by default, so the tethered IC should render immediately, not be buried in a collapsed "Other matches" group');
+  assert.ok(/data-ic-id="ic_tethered"[\s\S]*?is-strong/.test(html), 'its confidence badge should read Strong, inherited from the linked descriptor that actually matched');
+});
+
+test('toggling a suggestion group restores focus to its heading, so a keyboard user isn\'t dropped out of the results list on every expand/collapse', () => {
+  resetState();
+  resetClassSettings();
+  setFourBucketFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_SL', 'CD_OL'] };
+  sandbox.plannerSuggestICsFromIntention();
+
+  // The stub results container's querySelector always returns null (no real DOM tree)
+  // — stand in for the heading button plannerToggleICSuggestionGroup would re-focus in
+  // a real browser, same convention used for the Drive sync indicator stub elsewhere.
+  const container = documentStub.getElementById('planner-ic-results');
+  const fakeHeading = { focused: false, focus() { this.focused = true; } };
+  const realQuerySelector = container.querySelector;
+  container.querySelector = (selector) => selector === '[data-group-key="strongOther"]' ? fakeHeading : realQuerySelector(selector);
+
+  sandbox.plannerToggleICSuggestionGroup('strongOther', false);
+
+  assert.ok(fakeHeading.focused, 'the toggled group\'s heading should be re-focused after the results container rebuild, same as plannerToggleICExpand already does for IC rows');
+  container.querySelector = realQuerySelector;
 });
 
 // ── Lesson Resource Links ────────────────────────────────────────────────────────

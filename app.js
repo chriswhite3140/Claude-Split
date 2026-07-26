@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.67
+ * THIS FILE IS VERSION: 1.13.69
  * Last updated: 2026-07-26
  * ============================================================
  *
@@ -10,6 +10,8 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.69 - Fix: two issues in the collapsible "Suggest from intention" groups added in 1.13.68. (1) An IC suggested via linkedDescriptorIds rather than its own homeDescriptorId (see getICsForDescriptor) was scored 0 and buried in a collapsed "Other matches" group even when the descriptor that actually caused it to be suggested was a strong match — confidence now uses whichever of the IC's home + linked descriptors ranked best. (2) Toggling a group heading rebuilds the results container's innerHTML, which was dropping keyboard focus out of the list entirely — the toggled heading is now re-focused afterward, matching the existing convention for IC rows (plannerToggleICExpand).
+ * v1.13.68 - Weekly Planner: "Suggest from intention" results now render as four collapsible groups instead of a flat list — Strong matches (this unit's CDs / other CDs) and Other matches (this unit's CDs / other CDs), in that order, each headed with its own count; a group with zero results is hidden entirely. Only the lead group (this unit's strong matches) is open by default, the rest start collapsed. Standalone lessons and units with no linkedCDIds set have no "linked" distinction to make, so the two "…this unit's CDs" groups are always empty and collapse away — leaving a plain Strong/Other split. "+ Create new IC" still stays pinned below all four groups. Group open/collapsed state resets to its defaults on every fresh suggestion run. The scoring/ranking logic, class-year-level filter, cross-year IC leak protection, and the separate "From this unit's CDs" browse-mode grouping are all unchanged.
  * v1.13.67 - Fix: the unit-CD priority boost added in 1.13.66 reordered plannerSuggestICsFromIntention's internal ranking, but plannerICResultsHtml() rebuilds its own render order from raw score and was silently discarding that boost — a weak-scoring unit-linked IC could render behind a higher-scoring non-unit one despite being "suggested" first internally. The render-path sort now applies the same unit-CD-membership check (reusing the existing linkedCDs/icBelongsToCDs from the unrelated "From this unit's CDs" browse group) within each confidence tier, so the boost is now actually visible to the teacher, not just present in internal state.
  * v1.13.66 - Weekly Planner: "Suggest from intention" (plannerSuggestICsFromIntention) now boosts descriptors in a unit lesson's own unit.linkedCDIds to the top of the ranked list, ahead of any other matching descriptor, regardless of token score — the unit's own CDs are what the unit is actually built around, so their ICs should surface first. Descriptors outside the unit's CDs are still scored and shown below, not hidden (priority boost, not a restriction); standalone lessons and units with no linkedCDIds set are unaffected. The class year-level filter and cross-year IC leak protection are unchanged and still take precedence — a unit-linked CD outside the class's year level is still excluded, not boosted in any way.
  * v1.13.65 - Fix: the lesson-card resource-link popover (added in 1.13.64) was keyed only by lesson id, so a unit lesson scheduled on more than one day (or shown both on the board and in the Unit lessons sidebar) popped its popover open on every rendered copy at once instead of just the one clicked — now keyed by a per-card identity; also stopped keydown propagation inside the popover itself (Enter on a focused link was bubbling into the card's own onkeydown and opening the Lesson Drawer instead of following the link), and removed the clipping that cut the popover off at the Week Board/Unit rail's edge (neither container relied on it for layout).
@@ -110,7 +112,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.67';
+const APP_VERSION = '1.13.69';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -410,7 +412,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null, openResourcePopoverCardKey: null },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null, openResourcePopoverCardKey: null, icSuggestionGroupsOpen: {} },
   unitPlans: loadUnitPlansState(),
   unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   driveSync: { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 },
@@ -1700,11 +1702,22 @@ function plannerICResultsHtml(lesson) {
     return `<div class="planner-ic-empty">${msg}</div>${createRow}`;
   }
 
+  // An IC can be suggested via linkedDescriptorIds rather than its own homeDescriptorId
+  // (see getICsForDescriptor) — if its home descriptor never individually ranked,
+  // scores[ic.homeDescriptorId] would read as 0 even though the linked descriptor that
+  // actually caused it to be suggested scored highly. Use whichever of the IC's home +
+  // linked descriptors ranked best, so a tethered IC's confidence reflects the match
+  // that surfaced it, not an unrelated (or unranked) home descriptor.
+  const icBestScore = ic => {
+    const codes = [ic.homeDescriptorId, ...(Array.isArray(ic.linkedDescriptorIds) ? ic.linkedDescriptorIds : [])];
+    return Math.max(0, ...codes.map(code => scores[code] || 0));
+  };
+
   // Per-IC confidence inherits the score of its home descriptor. Normalise against
   // the descriptors that actually render — some ranked descriptors have no loaded
   // ICs and never appear, and including their scores would deflate every tier.
   const maxScore = showConfidence
-    ? Math.max(1, ...resultIcs.map(ic => scores[ic.homeDescriptorId] || 0))
+    ? Math.max(1, ...resultIcs.map(icBestScore))
     : 0;
 
   const expandedId = state.plannerUi.expandedICId;
@@ -1807,27 +1820,56 @@ function plannerICResultsHtml(lesson) {
     return byName(resultIcs).map(ic => rowHtml(ic, null)).join('') + createRow;
   }
 
-  // Suggestion path: strong → partial → Create new IC → weak. Within each band,
-  // unit-linked CDs (same linkedCDs set as the "From this unit's CDs" browse group
-  // above) surface first, regardless of score — otherwise plannerSuggestICsFromIntention's
-  // priority boost would be computed but never actually visible, since this function
-  // rebuilds its own render order from scratch. Ties within (or without) that boost still
-  // fall back to raw score, same as before.
-  const ranked = resultIcs
-    .map(ic => ({ ic, score: scores[ic.homeDescriptorId] || 0 }))
-    .map(item => ({ ...item, conf: plannerConfidenceTier(item.score, maxScore) }))
-    .sort((a, b) => {
-      if (linkedCDs) {
-        const aIn = icBelongsToCDs(a.ic, linkedCDs), bIn = icBelongsToCDs(b.ic, linkedCDs);
-        if (aIn !== bIn) return aIn ? -1 : 1;
-      }
-      return b.score - a.score;
-    });
-  const nonWeak = ranked.filter(item => !item.conf || item.conf.key !== 'weak')
-    .map(item => rowHtml(item.ic, item.conf)).join('');
-  const weak = ranked.filter(item => item.conf && item.conf.key === 'weak')
-    .map(item => rowHtml(item.ic, item.conf)).join('');
-  return nonWeak + createRow + weak;
+  // Suggestion path: four collapsible groups — Strong vs Other confidence (a simpler
+  // two-way split than the strong/partial/weak tiers used elsewhere, just for this
+  // grouping), each further split by whether the IC belongs to this unit's linked CDs
+  // (same icBelongsToCDs/linkedCDs check as the "From this unit's CDs" browse group
+  // above). Order: strong+linked, strong+other, other+linked, other+other. A lesson
+  // with no unit (or a unit with no linkedCDIds) has linkedCDs === null, so every IC's
+  // "linked" test is always false — the two "…linked" groups stay permanently empty
+  // (and hidden), which naturally collapses this to a plain Strong/Other split without
+  // a separate branch.
+  const withConf = resultIcs.map(ic => {
+    const score = icBestScore(ic);
+    const conf = plannerConfidenceTier(score, maxScore);
+    return {
+      ic, score, conf,
+      isStrong: !!conf && conf.key === 'strong',
+      isLinked: !!linkedCDs && icBelongsToCDs(ic, linkedCDs),
+    };
+  });
+  const byScoreDesc = (a, b) => b.score - a.score;
+  const bucket = (isStrong, isLinked) => withConf.filter(x => x.isStrong === isStrong && x.isLinked === isLinked).sort(byScoreDesc);
+
+  // Defaults: the lead group (this unit's strong matches, or — with no linked-CD
+  // distinction to make — just the strong matches) opens by default; every other
+  // group starts collapsed.
+  const defaultOpen = {
+    strongLinked: true,
+    strongOther: !linkedCDs,
+    otherLinked: false,
+    otherOther: false,
+  };
+  const groups = [
+    { key: 'strongLinked', items: bucket(true, true), label: "Strong matches - this unit's CDs" },
+    { key: 'strongOther', items: bucket(true, false), label: linkedCDs ? 'Strong matches - other CDs' : 'Strong matches' },
+    { key: 'otherLinked', items: bucket(false, true), label: "Other matches - this unit's CDs" },
+    { key: 'otherOther', items: bucket(false, false), label: linkedCDs ? 'Other matches - other CDs' : 'Other matches' },
+  ];
+
+  return groups.map(({ key, items, label }) => {
+    if (!items.length) return ''; // a group with zero results is hidden entirely, not shown empty
+    const open = plannerIsICSuggestionGroupOpen(key, defaultOpen[key]);
+    return `
+      <div class="planner-ic-suggestion-group ${open ? 'is-open' : ''}">
+        <button type="button" class="planner-ic-suggestion-group-heading" data-group-key="${escapeHtml(key)}" aria-expanded="${open ? 'true' : 'false'}" onclick="plannerToggleICSuggestionGroup('${key}', ${defaultOpen[key]})">
+          <span class="planner-ic-suggestion-group-toggle" aria-hidden="true">${open ? '▾' : '▸'}</span>
+          <span class="planner-ic-suggestion-group-label">${escapeHtml(label)} (${items.length})</span>
+        </button>
+        ${open ? items.map(x => rowHtml(x.ic, x.conf)).join('') : ''}
+      </div>
+    `;
+  }).join('') + createRow;
 }
 
 // Expanded IC detail: description, example of success (green), common error
@@ -1880,6 +1922,37 @@ function plannerToggleICExpand(icId) {
   if (body && typeof body.focus === 'function') body.focus();
 }
 
+// A suggestion-path group (see plannerICResultsHtml) is open if explicitly toggled,
+// else falls back to its default for this render (the lead group open, others
+// collapsed — see defaultOpen there). Explicit toggles are keyed by group key alone,
+// not by lesson/result set, so they're reset back to defaults on every fresh
+// plannerSuggestICsFromIntention() run rather than persisting across unrelated
+// suggestions.
+function plannerIsICSuggestionGroupOpen(key, defaultOpen) {
+  const stored = state.plannerUi?.icSuggestionGroupsOpen?.[key];
+  return typeof stored === 'boolean' ? stored : !!defaultOpen;
+}
+
+// Re-render only the results container (same convention as plannerToggleICExpand)
+// so the search field's focus isn't disturbed by an innerHTML rebuild.
+function plannerToggleICSuggestionGroup(key, defaultOpen) {
+  plannerEnsureUiState();
+  const current = plannerIsICSuggestionGroupOpen(key, defaultOpen);
+  state.plannerUi.icSuggestionGroupsOpen[key] = !current;
+  const lesson = state.lessonPlans.find(item => item.id === state.plannerUi.selectedLessonId);
+  const container = document.getElementById('planner-ic-results');
+  if (!lesson || !container) return;
+  const scrollTop = container.scrollTop;
+  container.innerHTML = plannerICResultsHtml(lesson);
+  container.scrollTop = scrollTop;
+  // The innerHTML rebuild above removes the focused heading button from the DOM —
+  // re-focus its replacement so a keyboard user isn't dropped out of the results list
+  // after every expand/collapse (same convention as plannerToggleICExpand for rows).
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(key) : key;
+  const heading = container.querySelector('[data-group-key="' + sel + '"]');
+  if (heading && typeof heading.focus === 'function') heading.focus();
+}
+
 // Bucket a descriptor's intention-match score into a three-tier confidence label,
 // normalised to the top-scoring rendered suggestion (raw scores scale with
 // intention length, so absolute cut-offs don't generalise). Boundaries from the
@@ -1914,6 +1987,7 @@ function plannerEnsureUiState() {
   if (typeof state.plannerUi.datePickerOpen !== 'boolean') state.plannerUi.datePickerOpen = false;
   if (!isValidIsoDate(state.plannerUi.datePickerMonth)) state.plannerUi.datePickerMonth = null;
   if (typeof state.plannerUi.openResourcePopoverCardKey === 'undefined') state.plannerUi.openResourcePopoverCardKey = null;
+  if (!state.plannerUi.icSuggestionGroupsOpen || typeof state.plannerUi.icSuggestionGroupsOpen !== 'object') state.plannerUi.icSuggestionGroupsOpen = {};
 }
 
 function plannerSelectedWeekKey() {
@@ -2768,6 +2842,10 @@ function plannerSuggestICsFromIntention() {
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = suggested;
   state.plannerUi.suggestionScores = scores;
+  // Fresh suggestion run — collapsible group open/closed state should reset to its
+  // defaults (see plannerICResultsHtml), not carry over toggles from a previous,
+  // unrelated set of suggestions.
+  state.plannerUi.icSuggestionGroupsOpen = {};
 
   const searchInput = document.getElementById('planner-ic-search');
   if (searchInput) searchInput.value = '';
