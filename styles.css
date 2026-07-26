@@ -1350,6 +1350,66 @@ body[data-text-size="large"] {
   border-left: 3px solid var(--status-warning-border);
 }
 
+/* Small link icon on a lesson card/pill, shown only when resourceLinks is non-empty.
+   Exactly one link opens directly; more than one opens the popover below instead of
+   guessing which one the teacher meant. */
+.planner-resource-indicator-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.planner-resource-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text3);
+  border-radius: 4px;
+  padding: 1px 4px;
+  line-height: 1;
+  cursor: pointer;
+}
+.planner-resource-indicator:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+  background: var(--surface);
+}
+.planner-resource-indicator-count {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+}
+.planner-resource-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 160px;
+  max-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+  padding: 6px;
+}
+.planner-resource-popover-link {
+  display: block;
+  font-size: 12px;
+  color: var(--blue);
+  text-decoration: none;
+  padding: 4px 6px;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-resource-popover-link:hover {
+  background: var(--surface-alt);
+  text-decoration: underline;
+}
+
 /* ── Unit lessons on the weekly board (PR2 scheduling) ── */
 /* Unit-linked card: coloured left border + unit chip to distinguish from standalone. */
 .planner-lesson-card.is-unit {

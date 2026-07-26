@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.63
+ * THIS FILE IS VERSION: 1.13.64
  * Last updated: 2026-07-26
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.64 - Weekly Planner: lesson cards (Week Board day cards, standalone and unit occurrence, plus the Unit lessons sidebar pills) now show a small link icon when a lesson has Resource Links — a single link opens directly in a new tab, more than one opens a small popover listing them (label + link) instead of guessing; clicking the icon stops propagation so it never also opens the Lesson Drawer, matching the existing pattern used for Duplicate/Delete on these cards. The Lesson Drawer's own Resource Links section and drag-to-reschedule are unchanged.
  * v1.13.63 - Lesson Drawer: Resource Links section moved up to sit right after Title/Subject/Day (standalone) or Title/Subject/Teaching status (unit lessons), instead of below the full ICs list and CD selections — visible without scrolling now, in both the standalone and unit Lesson Drawers; pure reordering, the section's own markup/behaviour is unchanged
  * v1.13.62 - Fix: sanitizeResourceUrl() (lesson Resource Links) no longer accepts a schemed url with no host (e.g. "https://" or "http://?x" would have been saved as a useless link), and no longer mistakes a scheme-less "host:port" url (e.g. "example.com:8080/worksheet") for an unrecognised URI scheme and wrongly rejects it — the two checks are now precise enough to tell a real scheme (javascript:, data:, mailto:, ...) apart from a port number
  * v1.13.61 - Fix: lesson Resource Links now reject javascript:/data:/other unsafe url schemes (a saved link renders as a real <a href>, so an unsafe scheme could execute in the app's own context if clicked) — new sanitizeResourceUrl() enforces http(s)-only, auto-prefixing a scheme-less url with https:// for convenience; applied both when adding a link and when normalizing restored/synced lesson data
@@ -106,7 +107,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.63';
+const APP_VERSION = '1.13.64';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -406,7 +407,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null, openResourcePopoverLessonId: null },
   unitPlans: loadUnitPlansState(),
   unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   driveSync: { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 },
@@ -1089,6 +1090,11 @@ const PLANNER_CALENDAR_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 2
   <line x1="3" y1="10" x2="21" y2="10"></line>
 </svg>`;
 
+const PLANNER_LINK_ICON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px">
+  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+</svg>`;
+
 // Escape a value for safe interpolation inside a single-quoted JS string in an
 // inline on* handler (guards against ids containing a backslash or apostrophe).
 function plannerJsStr(value) {
@@ -1315,6 +1321,7 @@ function plannerLessonCardHtml(lesson) {
         <div class="planner-lesson-card-tags">
           <span class="planner-status-pill ${isTaught ? 'is-taught' : ''}">${isTaught ? 'Taught' : 'Planned'}</span>
           ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
+          ${plannerResourceIndicatorHtml(lesson)}
         </div>
       </div>
       <div class="planner-inline-actions">
@@ -1335,6 +1342,64 @@ function plannerCardOpenAttrs(onclickExpr) {
   return `role="button" tabindex="0"
         onclick="${onclickExpr}"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${onclickExpr}}"`;
+}
+
+// Small resource-links indicator, shown on a lesson card only when it has links —
+// shared by the Week Board day cards (standalone + unit occurrence) and the Unit
+// lessons sidebar pills. Click behaviour: exactly one link opens it directly in a
+// new tab; more than one opens a small popover listing them instead of guessing
+// which to open. Always stops propagation so it never also triggers the card's own
+// open-drawer click, matching the pattern used for other in-card controls (e.g. the
+// ✕ remove button on unit occurrence cards).
+function plannerResourceIndicatorHtml(lesson) {
+  const links = Array.isArray(lesson.resourceLinks) ? lesson.resourceLinks : [];
+  if (!links.length) return '';
+  const isOpen = state.plannerUi?.openResourcePopoverLessonId === lesson.id;
+  const label = links.length === 1 ? 'Open resource link' : `${links.length} resource links`;
+  return `
+    <span class="planner-resource-indicator-wrap">
+      <button class="planner-resource-indicator" type="button" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"
+        onclick="event.stopPropagation();plannerHandleResourceIndicatorClick('${plannerJsStr(lesson.id)}')"
+        onkeydown="event.stopPropagation()">${PLANNER_LINK_ICON_SVG}${links.length > 1 ? `<span class="planner-resource-indicator-count">${links.length}</span>` : ''}</button>
+      ${isOpen ? plannerResourcePopoverHtml(links) : ''}
+    </span>
+  `;
+}
+
+function plannerResourcePopoverHtml(links) {
+  return `
+    <div class="planner-resource-popover" onclick="event.stopPropagation()">
+      ${links.map(link => `
+        <a class="planner-resource-popover-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label || link.url)}</a>
+      `).join('')}
+    </div>
+  `;
+}
+
+// Exactly one link: no need to make the teacher choose — open it straight away.
+// More than one: show the popover instead of guessing which one they meant.
+function plannerHandleResourceIndicatorClick(lessonId) {
+  const lesson = state.lessonPlans.find(l => l.id === lessonId);
+  if (!lesson) return;
+  const links = Array.isArray(lesson.resourceLinks) ? lesson.resourceLinks : [];
+  if (!links.length) return;
+  if (links.length === 1) {
+    window.open(links[0].url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  plannerToggleResourcePopover(lessonId);
+}
+
+function plannerToggleResourcePopover(lessonId) {
+  plannerEnsureUiState();
+  state.plannerUi.openResourcePopoverLessonId = state.plannerUi.openResourcePopoverLessonId === lessonId ? null : lessonId;
+  renderView();
+}
+
+function plannerCloseResourcePopover() {
+  if (!state.plannerUi || !state.plannerUi.openResourcePopoverLessonId) return;
+  state.plannerUi.openResourcePopoverLessonId = null;
+  renderView();
 }
 
 // A unit lesson's card as it appears on the weekly board, scheduled for one slot
@@ -1361,6 +1426,7 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
         <div class="planner-lesson-card-tags">
           <span class="planner-unit-chip" title="Unit: ${escapeHtml(unitTitle)}">${escapeHtml(unitTitle)}</span>
           ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
+          ${plannerResourceIndicatorHtml(lesson)}
         </div>
         <div class="planner-card-actions">
           <button class="planner-occ-remove" type="button" title="Remove from this day"
@@ -1410,6 +1476,7 @@ function plannerUnitSidebarLessonHtml(lesson) {
         <div class="planner-unit-pill-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-unit-pill-meta">${escapeHtml(lesson.subject || 'No subject')} · ${icCount} IC${icCount === 1 ? '' : 's'}</div>
       </div>
+      ${plannerResourceIndicatorHtml(lesson)}
       <span class="planner-unit-slot-count ${slotCount ? 'is-scheduled' : ''}" title="Scheduled on ${slotCount} day${slotCount === 1 ? '' : 's'}">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
     </div>
   `;
@@ -1823,6 +1890,7 @@ function plannerEnsureUiState() {
   if (!isValidIsoDate(state.plannerUi.weekKey)) state.plannerUi.weekKey = plannerNormalizeWeekStart(loadPlannerWeek());
   if (typeof state.plannerUi.datePickerOpen !== 'boolean') state.plannerUi.datePickerOpen = false;
   if (!isValidIsoDate(state.plannerUi.datePickerMonth)) state.plannerUi.datePickerMonth = null;
+  if (typeof state.plannerUi.openResourcePopoverLessonId === 'undefined') state.plannerUi.openResourcePopoverLessonId = null;
 }
 
 function plannerSelectedWeekKey() {
@@ -2005,6 +2073,12 @@ document.addEventListener('click', function() {
   // views would still run plannerCloseDatePicker()'s renderView() on whatever screen
   // the nav click just landed on.
   if (state.currentView === 'planner' && state.plannerUi && state.plannerUi.datePickerOpen) plannerCloseDatePicker();
+});
+
+// Same outside-click-closes convention as the date picker above, kept as its own
+// listener rather than folded into that one so the two stay independent.
+document.addEventListener('click', function() {
+  if (state.currentView === 'planner' && state.plannerUi && state.plannerUi.openResourcePopoverLessonId) plannerCloseResourcePopover();
 });
 
 function plannerOpenLessonDrawer(lessonId) {
