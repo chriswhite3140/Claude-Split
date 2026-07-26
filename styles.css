@@ -1122,6 +1122,17 @@ body[data-text-size="large"] {
   min-height: 300px;
 }
 
+/* Override the base .card's overflow: hidden (used elsewhere only to round off square
+   child corners, which the box's own border-radius already does on its own background/
+   border regardless of this property) — these two cards can host an absolutely
+   positioned resource-link popover that needs to render past a card/pill's edge
+   instead of being clipped. Neither container relies on clipping for layout (no fixed
+   height, align-items: start above), so this is safe. */
+.planner-shell-board,
+.planner-unit-rail {
+  overflow: visible;
+}
+
 .planner-shell-placeholder {
   padding: 14px;
   color: var(--text3);
@@ -1381,7 +1392,7 @@ body[data-text-size="large"] {
 .planner-resource-popover {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   z-index: 20;
   min-width: 160px;
   max-width: 240px;
