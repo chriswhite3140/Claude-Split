@@ -1555,6 +1555,139 @@ test('a tethered IC whose home descriptor cannot be resolved fails open (still s
   assert.ok(suggested.includes('ic_orphaned_home'), 'a data gap (unresolvable home descriptor) should not silently hide the IC');
 });
 
+// Fixture for the unit-CD priority boost: one descriptor that scores much higher on
+// tokens (AC9M_HIGH) and one that scores lower but non-zero (AC9M_UNITCD) — the unit
+// links to the lower-scoring one, so a passing test must show the boost actually
+// overriding score order, not just happening to agree with it.
+function setUnitCDBoostFixture() {
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'AC9M_HIGH', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value understanding' },
+    { Code: 'AC9M_UNITCD', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'addition strategies for whole numbers' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_high', homeDescriptorId: 'AC9M_HIGH', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_unitcd', homeDescriptorId: 'AC9M_UNITCD', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    subject: 'Mathematics',
+    intention: 'Partition numbers using place value understanding for addition strategies.',
+  };
+  st.plannerUi.selectedLessonId = 'ul_1';
+}
+
+test('plannerSuggestICsFromIntention boosts a unit lesson\'s unit-linked CDs to the top, regardless of token score', () => {
+  resetState();
+  resetClassSettings();
+  setUnitCDBoostFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['AC9M_UNITCD'] };
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  const suggested = getState().plannerUi.suggestedICIds;
+
+  assert.ok(scores.AC9M_HIGH > scores.AC9M_UNITCD, 'sanity check: AC9M_HIGH must genuinely outscore AC9M_UNITCD on tokens alone — scoring itself is untouched');
+  assert.ok(suggested.includes('ic_high') && suggested.includes('ic_unitcd'), 'the non-unit descriptor\'s IC must still be included, not hidden — this is a priority boost, not a restriction');
+  assert.ok(suggested.indexOf('ic_unitcd') < suggested.indexOf('ic_high'), 'the unit-linked descriptor\'s IC must be boosted ahead of the higher-scoring non-unit descriptor');
+});
+
+test('the boost survives into the rendered IC results HTML, not just the internal suggestedICIds order', () => {
+  // plannerICResultsHtml() rebuilds its own render order from resultIcs/scores rather
+  // than reusing suggestedICIds's order — so the internal-order assertion above isn't
+  // proof the teacher actually sees the boost. Use a fixture where both ICs land in the
+  // same confidence tier ("strong"), so a same-tier score-only sort would still put the
+  // higher-scoring non-unit IC first — a regression here would look identical to the
+  // pre-fix behaviour Codex flagged (the render path silently discarding the boost).
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'AC9M_HIGH', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value understanding for addition strategies' },
+    { Code: 'AC9M_UNITCD', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value for addition strategies' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_high', homeDescriptorId: 'AC9M_HIGH', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_unitcd', homeDescriptorId: 'AC9M_UNITCD', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx],
+    subject: 'Mathematics',
+    intention: 'Partition numbers using place value understanding for addition strategies.',
+  };
+  st.plannerUi.selectedLessonId = 'ul_1';
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['AC9M_UNITCD'] };
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  // Sanity: both ICs must land in the same ("strong") confidence tier, or this test
+  // would pass/fail for the wrong reason (tier bucketing, not the boost, deciding order).
+  const maxScore = Math.max(scores.AC9M_HIGH, scores.AC9M_UNITCD);
+  assert.ok(scores.AC9M_UNITCD / maxScore >= 0.8, 'fixture sanity: both descriptors must be in the "strong" tier for this test to isolate the boost');
+  assert.ok(scores.AC9M_HIGH > scores.AC9M_UNITCD, 'fixture sanity: AC9M_HIGH must still genuinely outscore AC9M_UNITCD');
+
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  const unitcdPos = html.indexOf('data-ic-id="ic_unitcd"');
+  const highPos = html.indexOf('data-ic-id="ic_high"');
+  assert.ok(unitcdPos !== -1 && highPos !== -1, 'both ICs should render');
+  assert.ok(unitcdPos < highPos, 'the unit-linked IC must render before the higher-scoring non-unit IC in the actual HTML, not just in the internal suggestedICIds order');
+});
+
+test('plannerSuggestICsFromIntention leaves standalone lessons (no unitId) ordered by score alone', () => {
+  resetState();
+  resetClassSettings();
+  setUnitCDBoostFixture();
+  const st = getState();
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['AC9M_UNITCD'] };
+  // Same intention/subject, but on the standalone lesson instead of the unit one.
+  const saIdx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[saIdx] = { ...st.lessonPlans[saIdx], subject: 'Mathematics', intention: st.lessonPlans.find(l => l.id === 'ul_1').intention };
+  st.plannerUi.selectedLessonId = 'sa_1';
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.indexOf('ic_high') < suggested.indexOf('ic_unitcd'), 'a standalone lesson has no owning unit to boost from, so the higher-scoring descriptor must still lead');
+});
+
+test('plannerSuggestICsFromIntention leaves a unit lesson ordered by score alone when its unit has no linkedCDIds set', () => {
+  resetState();
+  resetClassSettings();
+  setUnitCDBoostFixture();
+  // unit_1.linkedCDIds is [] by default in resetState()'s fixture — no boost should apply.
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.indexOf('ic_high') < suggested.indexOf('ic_unitcd'), 'with no linkedCDIds set on the unit, ordering must be unchanged from today (score order)');
+});
+
+test('the unit-CD priority boost does not bypass the class year-level filter — a unit-linked CD outside the class year is still excluded', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'AC9M_YEAR5', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 5', Descriptor: 'partition numbers using place value understanding' },
+    { Code: 'AC9M_YEAR2', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 2', Descriptor: 'partition numbers using place value understanding' },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partition numbers using place value understanding.' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  // The unit is built around the Year 5 descriptor, but this class is set to Year 2.
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['AC9M_YEAR5'] };
+  sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'AC9M_YEAR5'), 'a unit-linked CD outside the class\'s year level must still be excluded — the boost only reorders descriptors that already passed the year filter');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M_YEAR2'), 'the in-year descriptor should still be ranked normally');
+});
+
 // ── Lesson Resource Links ────────────────────────────────────────────────────────
 console.log('Lesson resource links');
 

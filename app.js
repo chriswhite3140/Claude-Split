@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.65
+ * THIS FILE IS VERSION: 1.13.67
  * Last updated: 2026-07-26
  * ============================================================
  *
@@ -10,6 +10,8 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.67 - Fix: the unit-CD priority boost added in 1.13.66 reordered plannerSuggestICsFromIntention's internal ranking, but plannerICResultsHtml() rebuilds its own render order from raw score and was silently discarding that boost — a weak-scoring unit-linked IC could render behind a higher-scoring non-unit one despite being "suggested" first internally. The render-path sort now applies the same unit-CD-membership check (reusing the existing linkedCDs/icBelongsToCDs from the unrelated "From this unit's CDs" browse group) within each confidence tier, so the boost is now actually visible to the teacher, not just present in internal state.
+ * v1.13.66 - Weekly Planner: "Suggest from intention" (plannerSuggestICsFromIntention) now boosts descriptors in a unit lesson's own unit.linkedCDIds to the top of the ranked list, ahead of any other matching descriptor, regardless of token score — the unit's own CDs are what the unit is actually built around, so their ICs should surface first. Descriptors outside the unit's CDs are still scored and shown below, not hidden (priority boost, not a restriction); standalone lessons and units with no linkedCDIds set are unaffected. The class year-level filter and cross-year IC leak protection are unchanged and still take precedence — a unit-linked CD outside the class's year level is still excluded, not boosted in any way.
  * v1.13.65 - Fix: the lesson-card resource-link popover (added in 1.13.64) was keyed only by lesson id, so a unit lesson scheduled on more than one day (or shown both on the board and in the Unit lessons sidebar) popped its popover open on every rendered copy at once instead of just the one clicked — now keyed by a per-card identity; also stopped keydown propagation inside the popover itself (Enter on a focused link was bubbling into the card's own onkeydown and opening the Lesson Drawer instead of following the link), and removed the clipping that cut the popover off at the Week Board/Unit rail's edge (neither container relied on it for layout).
  * v1.13.64 - Weekly Planner: lesson cards (Week Board day cards, standalone and unit occurrence, plus the Unit lessons sidebar pills) now show a small link icon when a lesson has Resource Links — a single link opens directly in a new tab, more than one opens a small popover listing them (label + link) instead of guessing; clicking the icon stops propagation so it never also opens the Lesson Drawer, matching the existing pattern used for Duplicate/Delete on these cards. The Lesson Drawer's own Resource Links section and drag-to-reschedule are unchanged.
  * v1.13.63 - Lesson Drawer: Resource Links section moved up to sit right after Title/Subject/Day (standalone) or Title/Subject/Teaching status (unit lessons), instead of below the full ICs list and CD selections — visible without scrolling now, in both the standalone and unit Lesson Drawers; pure reordering, the section's own markup/behaviour is unchanged
@@ -108,7 +110,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.65';
+const APP_VERSION = '1.13.67';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1806,11 +1808,21 @@ function plannerICResultsHtml(lesson) {
   }
 
   // Suggestion path: strong → partial → Create new IC → weak. Within each band,
-  // order by raw score so the closest matches surface first.
+  // unit-linked CDs (same linkedCDs set as the "From this unit's CDs" browse group
+  // above) surface first, regardless of score — otherwise plannerSuggestICsFromIntention's
+  // priority boost would be computed but never actually visible, since this function
+  // rebuilds its own render order from scratch. Ties within (or without) that boost still
+  // fall back to raw score, same as before.
   const ranked = resultIcs
     .map(ic => ({ ic, score: scores[ic.homeDescriptorId] || 0 }))
     .map(item => ({ ...item, conf: plannerConfidenceTier(item.score, maxScore) }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      if (linkedCDs) {
+        const aIn = icBelongsToCDs(a.ic, linkedCDs), bIn = icBelongsToCDs(b.ic, linkedCDs);
+        if (aIn !== bIn) return aIn ? -1 : 1;
+      }
+      return b.score - a.score;
+    });
   const nonWeak = ranked.filter(item => !item.conf || item.conf.key !== 'weak')
     .map(item => rowHtml(item.ic, item.conf)).join('');
   const weak = ranked.filter(item => item.conf && item.conf.key === 'weak')
@@ -2713,12 +2725,27 @@ function plannerSuggestICsFromIntention() {
   // no restriction — same behaviour as before this field existed.
   const classYearLevels = getActiveGroupYearLevels();
 
+  // For a unit lesson, descriptors the unit is actually built around (unit.linkedCDIds)
+  // should surface before any other matching descriptor, regardless of token score —
+  // a priority boost, not a restriction. Descriptors outside the unit's CDs are still
+  // scored and shown below, same as today. null for standalone lessons and units with
+  // no linkedCDIds set yet, leaving those cases' ordering unchanged.
+  const unit = unitForLesson(lesson);
+  const unitCDIds = unit && Array.isArray(unit.linkedCDIds) && unit.linkedCDIds.length
+    ? new Set(unit.linkedCDIds) : null;
+
   const ranked = state.curriculumCodes
     .filter(c => c.Subject === lesson.subject && isCurriculumCodeEnabled(c))
     .filter(c => plannerDescriptorMatchesYearLevels(c, classYearLevels))
     .map(row => ({ code: row.Code, score: plannerScoreDescriptor(row, tokens) }))
     .filter(r => r.score > 0)
-    .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code))
+    .sort((a, b) => {
+      if (unitCDIds) {
+        const aIn = unitCDIds.has(a.code), bIn = unitCDIds.has(b.code);
+        if (aIn !== bIn) return aIn ? -1 : 1;
+      }
+      return b.score - a.score || a.code.localeCompare(b.code);
+    })
     .slice(0, 8);
 
   const scores = {};
