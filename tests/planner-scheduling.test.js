@@ -1712,13 +1712,23 @@ test('plannerResourceLinksHtml renders links as anchors with a remove control, a
   assert.ok(emptyHtml.includes('No resource links yet.'));
 });
 
-test('the Lesson Drawer renders the Resource Links section for both standalone and unit lessons', () => {
+test('the Lesson Drawer renders the Resource Links section for both standalone and unit lessons, positioned near the top (before Learning intention/ICs, not buried at the bottom)', () => {
   resetState();
   const standaloneHtml = sandbox.plannerStandaloneLessonEditHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
   assert.ok(standaloneHtml.includes('Resource Links'), 'standalone lesson drawer should include the section');
+  assert.ok(
+    standaloneHtml.indexOf('>Day<') < standaloneHtml.indexOf('Resource Links')
+    && standaloneHtml.indexOf('Resource Links') < standaloneHtml.indexOf('Learning intention'),
+    'Resource Links should render right after Title/Subject/Day, before Learning intention and ICs — not at the bottom of the drawer'
+  );
 
   const unitFieldsHtml = sandbox.plannerUnitLessonFieldsHtml(lessonById('ul_1'));
   assert.ok(unitFieldsHtml.includes('Resource Links'), 'unit lesson fields (shared by both unit drawers) should include the section');
+  assert.ok(
+    unitFieldsHtml.indexOf('Teaching status') < unitFieldsHtml.indexOf('Resource Links')
+    && unitFieldsHtml.indexOf('Resource Links') < unitFieldsHtml.indexOf('Learning intention'),
+    'Resource Links should render right after Title/Subject/Teaching status, before Learning intention and ICs — not at the bottom of the drawer'
+  );
 });
 
 test('unitDuplicateLesson copies resourceLinks with a fresh, decoupled array', () => {
