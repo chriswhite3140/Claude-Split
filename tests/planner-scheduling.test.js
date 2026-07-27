@@ -3005,6 +3005,77 @@ test('the full render pipeline does not throw with a multi-slot lesson mid-way t
   assert.doesNotThrow(() => realRenderView(), 'the lesson drawer (edit mode, showing the schedule chips) should render without throwing');
 });
 
+// ── Reconciling legacy/stale "Taught" status against per-occurrence flags ───────
+test('normalizeLessonPlan migrates a legacy multi-slot lesson stuck on "taught" with zero per-occurrence flags by backfilling every occurrence', () => {
+  const lesson = sandbox.normalizeLessonPlan({
+    id: 'legacy1', unitId: 'unit_1', teachingStatus: 'taught',
+    scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'wed' }, { weekKey: WEEK_A, dayKey: 'fri' }],
+  });
+  eqJson(lesson.scheduledSlots, [
+    { weekKey: WEEK_A, dayKey: 'mon', taught: true },
+    { weekKey: WEEK_A, dayKey: 'wed', taught: true },
+    { weekKey: WEEK_A, dayKey: 'fri', taught: true },
+  ], 'a pre-existing "taught" lesson with no per-occurrence data at all should have every occurrence backfilled, so its badge reads "Taught 3/3" instead of the contradictory "Taught 0/3"');
+  assert.strictEqual(lesson.teachingStatus, 'taught', 'the migration only fills in occurrence flags — it must not change the status itself');
+});
+
+test('normalizeLessonPlan does not touch occurrence flags for statuses other than "taught", even with zero occurrences marked', () => {
+  const lesson = sandbox.normalizeLessonPlan({
+    id: 'legacy2', unitId: 'unit_1', teachingStatus: 'partially-taught',
+    scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'wed' }],
+  });
+  eqJson(lesson.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon' }, { weekKey: WEEK_A, dayKey: 'wed' }], 'the legacy-data migration is scoped to teachingStatus === "taught" only — a stale "partially-taught" with 0 marked is the normal, documented un-marking edge case, not something to backfill');
+});
+
+test('normalizeLessonPlan does not re-backfill a lesson that already has a real mix of taught/untaught occurrences', () => {
+  const lesson = sandbox.normalizeLessonPlan({
+    id: 'legacy3', unitId: 'unit_1', teachingStatus: 'taught',
+    scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }, { weekKey: WEEK_A, dayKey: 'wed' }],
+  });
+  eqJson(lesson.scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }, { weekKey: WEEK_A, dayKey: 'wed' }], 'once at least one occurrence has real per-occurrence data, the blanket legacy migration must not fire and overwrite the genuinely-untaught occurrence');
+});
+
+test('scheduling a new occurrence onto an already fully-taught multi-slot lesson re-derives status down to partially-taught, rather than leaving a stale "Taught" label next to the new unmarked occurrence', () => {
+  resetState();
+  const st = getState();
+  st.lessonPlans[st.lessonPlans.findIndex(l => l.id === 'ul_1')].teachingStatus = 'planned';
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'wed');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'sanity: both of two occurrences taught');
+
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'fri');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'partially-taught', 'adding a third, not-yet-happened occurrence to a fully-taught lesson must pull the status back down to partially-taught');
+  eqJson(lessonById('ul_1').scheduledSlots, [
+    { weekKey: WEEK_A, dayKey: 'mon', taught: true },
+    { weekKey: WEEK_A, dayKey: 'wed', taught: true },
+    { weekKey: WEEK_A, dayKey: 'fri' },
+  ], 'the two already-taught occurrences must keep their flags; the brand-new occurrence must NOT be silently marked taught just because the lesson used to read as fully taught');
+});
+
+test('scheduling a second occurrence onto a legacy single-slot lesson manually marked taught backfills the original occurrence and derives partially-taught for the new one', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], teachingStatus: 'taught', scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon' }] };
+
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'partially-taught', 'a lesson that was "taught" back when it only had one occurrence must not keep reading as fully taught once a second, not-yet-happened occurrence is added');
+  eqJson(lessonById('ul_1').scheduledSlots, [
+    { weekKey: WEEK_A, dayKey: 'mon', taught: true },
+    { weekKey: WEEK_A, dayKey: 'wed' },
+  ], 'the pre-existing occurrence inherits the old whole-lesson "taught" status; the newly-scheduled occurrence must stay untaught');
+});
+
+test('scheduling a new occurrence onto a lesson that is not currently "taught" still leaves 0-taught statuses like Reteach untouched (no regression from the re-derive call)', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'mon');
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'ul_2 starts as Reteach in the fixture and must stay Reteach after its first slot is scheduled');
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'wed');
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'and stay Reteach after a second occurrence is added too, since nothing has been marked taught yet');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

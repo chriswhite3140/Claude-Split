@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.76
+ * THIS FILE IS VERSION: 1.13.77
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.77 - Fix two review findings on 1.13.76's per-occurrence taught tracking: a multi-slot lesson could be left showing a contradictory "Taught" label alongside a fraction less than N/N. (1) Existing data — a multi-slot lesson whose teachingStatus was already 'taught' before per-occurrence tracking existed (or set manually since, without ever using the new toggle) had no per-occurrence flags at all, so it rendered "Taught 0/N" with every occurrence card showing untaught. normalizeLessonPlan now backfills every occurrence to taught:true the first time it sees this exact combination (teachingStatus 'taught', more than one slot, not one of them flagged) — a one-time migration that can't re-fire once any occurrence has real per-occurrence data, so it never touches the normal 'partially-taught'-with-0-marked edge case. (2) Scheduling a new occurrence — plannerScheduleUnitLesson appended the new (necessarily untaught) slot without re-deriving teachingStatus, so scheduling a 3rd occurrence onto an already fully-taught 2-slot lesson left it reading "Taught 2/3", and adding a 2nd occurrence to a legacy single-slot "taught" lesson left it "Taught 0/2". It now re-derives status after appending (backfilling only the pre-existing occurrences when none were flagged yet — never the brand-new one, which correctly stays untaught), so both cases now correctly settle on "Partially taught". Neither fix touches plannerUnscheduleSlot, plannerMoveScheduledSlot, the manual dropdown, or any 0/1-slot lesson. 6 new regression tests (3 confirmed to fail against the pre-fix code); all 172 tests pass.
  * v1.13.76 - Fix: marking a unit lesson "taught" from one Week Board occurrence used to set lesson.teachingStatus directly, flipping every other scheduled occurrence of that same lesson to "Taught" too, including ones that hadn't happened yet. Taught state is now tracked per scheduled occurrence — each entry in lesson.scheduledSlots gets an optional `taught` boolean (absent/false by default, tolerated everywhere as optional). A new per-occurrence toggle (board occurrence card + the drawer's schedule chips) appears once a lesson has more than one scheduled occurrence and sets only that slot's flag; teachingStatus is then re-derived (unitLessonDerivedTeachingStatus): 0 taught leaves it as-is (never overwrites a manual "Needs review"/"Reteach"), some-but-not-all becomes "Partially taught", all becomes "Taught". A lesson with 0 or 1 scheduledSlots (all standalone lessons included) is completely unaffected — no toggle appears, no derivation runs, the manual "Teaching status" dropdown works exactly as before. Status badges (board card, Unit Plans row, drawer view mode) now append a "taught/total" fraction for a multi-slot lesson via a new unitLessonStatusBadgeHtml(). unitLessonStats (the only other reader of teachingStatus for a yes/no "is this taught" check — audited every read of teachingStatus in the codebase; the 80%/Coverage Gaps/Bulk Assess systems mentioned in the report turned out to be entirely IC/student-mastery based and never touch lesson.teachingStatus at all) now routes through a new shared unitLessonIsEffectivelyTaught() helper, true when teachingStatus is 'taught' OR at least one occurrence is individually marked taught. plannerMoveScheduledSlot (drag to another day) now preserves a slot's taught flag across the move. Verified in a real browser (Playwright) as well as 14 new automated tests.
  * v1.13.75 - Hardening: suggestedICIds/suggestionScores are session-global state, not stored per lesson, so the IC picker's browse-vs-suggested-results decision (and the view-mode confidence badge) has always depended on every "switch to a different lesson" call site remembering to explicitly clear them — plannerOpenLessonDrawer does; plannerAddLesson/unitAddLesson only cleared suggestedICIds, not suggestionScores, which could leak a stale confidence badge into a brand-new lesson's view-mode summary once an IC was linked to it. Added state.plannerUi.suggestionLessonId, set alongside suggestedICIds/suggestionScores whenever plannerSuggestICsFromIntention runs; plannerICResultsHtml and plannerSelectedICsViewHtml now both check it matches the lesson actually being rendered before trusting either field at all. This closes the plannerAddLesson/unitAddLesson gap and makes the whole mechanism correct by construction — a future call site that forgets to clear can no longer leak suggestion state across lessons, matching the scope-by-lesson-id fix requested in review. The direct card-click/row-click path (open a lesson, run Suggest, switch to a different lesson that never ran it) was re-verified working correctly both before and after this change, in the automated suite and in a real browser via Playwright.
  * v1.13.74 - Fix (review finding on 1.13.73's Lesson Drawer view mode): plannerOpenLessonDrawer() reset suggestedICIds/icSearch/expandedICId but never suggestionScores, and the new view-mode IC summary reads suggestionScores directly, keyed only by IC id with no per-lesson scoping — so opening a different lesson that happens to link the same IC as one just scored via "Suggest from intention" could show that IC's confidence tier as if it applied to the new lesson's (unrelated) intention. suggestionScores is now cleared on every drawer open, same as the other suggestion-session fields. Covered by a new regression test, confirmed to fail against the pre-fix code.
@@ -118,7 +119,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.76';
+const APP_VERSION = '1.13.77';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2598,13 +2599,34 @@ function plannerScheduleUnitLesson(lessonId, weekKey, dayKey) {
   if (idx < 0) return false;
   const lesson = state.lessonPlans[idx];
   if (!lesson.unitId) return false; // standalone lessons use the legacy day write
-  const before = (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).length;
-  state.lessonPlans[idx] = lessonWithScheduledSlot(lesson, wk, dayKey);
-  saveLessonPlansState();
-  if (state.lessonPlans[idx].scheduledSlots.length === before) {
+  const beforeSlots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  const before = beforeSlots.length;
+  let nextLesson = lessonWithScheduledSlot(lesson, wk, dayKey);
+  if (nextLesson.scheduledSlots.length === before) {
     toast('Already scheduled on that day', 'info');
     return false;
   }
+  // Adding a new occurrence can turn a lesson that currently reads as fully "taught"
+  // into one that no longer is, since the newly-added occurrence hasn't happened yet.
+  // If none of the pre-existing slots ever carried a per-occurrence taught flag (a
+  // single-slot lesson manually marked taught before it had a second occurrence, or
+  // legacy data from before per-occurrence tracking existed), treat the old
+  // whole-lesson "taught" status as applying to those pre-existing occurrences —
+  // never the brand-new one — then re-derive so the result correctly reads as
+  // "partially taught" instead of leaving a stale "Taught" label next to an unmarked
+  // occurrence (this also fixes the case where some pre-existing slots already had a
+  // real taught flag: the unconditional re-derive below still pulls the status down).
+  if (lesson.teachingStatus === 'taught' && beforeSlots.every(s => s.taught !== true)) {
+    nextLesson = {
+      ...nextLesson,
+      scheduledSlots: nextLesson.scheduledSlots.map(s =>
+        (s.weekKey === wk && s.dayKey === dayKey) ? s : { ...s, taught: true }
+      ),
+    };
+  }
+  nextLesson.teachingStatus = unitLessonDerivedTeachingStatus(nextLesson);
+  state.lessonPlans[idx] = nextLesson;
+  saveLessonPlansState();
   return true;
 }
 
@@ -3152,6 +3174,24 @@ function normalizeLessonPlan(raw = {}) {
   const status = raw.status === 'taught' ? 'taught' : 'planned';
   const weekKey = isValidIsoDate(raw.weekKey) ? plannerNormalizeWeekStart(raw.weekKey) : toIsoDate(getWeekStart());
   const linkedICIds = Array.isArray(raw.linkedICIds) ? raw.linkedICIds.map(String).slice(0, 3) : [];
+  const teachingStatus = ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned');
+  let scheduledSlots = (Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots.filter(isValidScheduledSlot) : [])
+    .filter((s, i, arr) => arr.findIndex(o => o.weekKey === s.weekKey && o.dayKey === s.dayKey) === i)
+    .map(s => (s.taught === true ? { weekKey: s.weekKey, dayKey: s.dayKey, taught: true } : { weekKey: s.weekKey, dayKey: s.dayKey }));
+  // Migration: a multi-slot lesson whose overall status is already 'taught' but has
+  // none of its individual occurrences flagged — data from before per-occurrence
+  // tracking existed, or a manual "Taught" pick made on a multi-slot lesson without
+  // ever touching a per-occurrence toggle — would otherwise render as a contradictory
+  // "Taught 0/N" badge with every occurrence card showing untaught. Treat the
+  // pre-existing whole-lesson "taught" as applying to every occurrence it currently
+  // has, so the per-occurrence UI agrees with the status that's already set. Only
+  // fires when NOT ONE slot has a taught flag yet, so it can never re-fire once any
+  // occurrence has been individually tracked (including the normal case of un-marking
+  // the last taught slot on an otherwise 'partially-taught' lesson, which is a
+  // different status and untouched by this).
+  if (teachingStatus === 'taught' && scheduledSlots.length > 1 && scheduledSlots.every(s => s.taught !== true)) {
+    scheduledSlots = scheduledSlots.map(s => ({ ...s, taught: true }));
+  }
   return {
     id: String(raw.id || `lesson_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`),
     title: String(raw.title || ''),
@@ -3173,10 +3213,8 @@ function normalizeLessonPlan(raw = {}) {
     // just filtered, so a malformed `taught` (anything but the literal boolean `true`)
     // silently normalises to absent/false instead of being carried through as garbage —
     // absent and false are equivalent everywhere this is read.
-    scheduledSlots: (Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots.filter(isValidScheduledSlot) : [])
-      .filter((s, i, arr) => arr.findIndex(o => o.weekKey === s.weekKey && o.dayKey === s.dayKey) === i)
-      .map(s => (s.taught === true ? { weekKey: s.weekKey, dayKey: s.dayKey, taught: true } : { weekKey: s.weekKey, dayKey: s.dayKey })),
-    teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned'),
+    scheduledSlots,
+    teachingStatus,
     // Reference material for the lesson (video/worksheet/slides/etc). [] by default.
     // Drop malformed entries (see isValidResourceLink) and rebuild fresh {label,url}
     // objects so a duplicated lesson never shares link objects with its source.
