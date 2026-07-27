@@ -2950,6 +2950,17 @@ body[data-text-size="large"] {
 
   .sidebar-footer { display: none; }
 
+  /* Weekly Planner: at phone widths, the collapsible-panel design (see
+     .planner-shell-layout above) isn't enough on its own — grid-template-columns is
+     set inline per-render from the two panels' collapse state, and even both panels'
+     *collapsed* 40px tracks plus gaps leave the Week Board too little room to be
+     usable, while the *default expanded* state (200px+ rail, 260px+ drawer) overflows
+     the viewport outright and pushes the drawer off-screen. !important is required
+     here since a stylesheet media query can only override a plain inline style by
+     being more important, not merely more specific. Stack all three panels full-width
+     instead, matching the sidebar's own collapse-to-stack behavior at this breakpoint. */
+  .planner-shell-layout { grid-template-columns: 1fr !important; }
+
   /* flex:1 + min-height:0 (mirrors desktop) so the optional draft-IC banner
      above .app is absorbed by the flex column instead of overflowing 100vh */
   .main { flex: 1; min-height: 0; overflow-y: auto; }

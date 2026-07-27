@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.78
+ * THIS FILE IS VERSION: 1.13.79
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.79 - Fix two review findings on 1.13.78's collapsible planner panels. (1) At phone widths (<768px), removing the old @media (max-width: 1024px) single-column rule meant the default-expanded three-column grid (200px+ rail, 260px+ drawer, plus gaps) overflowed the viewport outright — e.g. a 375px phone had ~343px available, well under the two side panels' combined minimums alone — leaving the Week Board at effectively zero width and pushing the Lesson Drawer off-screen, undiscoverable without scrolling sideways. A new @media (max-width: 767px) rule (matching the codebase's existing mobile breakpoint, used elsewhere for the nav sidebar) forces .planner-shell-layout back to a single stacked column via !important, since a stylesheet rule can only override the per-render inline grid-template-columns by being more important, not more specific — restoring the pre-collapsible-panel stacking behaviour at true phone widths while leaving the collapsible side-by-side layout fully intact for laptop/tablet widths, which is what this feature actually targets. (2) plannerOpenLessonDrawer, plannerAddLesson, and unitAddLesson all set drawerOpen = true to show a lesson, but none of them cleared drawerCollapsed — so opening a lesson (or worse, creating a brand-new one via + Add Lesson) while the drawer was left collapsed silently succeeded with no visible change, since the drawer stayed rendered as a 40px collapsed tab. All three now also clear drawerCollapsed, so any action that means to show the drawer always actually shows it. 5 new regression tests (4 confirmed to fail against the pre-fix code); all 184 tests pass.
  * v1.13.78 - Weekly Planner: the Unit lessons rail (left) and Lesson Drawer (right) can now be collapsed to a slim 40px edge tab via a new toggle button on each panel's own header, reclaiming width for the Week Board — collapsing hides the panel's content entirely rather than hiding it via a toggle elsewhere on the page, and a single click on the tab re-expands it. Collapse state is session-only (not persisted/saved), so every fresh load starts with both panels expanded; collapsing one panel never affects the other, and collapsing the drawer never clears its selected lesson — re-expanding shows the same lesson exactly as it was. Also fixes the underlying responsive-layout bug this was reported alongside: at a narrower window width the three-column grid (.planner-shell-layout) had no min-width: 0 on its grid items, so — combined with the Week Board's own inner 5-day grid having an intrinsic min-content width of ~860px — the layout would blow out past the window's width; the @media (max-width: 1024px) rule "fixed" this by collapsing to a single column, which instead made the Unit lessons rail expand to the full window width and push the Week Board and Lesson Drawer below the fold (confirmed live via Playwright at 900px before this fix). min-width: 0 has been added to all three panels so they can actually shrink, the single-column collapse rule is gone, and grid-template-columns is now computed per-render from the two panels' collapse state — both collapsed lets the Week Board's 1fr track absorb the entire reclaimed width. Lesson Drawer content/behaviour, the manual controls inside it, and Unit Plans' own three-column layout are all untouched. 7 new regression tests (6 confirmed to fail against the pre-fix code); all 179 tests pass. Verified in a real browser (Playwright) at several widths, including both panels collapsed showing the full Mon-Thu week at 900px and the full Mon-Fri week at 1366px.
  * v1.13.77 - Fix two review findings on 1.13.76's per-occurrence taught tracking: a multi-slot lesson could be left showing a contradictory "Taught" label alongside a fraction less than N/N. (1) Existing data — a multi-slot lesson whose teachingStatus was already 'taught' before per-occurrence tracking existed (or set manually since, without ever using the new toggle) had no per-occurrence flags at all, so it rendered "Taught 0/N" with every occurrence card showing untaught. normalizeLessonPlan now backfills every occurrence to taught:true the first time it sees this exact combination (teachingStatus 'taught', more than one slot, not one of them flagged) — a one-time migration that can't re-fire once any occurrence has real per-occurrence data, so it never touches the normal 'partially-taught'-with-0-marked edge case. (2) Scheduling a new occurrence — plannerScheduleUnitLesson appended the new (necessarily untaught) slot without re-deriving teachingStatus, so scheduling a 3rd occurrence onto an already fully-taught 2-slot lesson left it reading "Taught 2/3", and adding a 2nd occurrence to a legacy single-slot "taught" lesson left it "Taught 0/2". It now re-derives status after appending (backfilling only the pre-existing occurrences when none were flagged yet — never the brand-new one, which correctly stays untaught), so both cases now correctly settle on "Partially taught". Neither fix touches plannerUnscheduleSlot, plannerMoveScheduledSlot, the manual dropdown, or any 0/1-slot lesson. 6 new regression tests (3 confirmed to fail against the pre-fix code); all 172 tests pass.
  * v1.13.76 - Fix: marking a unit lesson "taught" from one Week Board occurrence used to set lesson.teachingStatus directly, flipping every other scheduled occurrence of that same lesson to "Taught" too, including ones that hadn't happened yet. Taught state is now tracked per scheduled occurrence — each entry in lesson.scheduledSlots gets an optional `taught` boolean (absent/false by default, tolerated everywhere as optional). A new per-occurrence toggle (board occurrence card + the drawer's schedule chips) appears once a lesson has more than one scheduled occurrence and sets only that slot's flag; teachingStatus is then re-derived (unitLessonDerivedTeachingStatus): 0 taught leaves it as-is (never overwrites a manual "Needs review"/"Reteach"), some-but-not-all becomes "Partially taught", all becomes "Taught". A lesson with 0 or 1 scheduledSlots (all standalone lessons included) is completely unaffected — no toggle appears, no derivation runs, the manual "Teaching status" dropdown works exactly as before. Status badges (board card, Unit Plans row, drawer view mode) now append a "taught/total" fraction for a multi-slot lesson via a new unitLessonStatusBadgeHtml(). unitLessonStats (the only other reader of teachingStatus for a yes/no "is this taught" check — audited every read of teachingStatus in the codebase; the 80%/Coverage Gaps/Bulk Assess systems mentioned in the report turned out to be entirely IC/student-mastery based and never touch lesson.teachingStatus at all) now routes through a new shared unitLessonIsEffectivelyTaught() helper, true when teachingStatus is 'taught' OR at least one occurrence is individually marked taught. plannerMoveScheduledSlot (drag to another day) now preserves a slot's taught flag across the move. Verified in a real browser (Playwright) as well as 14 new automated tests.
@@ -120,7 +121,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.78';
+const APP_VERSION = '1.13.79';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2373,6 +2374,7 @@ function plannerOpenLessonDrawer(lessonId) {
   if (!lesson) return;
   state.plannerUi.selectedLessonId = lessonId;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.drawerCollapsed = false; // opening a lesson should always make the drawer visible, even if it was left collapsed
   state.plannerUi.drawerMode = plannerLessonHasContent(lesson) ? 'view' : 'edit';
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
@@ -2827,6 +2829,7 @@ function plannerAddLesson(dayKey) {
   saveLessonPlansState();
   state.plannerUi.selectedLessonId = newLesson.id;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.drawerCollapsed = false; // a newly-created lesson must be visible for editing, even if the drawer was left collapsed
   state.plannerUi.drawerMode = 'edit';  // a brand-new lesson has nothing to view yet
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
@@ -4291,6 +4294,7 @@ function unitAddLesson(unitId) {
   saveUnitPlansState();
   state.plannerUi.selectedLessonId = lesson.id;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.drawerCollapsed = false; // a newly-created lesson must be visible for editing, even if the drawer was left collapsed
   state.plannerUi.drawerMode = 'edit';  // a brand-new lesson has nothing to view yet
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];

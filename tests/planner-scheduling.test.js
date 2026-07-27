@@ -3176,6 +3176,54 @@ test('the full render pipeline does not throw in any combination of rail/drawer 
   assert.doesNotThrow(() => realRenderView(), 'drawer collapsed only');
 });
 
+// ── Review fixes: opening the drawer always re-expands it; phone-width stacking ─
+test('plannerOpenLessonDrawer re-expands a collapsed drawer — opening a lesson must make it visible', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.strictEqual(st.plannerUi.drawerCollapsed, true, 'sanity: drawer starts collapsed');
+  sandbox.plannerOpenLessonDrawer('ul_1');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, 'opening a lesson card must re-expand a collapsed drawer, not silently select it behind the collapsed tab');
+  assert.strictEqual(st.plannerUi.drawerOpen, true);
+});
+
+test('plannerAddLesson re-expands a collapsed drawer — creating a new lesson must make its editor visible', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleDrawerCollapsed();
+  sandbox.plannerAddLesson('mon');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, '+ Add Lesson must re-expand a collapsed drawer — otherwise a new lesson is silently created with no visible confirmation');
+  assert.strictEqual(st.plannerUi.drawerOpen, true);
+});
+
+test('unitAddLesson re-expands a collapsed drawer, same as the standalone plannerAddLesson', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleDrawerCollapsed();
+  sandbox.unitAddLesson('unit_1');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, 'adding a lesson to a unit must also re-expand a collapsed drawer');
+  assert.strictEqual(st.plannerUi.drawerOpen, true);
+});
+
+test('collapsing the drawer after it is already open does not get silently re-opened by an unrelated re-render', () => {
+  // Guards against a too-broad fix: re-expansion should only happen from the
+  // explicit "open a lesson" actions above, not from every render.
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  sandbox.plannerToggleDrawerCollapsed();
+  realRenderView();
+  realRenderView();
+  assert.strictEqual(getState().plannerUi.drawerCollapsed, true, 'an ordinary re-render must not silently re-expand a deliberately collapsed drawer');
+});
+
+test('the phone-width (max-width: 767px) stylesheet rule that stacks the planner panels still exists, since the inline grid-template-columns can only be overridden by an !important media query, not by anything JS-side', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const mobileBlockMatch = css.match(/@media \(max-width: 767px\) \{[\s\S]*?\n\}/);
+  assert.ok(mobileBlockMatch, 'the existing mobile (<768px) responsive block must still be present');
+  assert.ok(/\.planner-shell-layout\s*\{\s*grid-template-columns:\s*1fr\s*!important;\s*\}/.test(mobileBlockMatch[0]), 'the mobile block must force the planner grid back to a single stacked column, overriding the per-render inline style that only ever targets laptop/tablet widths — without this, the default-expanded three-column grid overflows a phone-width viewport and pushes the drawer off-screen');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
