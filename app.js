@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.70
+ * THIS FILE IS VERSION: 1.13.71
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.71 - Fix two review findings on 1.13.70's IC suggestion scoring rework: (1) PLANNER_SUGGESTION_STOPWORDS wrongly stripped genuine subject-content nouns that happen to recur often within their own subject — "algorithms", "patterns", "numbers", "texts", "data", "relationships", "systems", and ~55 others — alongside real generic filler, so an intention like "Create algorithms and identify patterns" or "Represent numbers" lost every scorable token and produced zero suggestions even when a bundled IC's text matched almost exactly. The stopword list has been manually re-reviewed word-by-word: only genuine process/instructional filler is kept (~58 words); every subject-content noun has been removed and is scorable again. (2) The unit-CD boost's `.slice(0, 20)` was applied to the combined unit-linked + non-unit list, so a unit whose linked CDs alone produced 20+ qualifying ICs could crowd out every non-unit match entirely, regardless of score — contrary to "priority boost, not a restriction". Each side is now capped at 20 independently and concatenated, so a higher-scoring non-unit IC always gets a chance to show. Both fixes are covered by new regression tests confirmed to fail against the pre-fix code.
  * v1.13.70 - Fix: "Suggest from intention" could confidently label an obviously-unrelated IC "Strong" (e.g. a multiplication/halving IC for a "mental addition and subtraction with place value partitioning" intention), from three compounding causes, all fixed together. (1) Generic curriculum-speak tokens ("using", "strategies", "solve", "problems", "calculation", ...) inflated coincidental overlaps — stripped via a new empirically-derived stopword list (word frequency across every data/MASTER_Content_Descriptors_*.csv file's own descriptor text). (2) plannerConfidenceTier() only compared a score to the pool's own max (ratio-based), so a uniformly weak pool's best-of-a-bad-bunch still read "Strong" — added an absolute floor (PLANNER_MIN_STRONG_SCORE) a raw score must also clear, plus a lower floor (PLANNER_MIN_SUGGESTION_SCORE) below which a match isn't suggested at all. (3) Scoring happened at the descriptor level and every IC under it inherited an identical score, even though ICs under one broad descriptor can vary hugely in specificity — plannerSuggestICsFromIntention now scores each candidate IC directly against its own name/description/exampleOfSuccess text (plannerScoreIC), gathering candidates via each IC's own homeDescriptorId rather than pre-ranking descriptors and expanding via getICsForDescriptor. The class-year-level filter, the unit-CD boost/grouping from 1.13.66-68, and the subject filter are all unchanged and confirmed still working. Validated against real curriculum ICs bundled in data/: for a Year 4 class with the exact intention above, all four real ICs under AC9M4N06 (a descriptor spanning "addition and subtraction, and multiplication and division") previously inherited an identical "Strong" tag — now the two multiplication ICs and the division IC score 0 and are excluded entirely, while the genuinely relevant addition-strategy IC still surfaces (see PR description for the full before/after).
  * v1.13.68 - Weekly Planner: "Suggest from intention" results now render as four collapsible groups instead of a flat list — Strong matches (this unit's CDs / other CDs) and Other matches (this unit's CDs / other CDs), in that order, each headed with its own count; a group with zero results is hidden entirely. Only the lead group (this unit's strong matches) is open by default, the rest start collapsed. Standalone lessons and units with no linkedCDIds set have no "linked" distinction to make, so the two "…this unit's CDs" groups are always empty and collapse away — leaving a plain Strong/Other split. "+ Create new IC" still stays pinned below all four groups. Group open/collapsed state resets to its defaults on every fresh suggestion run. The scoring/ranking logic, class-year-level filter, cross-year IC leak protection, and the separate "From this unit's CDs" browse-mode grouping are all unchanged.
  * v1.13.67 - Fix: the unit-CD priority boost added in 1.13.66 reordered plannerSuggestICsFromIntention's internal ranking, but plannerICResultsHtml() rebuilds its own render order from raw score and was silently discarding that boost — a weak-scoring unit-linked IC could render behind a higher-scoring non-unit one despite being "suggested" first internally. The render-path sort now applies the same unit-CD-membership check (reusing the existing linkedCDs/icBelongsToCDs from the unrelated "From this unit's CDs" browse group) within each confidence tier, so the boost is now actually visible to the teacher, not just present in internal state.
@@ -112,7 +113,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.70';
+const APP_VERSION = '1.13.71';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2757,31 +2758,30 @@ function plannerHandleICSearchInput(value) {
 // ids with the subject-scoped pool, and fall back to this heuristic on failure.
 
 // Curriculum-vocabulary stopwords for intention matching. Generic/high-frequency
-// instructional words ("using", "strategies", "solve", "problems", "calculation", ...)
-// recur across many unrelated descriptors, so a single coincidental overlap on one of
-// these can outscore a genuinely relevant match. Derived empirically: word document
-// frequency across every data/MASTER_Content_Descriptors_*.csv file's own Descriptor
-// sentence text (Strand/Sub-strand excluded — see below), unioned across all subjects
-// at a >=12% within-subject-frequency threshold. 12% (rather than a stricter cutoff)
-// was chosen specifically so it also captures "calculation" (12.2% of Mathematics
-// descriptors combined with "calculations"), one of the words this fix targets.
-// Excludes any word that is itself a Subject/Strand/Sub-strand VALUE somewhere (e.g.
-// "number", "science", "language", "skills") — those are meaningful taxonomy, not
-// filler, even when frequent; stripping "number" would remove real signal from a
-// lesson genuinely about the Number strand.
+// *instructional/procedural* words ("using", "strategies", "solve", "problems",
+// "calculation", ...) recur across many unrelated descriptors regardless of actual
+// topic, so a single coincidental overlap on one of these can outscore a genuinely
+// relevant match. Starting point derived empirically: word document frequency across
+// every data/MASTER_Content_Descriptors_*.csv file's own Descriptor sentence text
+// (Strand/Sub-strand excluded), unioned across all subjects at a >=12%
+// within-subject-frequency threshold — chosen so it also captures "calculation"
+// (12.2% of Mathematics descriptors combined with "calculations"), one of the words
+// this fix targets. That raw frequency list was then manually reviewed to keep only
+// words describing HOW something is done (process/instructional filler) and exclude
+// words describing WHAT a lesson is about (subject-content nouns) even when those are
+// *also* frequent within their own subject — e.g. "patterns" and "algorithms" recur
+// heavily in Science/Digital Technologies descriptors, but that's because they're
+// core recurring subject matter there, not filler; stripping them left an intention
+// like "Create algorithms and identify patterns" with zero scorable tokens at all.
+// Also excludes any word that is itself a Subject/Strand/Sub-strand VALUE somewhere
+// (e.g. "number", "science", "skills") — meaningful taxonomy, not filler.
 const PLANNER_SUGGESTION_STOPWORDS = new Set([
-  'across','activities','algorithms','apply','appropriate','artworks','audiences','australia','australians',
-  'behaviours','calculation','calculations','choreograph','common','communicate','compare','components',
-  'composed','composing','construct','content','contexts','conventions','create','cultures','dances','data',
-  'describe','designed','develop','devised','different','dramatic','elements','environments','equipment',
-  'evaluate','events','experiment','explain','explore','features','findings','first','food','from','generate',
-  'ideas','identify','images','imagination','improvised','including','informal','information','instruments',
-  'interactive','interpret','investigate','involving','languages','listening','make','materials','meaning',
-  'nations','needs','numbers','objects','observations','other','patterns','people','performance','perspectives',
-  'places','play','playing','practice','practise','practising','predictions','problems','products','questions',
-  'range','recognise','relationships','represent','safely','scientific','scripted','services','settings',
-  'share','singing','situations','solutions','solve','sounds','sources','strategies','sustainability','systems',
-  'techniques','texts','that','their','they','tools','understand','user','using','ways','when','with','words','works',
+  'across','activities','apply','appropriate','calculation','calculations','common','communicate','compare',
+  'construct','content','contexts','create','describe','designed','develop','devised','different','evaluate',
+  'explain','explore','first','from','generate','ideas','identify','including','informal','information',
+  'interpret','investigate','involving','make','meaning','needs','other','practice','practise','practising',
+  'problems','questions','range','recognise','represent','safely','share','situations','solve','strategies',
+  'that','their','they','tools','understand','using','ways','when','with',
 ]);
 
 // A match below this raw score isn't suggested at all, regardless of how it compares
@@ -2866,7 +2866,7 @@ function plannerSuggestICsFromIntention() {
   // means a descriptor reached only via linkedDescriptorIds no longer "lends" its
   // score to an unrelated IC — every IC now stands on its own content.
   const cdByCode = new Map(state.curriculumCodes.map(c => [c.Code, c]));
-  const ranked = state.instructionalComponents
+  const scored = state.instructionalComponents
     .filter(ic => !ic.isArchived && !(ic.ownerTier === 'system_default' && ic.suppressedByTeacher))
     .filter(ic => {
       const cd = cdByCode.get(ic.homeDescriptorId);
@@ -2875,15 +2875,17 @@ function plannerSuggestICsFromIntention() {
       return plannerDescriptorMatchesYearLevels(cd, classYearLevels);
     })
     .map(ic => ({ ic, score: plannerScoreIC(ic, tokens) }))
-    .filter(r => r.score >= PLANNER_MIN_SUGGESTION_SCORE)
-    .sort((a, b) => {
-      if (unitCDIds) {
-        const aIn = icBelongsToCDs(a.ic, unitCDIds), bIn = icBelongsToCDs(b.ic, unitCDIds);
-        if (aIn !== bIn) return aIn ? -1 : 1;
-      }
-      return b.score - a.score || a.ic.id.localeCompare(b.ic.id);
-    })
-    .slice(0, 20);
+    .filter(r => r.score >= PLANNER_MIN_SUGGESTION_SCORE);
+
+  const byScoreDesc = (a, b) => b.score - a.score || a.ic.id.localeCompare(b.ic.id);
+  // Cap each side of the boost separately (unit-linked vs not) rather than one combined
+  // slice — a combined cap would let an oversized unit-linked group crowd out every
+  // non-unit match entirely, which is a restriction, not the priority boost this is
+  // meant to be (a higher-scoring non-unit IC must still get a chance to show).
+  const ranked = unitCDIds
+    ? scored.filter(r => icBelongsToCDs(r.ic, unitCDIds)).sort(byScoreDesc).slice(0, 20)
+        .concat(scored.filter(r => !icBelongsToCDs(r.ic, unitCDIds)).sort(byScoreDesc).slice(0, 20))
+    : scored.sort(byScoreDesc).slice(0, 20);
 
   const scores = {};
   ranked.forEach(r => { scores[r.ic.id] = r.score; });

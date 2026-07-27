@@ -1829,6 +1829,72 @@ test('an IC is scored against its own text, not inherited from its parent descri
   assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'ic_halving'), 'it should not even be scored above 0 — nothing in its own text overlaps the cleaned intention tokens');
 });
 
+test('subject-content nouns that recur within their own subject (e.g. "algorithms", "patterns", "numbers") are not stripped as stopwords — only genuine instructional/procedural filler is', () => {
+  // Regression guard: an earlier version of the stopword list conflated "frequent
+  // within one subject" with "generic filler" and stripped real content nouns like
+  // "patterns", "algorithms", "numbers", "data" and "texts" — an intention using only
+  // those words (plus genuinely generic ones) was cleaned down to zero tokens, so
+  // nothing could ever be suggested even when a directly matching real IC existed.
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [{ Code: 'CD_A', Subject: 'Mathematics', Strand: 'Algebra', 'Year Level': 'Year 4', Descriptor: 'some descriptor text' }];
+  st.instructionalComponents = [
+    // Modelled on the real "Create an algorithm for a sequence" IC (ics_year4_maths_number.csv).
+    { id: 'ic_algorithm', homeDescriptorId: 'CD_A', linkedDescriptorIds: [], name: 'Create an algorithm for a sequence', description: 'Student can create algorithms and describe an emerging pattern.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Create algorithms and identify patterns.' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  const tokens = sandbox.plannerCleanTokens(st.lessonPlans[idx].intention);
+  assert.ok(tokens.length > 0, '"algorithms" and "patterns" must survive cleaning — they are subject content, not filler ("create" and "identify" are the only generic words here)');
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.includes('ic_algorithm'), 'the genuinely matching real-world IC must be suggested — this must not silently produce zero suggestions');
+});
+
+test('the unit-CD boost caps each side separately — a large unit-linked group does not crowd out every non-unit match', () => {
+  // Regression guard: capping the combined (unit-linked-first) list in one slice(0,20)
+  // meant that once a unit's own CDs alone produced 20+ qualifying ICs, every non-unit
+  // IC was cut off entirely, no matter how high its score — turning the boost into a
+  // hard restriction instead of a priority ordering.
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partition numbers using place value understanding for addition strategies.' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+  st.curriculumCodes = [
+    { Code: 'CD_UNIT', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'unit descriptor' },
+    { Code: 'CD_OTHER', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'other descriptor' },
+  ];
+  // 25 unit-linked ICs, each scoring only 2 ("place"+"value") — more than the old
+  // combined cap of 20 on its own.
+  const unitLinkedICs = Array.from({ length: 25 }, (_, i) => ({
+    id: `ic_unit_${i}`, homeDescriptorId: 'CD_UNIT', linkedDescriptorIds: [],
+    name: `Unit IC ${i}`, description: 'Student can use place value.',
+    isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false,
+  }));
+  // One non-unit IC that scores far higher (matches all 6 surviving intention tokens).
+  const nonUnitIC = {
+    id: 'ic_other_strong', homeDescriptorId: 'CD_OTHER', linkedDescriptorIds: [],
+    name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding for addition.',
+    isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false,
+  };
+  st.instructionalComponents = [...unitLinkedICs, nonUnitIC];
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], linkedCDIds: ['CD_UNIT'] };
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(scores.ic_other_strong > scores.ic_unit_0, 'sanity: the non-unit IC genuinely outscores the unit-linked ones');
+  assert.ok(suggested.includes('ic_other_strong'), 'a higher-scoring non-unit IC must still be suggested even though the unit-linked group alone has more candidates than the old shared cap — priority boost, not restriction');
+  assert.ok(suggested.length <= 40, 'sanity: each side is still capped (20 + 20), not unbounded');
+});
+
 // ── IC suggestion collapsible groups ─────────────────────────────────────────────
 console.log('Suggest from intention: collapsible result groups');
 
