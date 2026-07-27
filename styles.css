@@ -1109,6 +1109,10 @@ body[data-text-size="large"] {
 }
 
 /* ── PLANNER SHELL ── */
+/* grid-template-columns is set inline per-render (see the Weekly Planner render
+   function), driven by state.plannerUi.railCollapsed/drawerCollapsed, so a collapsed
+   side panel's track shrinks to a slim strip and the Week Board's 1fr track reclaims
+   the freed width. This rule is just the un-collapsed default. */
 .planner-shell-layout {
   display: grid;
   grid-template-columns: minmax(200px, 240px) minmax(0, 1fr) minmax(260px, 320px);
@@ -1120,6 +1124,15 @@ body[data-text-size="large"] {
 .planner-shell-drawer,
 .planner-unit-rail {
   min-height: 300px;
+  /* Grid items default to min-width: auto, which bases their minimum size on their
+     content's min-content width rather than 0 — so a track's minmax()/fixed max was
+     only ever a soft cap. The Week Board's own inner grid (5 day columns, each
+     minmax(160px, 1fr)) has an intrinsic min-content width of ~860px, which — without
+     this — forced the whole three-column layout to blow out past that width instead of
+     letting .planner-lesson-board's own overflow-x: auto scroll internally. This is
+     also what let the Unit lessons rail (and Lesson Drawer) balloon out instead of
+     truly shrinking at a narrow window width. */
+  min-width: 0;
 }
 
 /* Override the base .card's overflow: hidden (used elsewhere only to round off square
@@ -1137,6 +1150,56 @@ body[data-text-size="large"] {
   padding: 14px;
   color: var(--text3);
   font-size: var(--helper-size);
+}
+
+/* Collapse/expand control for the Unit lessons rail and Lesson Drawer — lives on the
+   panel's own header (never elsewhere on the page). Expanded state: a small square
+   icon button next to the header's subtitle text. */
+.planner-panel-collapse-toggle {
+  border: 1px solid var(--border2);
+  background: var(--surface);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text3);
+  cursor: pointer;
+}
+
+.planner-panel-collapse-toggle:hover {
+  border-color: var(--status-info-border);
+  color: var(--status-info-text);
+  background: var(--status-info-bg);
+}
+
+/* Collapsed state: the panel shrinks to a slim edge tab (width set inline alongside
+   grid-template-columns) whose only content is a full-height re-expand button — no
+   header, no body, matching "shrink to a minimal strip" rather than hiding the panel
+   via a toggle elsewhere on the page. */
+.planner-unit-rail.is-collapsed,
+.planner-shell-drawer.is-collapsed {
+  padding: 0;
+  display: flex;
+}
+
+.planner-unit-rail.is-collapsed .planner-panel-collapse-toggle,
+.planner-shell-drawer.is-collapsed .planner-panel-collapse-toggle {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.planner-unit-rail.is-collapsed .planner-panel-collapse-toggle:hover,
+.planner-shell-drawer.is-collapsed .planner-panel-collapse-toggle:hover {
+  background: var(--status-info-bg);
+  color: var(--status-info-text);
 }
 
 .planner-lesson-board {
@@ -2836,7 +2899,6 @@ body[data-text-size="large"] {
   .content { padding: 14px 16px; }
   .detail-header { padding: 12px 14px; }
   .stats-row { grid-template-columns: repeat(3, 1fr) !important; }
-  .planner-shell-layout { grid-template-columns: 1fr; }
   .unit-detail-grid,
   .unit-detail-grid.has-drawer { grid-template-columns: 1fr; }
 }
@@ -2887,6 +2949,17 @@ body[data-text-size="large"] {
   .nav-btn .nav-icon { display: none; }
 
   .sidebar-footer { display: none; }
+
+  /* Weekly Planner: at phone widths, the collapsible-panel design (see
+     .planner-shell-layout above) isn't enough on its own — grid-template-columns is
+     set inline per-render from the two panels' collapse state, and even both panels'
+     *collapsed* 40px tracks plus gaps leave the Week Board too little room to be
+     usable, while the *default expanded* state (200px+ rail, 260px+ drawer) overflows
+     the viewport outright and pushes the drawer off-screen. !important is required
+     here since a stylesheet media query can only override a plain inline style by
+     being more important, not merely more specific. Stack all three panels full-width
+     instead, matching the sidebar's own collapse-to-stack behavior at this breakpoint. */
+  .planner-shell-layout { grid-template-columns: 1fr !important; }
 
   /* flex:1 + min-height:0 (mirrors desktop) so the optional draft-IC banner
      above .app is absorbed by the flex column instead of overflowing 100vh */

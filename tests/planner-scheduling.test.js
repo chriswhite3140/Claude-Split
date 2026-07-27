@@ -149,6 +149,8 @@ function resetState() {
   st.plannerUi.insertionTarget = null;
   st.plannerUi.dayOrder = {};
   st.plannerUi.openResourcePopoverCardKey = null;
+  st.plannerUi.railCollapsed = false;
+  st.plannerUi.drawerCollapsed = false;
 }
 
 function lessonById(id) { return getState().lessonPlans.find(l => l.id === id); }
@@ -3074,6 +3076,152 @@ test('scheduling a new occurrence onto a lesson that is not currently "taught" s
   assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'ul_2 starts as Reteach in the fixture and must stay Reteach after its first slot is scheduled');
   sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'wed');
   assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'and stay Reteach after a second occurrence is added too, since nothing has been marked taught yet');
+});
+
+// ── Collapsible Unit lessons rail / Lesson Drawer side panels ───────────────────
+console.log('Collapsible Unit lessons rail / Lesson Drawer side panels');
+
+test('both side panels default to expanded and are not persisted across a fresh plannerEnsureUiState', () => {
+  resetState();
+  const st = getState();
+  assert.strictEqual(st.plannerUi.railCollapsed, false, 'the Unit lessons rail starts expanded');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, 'the Lesson Drawer starts expanded');
+});
+
+test('plannerToggleRailCollapsed / plannerToggleDrawerCollapsed toggle independently, each leaving the other panel untouched', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleRailCollapsed();
+  assert.strictEqual(st.plannerUi.railCollapsed, true, 'rail should now be collapsed');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, 'toggling the rail must not touch the drawer');
+
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.strictEqual(st.plannerUi.railCollapsed, true, 'rail should remain collapsed');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, true, 'drawer should now also be collapsed');
+
+  sandbox.plannerToggleRailCollapsed();
+  assert.strictEqual(st.plannerUi.railCollapsed, false, 'toggling again re-expands the rail');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, true, 'and must not touch the already-collapsed drawer');
+});
+
+test('expanded panels render their full content, the collapse control, and no is-collapsed class', () => {
+  resetState();
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('planner-unit-rail-body'), 'the rail body must render when expanded');
+  assert.ok(html.includes('Lesson Drawer'), 'the drawer header must render when expanded');
+  assert.ok(!/planner-unit-rail[^"]*is-collapsed/.test(html), 'the rail must not carry is-collapsed while expanded');
+  assert.ok(!/planner-shell-drawer[^"]*is-collapsed/.test(html), 'the drawer must not carry is-collapsed while expanded');
+  const toggleCount = (html.match(/planner-panel-collapse-toggle/g) || []).length;
+  assert.strictEqual(toggleCount, 2, 'exactly one collapse toggle per panel (rail + drawer) should render when both are expanded');
+});
+
+test('collapsing the rail hides its content, adds is-collapsed, shows only a re-expand control, and shrinks its grid track', () => {
+  resetState();
+  sandbox.plannerToggleRailCollapsed();
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(/class="card planner-unit-rail is-collapsed"/.test(html), 'the rail must carry is-collapsed once toggled');
+  assert.ok(!html.includes('planner-unit-rail-body'), 'the rail body (unit list) must not render while collapsed — a minimal strip only');
+  assert.ok(!html.includes('Drag onto a day to add a slot'), 'the rail header subtitle must not render while collapsed either');
+  assert.ok(html.includes('Lesson Drawer') && html.includes('Select a lesson card'), 'the drawer must render normally, unaffected by the rail collapsing');
+  assert.ok(/grid-template-columns:\s*40px minmax\(0, 1fr\) minmax\(260px, 320px\)/.test(html), 'the rail track should shrink to 40px while the drawer keeps its normal track and the board (1fr) reclaims the difference');
+});
+
+test('collapsing the drawer preserves its selected lesson/content in state, and re-expanding shows it again — collapsing must not clear the selection', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  const st = getState();
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'sanity: drawer is open with ul_1 selected');
+
+  // ul_1's own title ("Intro to fractions") also appears on its Week Board occurrence
+  // card, so isolate the drawer's own markup (the last top-level panel rendered) rather
+  // than searching the whole page, or the card's copy of the title would false-positive.
+  const drawerSection = (html) => html.slice(html.indexOf('planner-shell-drawer'));
+
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'collapsing the drawer must not close it or clear the selection');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1', 'collapsing the drawer must not deselect the lesson');
+  realRenderView();
+  let html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(/class="card planner-shell-drawer is-collapsed"/.test(html), 'the drawer must carry is-collapsed once toggled');
+  assert.ok(!drawerSection(html).includes('Intro to fractions'), 'the drawer\'s own lesson content must not render while collapsed');
+
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'still open after re-expanding');
+  realRenderView();
+  html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(drawerSection(html).includes('Intro to fractions'), 'the previously-selected lesson\'s content must reappear once the drawer is re-expanded, unchanged');
+});
+
+test('collapsing both side panels shrinks both tracks to 40px and lets the Week Board (1fr) reclaim the rest', () => {
+  resetState();
+  sandbox.plannerToggleRailCollapsed();
+  sandbox.plannerToggleDrawerCollapsed();
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(/grid-template-columns:\s*40px minmax\(0, 1fr\) 40px/.test(html), 'both side tracks should be 40px, leaving the middle 1fr track (Week Board) to absorb all the reclaimed width');
+  assert.ok(/class="card planner-unit-rail is-collapsed"/.test(html) && /class="card planner-shell-drawer is-collapsed"/.test(html), 'both panels should carry is-collapsed');
+});
+
+test('the full render pipeline does not throw in any combination of rail/drawer collapse state', () => {
+  resetState();
+  assert.doesNotThrow(() => realRenderView(), 'both expanded');
+  sandbox.plannerToggleRailCollapsed();
+  assert.doesNotThrow(() => realRenderView(), 'rail collapsed only');
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.doesNotThrow(() => realRenderView(), 'both collapsed');
+  sandbox.plannerToggleRailCollapsed();
+  assert.doesNotThrow(() => realRenderView(), 'drawer collapsed only');
+});
+
+// ── Review fixes: opening the drawer always re-expands it; phone-width stacking ─
+test('plannerOpenLessonDrawer re-expands a collapsed drawer — opening a lesson must make it visible', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.strictEqual(st.plannerUi.drawerCollapsed, true, 'sanity: drawer starts collapsed');
+  sandbox.plannerOpenLessonDrawer('ul_1');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, 'opening a lesson card must re-expand a collapsed drawer, not silently select it behind the collapsed tab');
+  assert.strictEqual(st.plannerUi.drawerOpen, true);
+});
+
+test('plannerAddLesson re-expands a collapsed drawer — creating a new lesson must make its editor visible', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleDrawerCollapsed();
+  sandbox.plannerAddLesson('mon');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, '+ Add Lesson must re-expand a collapsed drawer — otherwise a new lesson is silently created with no visible confirmation');
+  assert.strictEqual(st.plannerUi.drawerOpen, true);
+});
+
+test('unitAddLesson re-expands a collapsed drawer, same as the standalone plannerAddLesson', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleDrawerCollapsed();
+  sandbox.unitAddLesson('unit_1');
+  assert.strictEqual(st.plannerUi.drawerCollapsed, false, 'adding a lesson to a unit must also re-expand a collapsed drawer');
+  assert.strictEqual(st.plannerUi.drawerOpen, true);
+});
+
+test('collapsing the drawer after it is already open does not get silently re-opened by an unrelated re-render', () => {
+  // Guards against a too-broad fix: re-expansion should only happen from the
+  // explicit "open a lesson" actions above, not from every render.
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  sandbox.plannerToggleDrawerCollapsed();
+  realRenderView();
+  realRenderView();
+  assert.strictEqual(getState().plannerUi.drawerCollapsed, true, 'an ordinary re-render must not silently re-expand a deliberately collapsed drawer');
+});
+
+test('the phone-width (max-width: 767px) stylesheet rule that stacks the planner panels still exists, since the inline grid-template-columns can only be overridden by an !important media query, not by anything JS-side', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const mobileBlockMatch = css.match(/@media \(max-width: 767px\) \{[\s\S]*?\n\}/);
+  assert.ok(mobileBlockMatch, 'the existing mobile (<768px) responsive block must still be present');
+  assert.ok(/\.planner-shell-layout\s*\{\s*grid-template-columns:\s*1fr\s*!important;\s*\}/.test(mobileBlockMatch[0]), 'the mobile block must force the planner grid back to a single stacked column, overriding the per-render inline style that only ever targets laptop/tablet widths — without this, the default-expanded three-column grid overflows a phone-width viewport and pushes the drawer off-screen');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────
