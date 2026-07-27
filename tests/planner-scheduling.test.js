@@ -1436,21 +1436,27 @@ test('the class settings panel renders a checkbox per year level, checked to mat
   assert.ok(html.indexOf('Foundation') < html.indexOf('Year 1'), 'Foundation must render before Year 1, matching real school order');
 });
 
-// Minimal fixture for plannerSuggestICsFromIntention: two Mathematics descriptors
-// with near-identical wording (so token scoring treats them equally) but different
-// Year Level values, isolating the year-level filter as the only differentiator.
+// Minimal fixture for plannerSuggestICsFromIntention: two Mathematics ICs with
+// near-identical name/description (so token scoring treats them equally) but homed on
+// descriptors with different Year Level values, isolating the year-level filter as the
+// only differentiator. Intention tokens surviving stopword-cleaning: partition, place,
+// value, understanding ("numbers"/"using" are stopwords) — weights 2+1+1+2 = 6 max.
 function setSuggestICsFixture() {
   const st = getState();
   st.curriculumCodes = [
     { Code: 'AC9M2N01', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 2', Descriptor: 'partition numbers using place value' },
     { Code: 'AC9M5N01', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 5', Descriptor: 'partition numbers using place value' },
   ];
+  st.instructionalComponents = [
+    { id: 'ic_y2', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [], name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_y5', homeDescriptorId: 'AC9M5N01', linkedDescriptorIds: [], name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
   const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
   st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partition numbers using place value understanding.' };
   st.plannerUi.selectedLessonId = 'sa_1';
 }
 
-test('plannerSuggestICsFromIntention excludes descriptors outside the class\'s set year level(s)', () => {
+test('plannerSuggestICsFromIntention excludes ICs whose home descriptor is outside the class\'s set year level(s)', () => {
   resetState();
   resetClassSettings();
   setSuggestICsFixture();
@@ -1458,8 +1464,8 @@ test('plannerSuggestICsFromIntention excludes descriptors outside the class\'s s
 
   sandbox.plannerSuggestICsFromIntention();
   const scores = getState().plannerUi.suggestionScores;
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'), 'the Year 2 descriptor should be ranked');
-  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'the Year 5 descriptor must be excluded even though it scores identically on tokens');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_y2'), 'the IC homed on the Year 2 descriptor should be ranked');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'ic_y5'), 'the IC homed on the Year 5 descriptor must be excluded even though it scores identically on tokens');
 });
 
 test('plannerSuggestICsFromIntention falls back to no year restriction when the class has no year level set', () => {
@@ -1469,8 +1475,8 @@ test('plannerSuggestICsFromIntention falls back to no year restriction when the 
 
   sandbox.plannerSuggestICsFromIntention();
   const scores = getState().plannerUi.suggestionScores;
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'), 'Year 2 descriptor should still be ranked');
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'Year 5 descriptor should also be ranked — no year level set means no restriction, not "show nothing"');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_y2'), 'the Year 2 IC should still be ranked');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_y5'), 'the Year 5 IC should also be ranked — no year level set means no restriction, not "show nothing"');
 });
 
 test('plannerSuggestICsFromIntention supports multiple set year levels (composite class)', () => {
@@ -1482,8 +1488,8 @@ test('plannerSuggestICsFromIntention supports multiple set year levels (composit
 
   sandbox.plannerSuggestICsFromIntention();
   const scores = getState().plannerUi.suggestionScores;
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M2N01'));
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M5N01'), 'both set year levels should be included, not just the first');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_y2'));
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_y5'), 'both set year levels should be included, not just the first');
 });
 
 test('the year-level filter is banded-subject aware — a BANDED_SUBJECTS subject compares via bandYearLevel(), not the raw class year', () => {
@@ -1493,53 +1499,62 @@ test('the year-level filter is banded-subject aware — a BANDED_SUBJECTS subjec
   // 'Design and Technologies' is in BANDED_SUBJECTS; bandYearLevel() maps 'Year 1'
   // -> 'Foundation' and 'Year 2' -> 'Year 2' (see bandYearLevel()), so these two
   // descriptors are only reachable through the banded comparison, not a direct match.
+  // Intention tokens surviving cleaning: build, wooden, birdhouse, recycled, timber
+  // (none are stopwords) — weights 1+1+2+2+1 = 7 max.
   st.curriculumCodes = [
-    { Code: 'DT_FOUND', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Foundation', Descriptor: 'explore materials and tools for making simple objects' },
-    { Code: 'DT_YEAR2', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Year 2', Descriptor: 'explore materials and tools for making simple objects' },
+    { Code: 'DT_FOUND', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Foundation', Descriptor: 'design a simple wooden object' },
+    { Code: 'DT_YEAR2', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Year 2', Descriptor: 'design a simple wooden object' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_found', homeDescriptorId: 'DT_FOUND', linkedDescriptorIds: [], name: 'Build a wooden birdhouse', description: 'Student can build a wooden birdhouse using recycled timber.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_y2dt', homeDescriptorId: 'DT_YEAR2', linkedDescriptorIds: [], name: 'Build a wooden birdhouse', description: 'Student can build a wooden birdhouse using recycled timber.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
   ];
   const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
-  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Design and Technologies', intention: 'Explore materials and tools for making simple objects.' };
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Design and Technologies', intention: 'Build a wooden birdhouse using recycled timber.' };
   st.plannerUi.selectedLessonId = 'sa_1';
 
   // A Year 1 class bands to Foundation for this subject.
   sandbox.applyClassSettingAction('toggleYearLevel', { key: '1', checked: true });
   sandbox.plannerSuggestICsFromIntention();
   let scores = getState().plannerUi.suggestionScores;
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'DT_FOUND'), 'Year 1 bands to Foundation and should match the Foundation descriptor');
-  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'DT_YEAR2'), 'Year 1 (banded to Foundation) must not match a Year 2 descriptor');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_found'), 'Year 1 bands to Foundation and should match the IC homed on the Foundation descriptor');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'ic_y2dt'), 'Year 1 (banded to Foundation) must not match the IC homed on a Year 2 descriptor');
 
   // Switch the class to Year 2 (bands to itself) — now the Year 2 descriptor matches instead.
   sandbox.applyClassSettingAction('toggleYearLevel', { key: '1', checked: false });
   sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true });
   sandbox.plannerSuggestICsFromIntention();
   scores = getState().plannerUi.suggestionScores;
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'DT_YEAR2'), 'Year 2 bands to itself and should match the Year 2 descriptor');
-  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'DT_FOUND'), 'Year 2 must not match the Foundation descriptor');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_y2dt'), 'Year 2 bands to itself and should match the IC homed on the Year 2 descriptor');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'ic_found'), 'Year 2 must not match the IC homed on the Foundation descriptor');
 });
 
-test('excludes an IC merely tethered to an in-year descriptor but actually homed on an out-of-year descriptor (cross-year leak via linkedDescriptorIds)', () => {
+test('an IC\'s own home descriptor determines its year eligibility — a linkedDescriptorIds tether to an in-year descriptor cannot pull in an otherwise out-of-year IC', () => {
+  // Candidate gathering now resolves each IC's OWN homeDescriptorId directly (not via
+  // getICsForDescriptor's home-OR-linked lookup), so tethering can no longer smuggle an
+  // out-of-year IC in — this replaces the old "cross-year leak via linkedDescriptorIds"
+  // protection with a structurally simpler guarantee: candidacy is decided by the IC's
+  // own home descriptor, full stop.
   resetState();
   resetClassSettings();
   setSuggestICsFixture();
   sandbox.applyClassSettingAction('toggleYearLevel', { key: '2', checked: true }); // Year 2 only
-
   const st = getState();
-  st.instructionalComponents = [
-    // Homed on the in-year (Year 2) descriptor — must still be suggested.
-    { id: 'ic_valid', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-    // Homed on the out-of-year (Year 5) descriptor, but tethered to the in-year one —
-    // getICsForDescriptor('AC9M2N01') would surface this via linkedDescriptorIds even
-    // though its real home content is Year 5, not Year 2.
-    { id: 'ic_leaked', homeDescriptorId: 'AC9M5N01', linkedDescriptorIds: ['AC9M2N01'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-  ];
+  // Same content as ic_y2 (so it would score identically if it were ever considered),
+  // but homed on the out-of-year (Year 5) descriptor and tethered to the in-year one.
+  st.instructionalComponents.push({
+    id: 'ic_leaked', homeDescriptorId: 'AC9M5N01', linkedDescriptorIds: ['AC9M2N01'],
+    name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding.',
+    isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false,
+  });
 
   sandbox.plannerSuggestICsFromIntention();
   const suggested = getState().plannerUi.suggestedICIds;
-  assert.ok(suggested.includes('ic_valid'), 'an IC actually homed on the in-year descriptor should still be suggested');
+  assert.ok(suggested.includes('ic_y2'), 'an IC actually homed on the in-year descriptor should still be suggested');
   assert.ok(!suggested.includes('ic_leaked'), 'an IC homed on an out-of-year descriptor must not leak through just because it is tethered to an in-year one');
 });
 
-test('a tethered IC whose home descriptor cannot be resolved fails open (still suggested) rather than being silently hidden', () => {
+test('an IC whose home descriptor cannot be resolved fails open (still suggested) rather than being silently hidden', () => {
   resetState();
   resetClassSettings();
   setSuggestICsFixture();
@@ -1547,7 +1562,11 @@ test('a tethered IC whose home descriptor cannot be resolved fails open (still s
 
   const st = getState();
   st.instructionalComponents = [
-    { id: 'ic_orphaned_home', homeDescriptorId: 'AC9DOES_NOT_EXIST', linkedDescriptorIds: ['AC9M2N01'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    {
+      id: 'ic_orphaned_home', homeDescriptorId: 'AC9DOES_NOT_EXIST', linkedDescriptorIds: ['AC9M2N01'],
+      name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding.',
+      isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false,
+    },
   ];
 
   sandbox.plannerSuggestICsFromIntention();
@@ -1555,10 +1574,13 @@ test('a tethered IC whose home descriptor cannot be resolved fails open (still s
   assert.ok(suggested.includes('ic_orphaned_home'), 'a data gap (unresolvable home descriptor) should not silently hide the IC');
 });
 
-// Fixture for the unit-CD priority boost: one descriptor that scores much higher on
-// tokens (AC9M_HIGH) and one that scores lower but non-zero (AC9M_UNITCD) — the unit
-// links to the lower-scoring one, so a passing test must show the boost actually
-// overriding score order, not just happening to agree with it.
+// Fixture for the unit-CD priority boost: ic_high scores much higher on tokens and
+// ic_unitcd scores lower but non-zero — the unit links to ic_unitcd's descriptor, so a
+// passing test must show the boost actually overriding score order, not just happening
+// to agree with it. Intention tokens surviving cleaning: partition, place, value,
+// understanding, addition ("numbers"/"using"/"strategies" are stopwords) — weights
+// 2+1+1+2+2 = 8 max. ic_high matches all 5 (score 8, ratio 1.0, strong); ic_unitcd
+// matches only "addition" (score 2, ratio 0.25, weak/other) — a large, unambiguous gap.
 function setUnitCDBoostFixture() {
   const st = getState();
   st.curriculumCodes = [
@@ -1566,8 +1588,8 @@ function setUnitCDBoostFixture() {
     { Code: 'AC9M_UNITCD', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'addition strategies for whole numbers' },
   ];
   st.instructionalComponents = [
-    { id: 'ic_high', homeDescriptorId: 'AC9M_HIGH', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-    { id: 'ic_unitcd', homeDescriptorId: 'AC9M_UNITCD', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_high', homeDescriptorId: 'AC9M_HIGH', linkedDescriptorIds: [], name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding for addition.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_unitcd', homeDescriptorId: 'AC9M_UNITCD', linkedDescriptorIds: [], name: 'Solve an addition problem', description: 'Student can solve an addition problem efficiently.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
   ];
   const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
   st.lessonPlans[idx] = {
@@ -1590,9 +1612,9 @@ test('plannerSuggestICsFromIntention boosts a unit lesson\'s unit-linked CDs to 
   const scores = getState().plannerUi.suggestionScores;
   const suggested = getState().plannerUi.suggestedICIds;
 
-  assert.ok(scores.AC9M_HIGH > scores.AC9M_UNITCD, 'sanity check: AC9M_HIGH must genuinely outscore AC9M_UNITCD on tokens alone — scoring itself is untouched');
-  assert.ok(suggested.includes('ic_high') && suggested.includes('ic_unitcd'), 'the non-unit descriptor\'s IC must still be included, not hidden — this is a priority boost, not a restriction');
-  assert.ok(suggested.indexOf('ic_unitcd') < suggested.indexOf('ic_high'), 'the unit-linked descriptor\'s IC must be boosted ahead of the higher-scoring non-unit descriptor');
+  assert.ok(scores.ic_high > scores.ic_unitcd, 'sanity check: ic_high must genuinely outscore ic_unitcd on tokens alone — scoring itself is untouched');
+  assert.ok(suggested.includes('ic_high') && suggested.includes('ic_unitcd'), 'the non-unit IC must still be included, not hidden — this is a priority boost, not a restriction');
+  assert.ok(suggested.indexOf('ic_unitcd') < suggested.indexOf('ic_high'), 'the unit-linked IC must be boosted ahead of the higher-scoring non-unit IC');
 });
 
 test('the boost survives into the rendered IC results HTML, not just the internal suggestedICIds order', () => {
@@ -1602,6 +1624,9 @@ test('the boost survives into the rendered IC results HTML, not just the interna
   // same confidence tier ("strong"), so a same-tier score-only sort would still put the
   // higher-scoring non-unit IC first — a regression here would look identical to the
   // pre-fix behaviour Codex flagged (the render path silently discarding the boost).
+  // Same 5-token budget as setUnitCDBoostFixture (max 8): ic_high matches all 5 (score
+  // 8); ic_unitcd matches 4 of 5 (drops "place", 1pt) for score 7 — ratio 7/8 = 0.875,
+  // both comfortably "strong".
   resetState();
   resetClassSettings();
   const st = getState();
@@ -1610,8 +1635,8 @@ test('the boost survives into the rendered IC results HTML, not just the interna
     { Code: 'AC9M_UNITCD', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value for addition strategies' },
   ];
   st.instructionalComponents = [
-    { id: 'ic_high', homeDescriptorId: 'AC9M_HIGH', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-    { id: 'ic_unitcd', homeDescriptorId: 'AC9M_UNITCD', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_high', homeDescriptorId: 'AC9M_HIGH', linkedDescriptorIds: [], name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding for addition.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_unitcd', homeDescriptorId: 'AC9M_UNITCD', linkedDescriptorIds: [], name: 'Partition numbers using value', description: 'Student can partition numbers using value understanding for addition.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
   ];
   const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
   st.lessonPlans[idx] = {
@@ -1627,9 +1652,9 @@ test('the boost survives into the rendered IC results HTML, not just the interna
   const scores = getState().plannerUi.suggestionScores;
   // Sanity: both ICs must land in the same ("strong") confidence tier, or this test
   // would pass/fail for the wrong reason (tier bucketing, not the boost, deciding order).
-  const maxScore = Math.max(scores.AC9M_HIGH, scores.AC9M_UNITCD);
-  assert.ok(scores.AC9M_UNITCD / maxScore >= 0.8, 'fixture sanity: both descriptors must be in the "strong" tier for this test to isolate the boost');
-  assert.ok(scores.AC9M_HIGH > scores.AC9M_UNITCD, 'fixture sanity: AC9M_HIGH must still genuinely outscore AC9M_UNITCD');
+  const maxScore = Math.max(scores.ic_high, scores.ic_unitcd);
+  assert.ok(scores.ic_unitcd / maxScore >= 0.8, 'fixture sanity: both ICs must be in the "strong" tier for this test to isolate the boost');
+  assert.ok(scores.ic_high > scores.ic_unitcd, 'fixture sanity: ic_high must still genuinely outscore ic_unitcd');
 
   // The boost now surfaces as its own group ("Strong matches - this unit's CDs"),
   // open by default and ordered ahead of the non-unit "Strong matches - other CDs"
@@ -1662,7 +1687,7 @@ test('plannerSuggestICsFromIntention leaves standalone lessons (no unitId) order
 
   sandbox.plannerSuggestICsFromIntention();
   const suggested = getState().plannerUi.suggestedICIds;
-  assert.ok(suggested.indexOf('ic_high') < suggested.indexOf('ic_unitcd'), 'a standalone lesson has no owning unit to boost from, so the higher-scoring descriptor must still lead');
+  assert.ok(suggested.indexOf('ic_high') < suggested.indexOf('ic_unitcd'), 'a standalone lesson has no owning unit to boost from, so the higher-scoring IC must still lead');
 });
 
 test('plannerSuggestICsFromIntention leaves a unit lesson ordered by score alone when its unit has no linkedCDIds set', () => {
@@ -1684,6 +1709,10 @@ test('the unit-CD priority boost does not bypass the class year-level filter —
     { Code: 'AC9M_YEAR5', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 5', Descriptor: 'partition numbers using place value understanding' },
     { Code: 'AC9M_YEAR2', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 2', Descriptor: 'partition numbers using place value understanding' },
   ];
+  st.instructionalComponents = [
+    { id: 'ic_year5', homeDescriptorId: 'AC9M_YEAR5', linkedDescriptorIds: [], name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_year2', homeDescriptorId: 'AC9M_YEAR2', linkedDescriptorIds: [], name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
   const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
   st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partition numbers using place value understanding.' };
   st.plannerUi.selectedLessonId = 'ul_1';
@@ -1694,21 +1723,123 @@ test('the unit-CD priority boost does not bypass the class year-level filter —
 
   sandbox.plannerSuggestICsFromIntention();
   const scores = getState().plannerUi.suggestionScores;
-  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'AC9M_YEAR5'), 'a unit-linked CD outside the class\'s year level must still be excluded — the boost only reorders descriptors that already passed the year filter');
-  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'AC9M_YEAR2'), 'the in-year descriptor should still be ranked normally');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'ic_year5'), 'a unit-linked CD outside the class\'s year level must still be excluded — the boost only reorders ICs that already passed the year filter');
+  assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_year2'), 'the in-year IC should still be ranked normally');
+});
+
+// ── Stopwords / absolute confidence floor / IC-level scoring (v1.13.70 fix) ──────
+console.log('Suggest from intention: stopwords, confidence floor, IC-level scoring');
+
+test('curriculum-vocabulary stopwords are stripped before scoring — an overlap on generic instructional words alone does not count', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [{ Code: 'CD_A', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'some descriptor text' }];
+  st.instructionalComponents = [
+    // Shares ONLY stopwords with the intention below ("using", "strategies", "solve",
+    // "problems") — no genuine content overlap.
+    { id: 'ic_stopwords_only', homeDescriptorId: 'CD_A', linkedDescriptorIds: [], name: 'Use a strategy to solve problems', description: 'Student can use an appropriate strategy when solving problems.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    // Shares the one genuine content word ("efficient").
+    { id: 'ic_real_overlap', homeDescriptorId: 'CD_A', linkedDescriptorIds: [], name: 'Work efficiently', description: 'Student can complete the task efficiently.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Using efficient strategies to solve problems.' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(!suggested.includes('ic_stopwords_only'), 'an IC that only overlaps on generic instructional words (using/strategies/solve/problems) must not be suggested');
+  assert.ok(suggested.includes('ic_real_overlap'), 'an IC sharing the one genuine content word (efficient) should still be suggested');
+});
+
+test('a match scoring below the "any match" floor is not suggested at all', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [{ Code: 'CD_A', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'some descriptor text' }];
+  st.instructionalComponents = [
+    // Matches only "read" (a single 1-point token) — below PLANNER_MIN_SUGGESTION_SCORE.
+    { id: 'ic_below_floor', homeDescriptorId: 'CD_A', linkedDescriptorIds: [], name: 'Read a numeral', description: 'Student can read a two-digit numeral.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Read a story.' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(!suggested.includes('ic_below_floor'), 'a lone 1-point token overlap ("read") must not clear the minimum-suggestion-score floor');
+});
+
+test('the absolute "Strong" floor prevents a weak pool\'s best (or only) match from being mislabeled Strong', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [{ Code: 'CD_A', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'some descriptor text' }];
+  st.instructionalComponents = [
+    // Matches only "partitioning" (a single 2-point token) — the only/best match in the
+    // pool (ratio 1.0), but 2 is below PLANNER_MIN_STRONG_SCORE (3).
+    { id: 'ic_weak_pool', homeDescriptorId: 'CD_A', linkedDescriptorIds: [], name: 'Partition a whole', description: 'Student can practice partitioning a whole into equal parts.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partitioning practice.' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  assert.strictEqual(scores.ic_weak_pool, 2, 'sanity: this IC should score exactly 2 (a single 2-point token), the only match in the pool');
+  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(!html.includes('Strong matches'), 'even at ratio 1.0 (the only/best match), a raw score of 2 is below the absolute Strong floor (3) and must not render as a Strong match');
+  assert.ok(html.includes('Other matches (1)'), 'it should still be suggested, just as an "Other" match, not "Strong"');
+
+  // The "Other matches" group starts collapsed by default (see the collapsible-groups
+  // tests below) — open it to confirm the IC itself really is there, not just implied
+  // by the heading count.
+  sandbox.plannerToggleICSuggestionGroup('otherOther', false);
+  const openHtml = sandbox.plannerICResultsHtml(lessonById('ul_1'));
+  assert.ok(openHtml.includes('data-ic-id="ic_weak_pool"'), 'the IC itself should render once its "Other matches" group is opened');
+});
+
+test('an IC is scored against its own text, not inherited from its parent descriptor — two ICs on the same broad descriptor can score completely differently', () => {
+  // This is the core bug this fix targets: a broad descriptor spanning multiple
+  // operations ("addition and subtraction, and multiplication and division", modelled
+  // on the real AC9M4N06) previously let every IC under it inherit one identical
+  // descriptor-level score, so an addition-strategy IC and an unrelated halving-for-
+  // multiplication IC could both show as equally "Strong" for an addition/subtraction
+  // intention. Each IC must now stand on its own name/description text.
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'CD_BROAD', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 4', Descriptor: 'develop efficient strategies for addition and subtraction, and multiplication and division' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_addition', homeDescriptorId: 'CD_BROAD', linkedDescriptorIds: [], name: 'Use an efficient addition strategy', description: 'Student can choose and use an efficient strategy to add larger numbers using place value partitioning.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_halving', homeDescriptorId: 'CD_BROAD', linkedDescriptorIds: [], name: 'Use doubling and halving for multiplication', description: 'Student can use doubling and halving to multiply efficiently.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Mental addition and subtraction with place value partitioning' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  sandbox.plannerSuggestICsFromIntention();
+  const scores = getState().plannerUi.suggestionScores;
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.includes('ic_addition'), 'the genuinely relevant addition-strategy IC should be suggested');
+  assert.strictEqual(scores.ic_addition, 6, 'sanity: matches addition/place/value/partitioning (2+1+1+2)');
+  assert.ok(!suggested.includes('ic_halving'), 'the halving-for-multiplication IC shares zero real content with an addition/subtraction intention and must not be suggested, despite sharing a broad parent descriptor with the relevant IC');
+  assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'ic_halving'), 'it should not even be scored above 0 — nothing in its own text overlaps the cleaned intention tokens');
 });
 
 // ── IC suggestion collapsible groups ─────────────────────────────────────────────
 console.log('Suggest from intention: collapsible result groups');
 
-// Four descriptors, one per bucket (strong/other x linked/not-linked-to-the-unit's-CDs),
-// scored via the same token-overlap mechanism as the other suggestion fixtures above.
-// Intention token budget (13 max: partition=2, numbers=2, using=1, place=1, value=1,
-// understanding=2, addition=2, strategies=2):
-//   CD_SL (strong, linked):     all 8 tokens -> 13 (ratio 1.00 -> strong)
-//   CD_SO (strong, other):      7 tokens (no "understanding") -> 11 (ratio 0.85 -> strong)
-//   CD_OL (other/weak, linked): 2 tokens ("addition","strategies") -> 4 (ratio 0.31 -> weak/other)
-//   CD_OO (other/weak, other):  3 tokens ("using","place","value") -> 3 (ratio 0.23 -> weak/other)
+// Four ICs, one per bucket (strong/other x linked/not-linked-to-the-unit's-CDs), each
+// scored against its OWN name/description text. Intention token budget (5 surviving
+// tokens after stopword-cleaning — "numbers"/"using"/"strategies" are stopwords —
+// partition=2, place=1, value=1, understanding=2, addition=2; max 8):
+//   ic_sl (strong, linked):     all 5 tokens -> 8  (ratio 1.00 -> strong)
+//   ic_so (strong, other):     4 tokens, no "place" -> 7  (ratio 0.875 -> strong)
+//   ic_ol (other/weak, linked): "place"+"value" only -> 2  (ratio 0.25 -> weak/other)
+//   ic_oo (other/weak, other): "addition" only -> 2  (ratio 0.25 -> weak/other)
 function setFourBucketFixture() {
   const st = getState();
   st.curriculumCodes = [
@@ -1718,10 +1849,10 @@ function setFourBucketFixture() {
     { Code: 'CD_OO', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'using place value concepts' },
   ];
   st.instructionalComponents = [
-    { id: 'ic_sl', homeDescriptorId: 'CD_SL', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-    { id: 'ic_so', homeDescriptorId: 'CD_SO', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-    { id: 'ic_ol', homeDescriptorId: 'CD_OL', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-    { id: 'ic_oo', homeDescriptorId: 'CD_OO', linkedDescriptorIds: [], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_sl', homeDescriptorId: 'CD_SL', linkedDescriptorIds: [], name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding for addition.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_so', homeDescriptorId: 'CD_SO', linkedDescriptorIds: [], name: 'Partition numbers using value', description: 'Student can partition numbers using value understanding for addition.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_ol', homeDescriptorId: 'CD_OL', linkedDescriptorIds: [], name: 'Use place value', description: 'Student can use place value to solve problems.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+    { id: 'ic_oo', homeDescriptorId: 'CD_OO', linkedDescriptorIds: [], name: 'Solve addition problems', description: 'Student can solve addition problems efficiently.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
   ];
   const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
   st.lessonPlans[idx] = {
@@ -1849,42 +1980,6 @@ test('group open/collapsed state resets to defaults on a fresh plannerSuggestICs
   sandbox.plannerSuggestICsFromIntention(); // a fresh suggestion run
   const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
   assert.ok(!html.includes('data-ic-id="ic_so"'), 'a fresh suggestion run must reset group state back to defaults, not carry over a previous manual toggle');
-});
-
-test('a tethered IC (suggested via linkedDescriptorIds) inherits confidence from whichever of its descriptors ranked best, not just its own homeDescriptorId', () => {
-  // getICsForDescriptor() can surface an IC because a *linked* descriptor matched, even
-  // when the IC's own homeDescriptorId never individually ranked (e.g. it's a different,
-  // unscored descriptor). Reading only scores[ic.homeDescriptorId] would then read 0 —
-  // "Other matches" and no confidence badge — even though the descriptor that actually
-  // caused the suggestion was a strong match.
-  resetState();
-  resetClassSettings();
-  const st = getState();
-  st.curriculumCodes = [
-    { Code: 'CD_STRONG', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'partition numbers using place value understanding for addition strategies' },
-    // A real, existing descriptor (so the IC still passes plannerICResultsHtml's own
-    // subject filter, which looks it up by homeDescriptorId) but with wording that
-    // shares no tokens with the intention below, so it scores 0 and never ranks.
-    { Code: 'CD_UNSCORED_HOME', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'completely unrelated wording with no overlap at all' },
-  ];
-  st.instructionalComponents = [
-    { id: 'ic_tethered', homeDescriptorId: 'CD_UNSCORED_HOME', linkedDescriptorIds: ['CD_STRONG'], isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
-  ];
-  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
-  st.lessonPlans[idx] = {
-    ...st.lessonPlans[idx],
-    subject: 'Mathematics',
-    intention: 'Partition numbers using place value understanding for addition strategies.',
-  };
-  st.plannerUi.selectedLessonId = 'ul_1';
-  // unit_1.linkedCDIds stays [] (resetState()'s default) — isolates the score fix from
-  // the linked/unlinked bucketing.
-
-  sandbox.plannerSuggestICsFromIntention();
-  const html = sandbox.plannerICResultsHtml(lessonById('ul_1'));
-  assert.ok(html.includes('Strong matches (1)'), 'the tethered IC must count as a strong match via CD_STRONG (the descriptor that actually caused it to be suggested)');
-  assert.ok(html.includes('data-ic-id="ic_tethered"'), 'the Strong group is open by default, so the tethered IC should render immediately, not be buried in a collapsed "Other matches" group');
-  assert.ok(/data-ic-id="ic_tethered"[\s\S]*?is-strong/.test(html), 'its confidence badge should read Strong, inherited from the linked descriptor that actually matched');
 });
 
 test('toggling a suggestion group restores focus to its heading, so a keyboard user isn\'t dropped out of the results list on every expand/collapse', () => {
