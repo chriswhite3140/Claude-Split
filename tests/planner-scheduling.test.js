@@ -3224,6 +3224,41 @@ test('the phone-width (max-width: 767px) stylesheet rule that stacks the planner
   assert.ok(/\.planner-shell-layout\s*\{\s*grid-template-columns:\s*1fr\s*!important;\s*\}/.test(mobileBlockMatch[0]), 'the mobile block must force the planner grid back to a single stacked column, overriding the per-render inline style that only ever targets laptop/tablet widths — without this, the default-expanded three-column grid overflows a phone-width viewport and pushes the drawer off-screen');
 });
 
+// ── Discoverability of the collapsed side-panel toggle ───────────────────────────
+test('the collapsed-strip toggle stretches to fill the whole tab rather than staying pinned to its own icon size', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const collapsedContainerRule = css.match(/\.planner-unit-rail\.is-collapsed,\s*\n\.planner-shell-drawer\.is-collapsed\s*\{[^}]*\}/);
+  assert.ok(collapsedContainerRule, 'the collapsed rail/drawer container rule must still exist');
+  assert.ok(/align-items:\s*stretch/.test(collapsedContainerRule[0]), 'the collapsed container must stretch its child (the toggle button) across the full strip — a height: 100% on the button alone does not work here, since the aside\'s own height comes from min-height rather than an explicit height, so a percentage height has no definite parent to resolve against');
+  const collapsedButtonRule = css.match(/\.planner-unit-rail\.is-collapsed \.planner-panel-collapse-toggle,\s*\n\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle\s*\{[^}]*\}/);
+  assert.ok(collapsedButtonRule, 'the collapsed toggle button rule must still exist');
+  assert.ok(!/\n\s*height:\s*22px/.test(collapsedButtonRule[0]), 'the collapsed button must not carry a fixed 22px height — that was the root cause of the button only being as tall as its icon glyph');
+});
+
+test('the collapsed rail and drawer strips each carry a distinct, legible vertical text label naming what is hidden', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.ok(/\.planner-unit-rail\.is-collapsed \.planner-panel-collapse-toggle::before\s*\{\s*\n?\s*content:\s*"Unit lessons";/.test(css), 'the collapsed Unit lessons rail must render a "Unit lessons" label');
+  assert.ok(/\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle::before\s*\{\s*\n?\s*content:\s*"Lesson Drawer";/.test(css), 'the collapsed Lesson Drawer must render a "Lesson Drawer" label, distinct from the rail\'s');
+  const labelStyleRule = css.match(/\.planner-unit-rail\.is-collapsed \.planner-panel-collapse-toggle::before,\s*\n\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle::before\s*\{[^}]*\}/);
+  assert.ok(labelStyleRule, 'the shared ::before label styling rule must exist');
+  assert.ok(/writing-mode:\s*vertical-rl/.test(labelStyleRule[0]), 'the label must be set vertically (rotated), matching a standard collapsed side-panel tab');
+});
+
+test('the collapsed toggle is visible at rest, not only on hover — it no longer blends into transparent/plain-card colors', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const collapsedButtonRule = css.match(/\.planner-unit-rail\.is-collapsed \.planner-panel-collapse-toggle,\s*\n\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle\s*\{[^}]*\}/)[0];
+  assert.ok(!/background:\s*transparent/.test(collapsedButtonRule), 'the collapsed button\'s resting background must no longer be transparent — that made it look like empty space rather than a control');
+  assert.ok(/background:\s*var\(--surface-alt\)/.test(collapsedButtonRule), 'the collapsed button should use a background one step stronger than the plain card surface at rest');
+});
+
+test('the expanded-state header toggle (small square icon button) also got the contrast bump, not just the collapsed strip', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const baseRule = css.match(/\.planner-panel-collapse-toggle\s*\{[^}]*\}/)[0];
+  assert.ok(!/color:\s*var\(--text3\)/.test(baseRule), 'the expanded toggle must no longer use the low-contrast --text3 default color');
+  assert.ok(/color:\s*var\(--text2\)/.test(baseRule), 'the expanded toggle should use the stronger --text2 color at rest');
+  assert.ok(/background:\s*var\(--surface-alt\)/.test(baseRule), 'the expanded toggle should use --surface-alt rather than blending into the card\'s own --surface background');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
