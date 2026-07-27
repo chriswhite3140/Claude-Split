@@ -2621,10 +2621,13 @@ test('a linked IC\'s confidence tier shows in the view-mode row only when live s
   let html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
   assert.ok(!html.includes('planner-ic-confidence'), 'no confidence badge should render when there is no live suggestion score for this IC');
 
-  // Now simulate a live score for this exact IC (as if it had just been suggested).
+  // Now simulate a live score for this exact IC, computed for this exact lesson (as if
+  // it had just been suggested) — both suggestionScores AND suggestionLessonId must
+  // agree with the rendered lesson for the badge to show at all.
   getState().plannerUi.suggestionScores = { ic_1: 5 };
+  getState().plannerUi.suggestionLessonId = 'sa_1';
   html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
-  assert.ok(html.includes('planner-ic-confidence'), 'a confidence badge should render once live suggestion data exists for this IC');
+  assert.ok(html.includes('planner-ic-confidence'), 'a confidence badge should render once live suggestion data exists for this lesson');
 });
 
 test('opening a different lesson that happens to link the same IC does not inherit the previous lesson\'s stale confidence tier', () => {
@@ -2645,6 +2648,7 @@ test('opening a different lesson that happens to link the same IC does not inher
   // Open lesson A (sa_1) and simulate a live "Suggest" score for the shared IC.
   sandbox.plannerOpenLessonDrawerFromCard('sa_1');
   getState().plannerUi.suggestionScores = { ic_shared: 5 };
+  getState().plannerUi.suggestionLessonId = 'sa_1';
   const saHtml = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
   assert.ok(saHtml.includes('planner-ic-confidence'), 'sanity: the shared IC shows a confidence tier while its score is live for this lesson');
 
@@ -2652,6 +2656,75 @@ test('opening a different lesson that happens to link the same IC does not inher
   sandbox.plannerOpenLessonDrawerFromCard('ul_1');
   const ulHtml = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
   assert.ok(!ulHtml.includes('planner-ic-confidence'), 'a different lesson opened afterward must not inherit the previous lesson\'s stale confidence tier for the same IC');
+});
+
+test('suggestedICIds/suggestionScores left stale by a hypothetical future call site that forgets to clear them still cannot leak into a different lesson\'s panel, because suggestionLessonId gates them', () => {
+  // This is the actual architectural guarantee requested: correctness must not depend
+  // on every present and future "switch to a different lesson" call site remembering
+  // to explicitly clear suggestedICIds/suggestionScores. Simulate exactly that lapse —
+  // change the selected lesson WITHOUT going through plannerOpenLessonDrawer/
+  // plannerSwitchDrawerToEdit at all (bypassing every existing clear) — and confirm the
+  // suggestionLessonId mismatch alone is still enough to suppress the stale data.
+  resetState();
+  const st = getState();
+  st.instructionalComponents = [
+    { id: 'ic_1', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [], name: 'Reads a numeral beyond 10 000', description: 'Student can read a numeral beyond 10 000.', isArchived: false, ownerTier: 'system_default', suppressedByTeacher: false },
+    { id: 'ic_2', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [], name: 'Writes a numeral beyond 10 000', description: 'Student can write a numeral beyond 10 000.', isArchived: false, ownerTier: 'system_default', suppressedByTeacher: false },
+  ];
+  // No subject set, so the candidate pool isn't filtered by curriculum descriptor at
+  // all (plannerICResultsHtml's subjectPool passes everything through when there's no
+  // subject to match against) — keeps this test focused purely on the suggestion-state
+  // guard, not curriculum-code fixture setup.
+  const saIdx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[saIdx] = { ...st.lessonPlans[saIdx], subject: '' };
+
+  // Simulate stale suggestion state exactly as plannerSuggestICsFromIntention() would
+  // leave it after running for a DIFFERENT, no-longer-selected lesson — but bypass every
+  // reset function entirely, standing in for a future call site that forgot to clear.
+  st.plannerUi.suggestedICIds = ['ic_1'];
+  st.plannerUi.suggestionScores = { ic_1: 6 };
+  st.plannerUi.suggestionLessonId = 'a_different_lesson_id_never_opened_here';
+  st.plannerUi.selectedLessonId = 'sa_1';
+  st.plannerUi.drawerOpen = true;
+  st.plannerUi.drawerMode = 'edit';
+
+  const html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(!html.includes('Strong matches') && !html.includes('Other matches'), 'the picker must show the plain browse list, not stale grouped suggestion results, despite suggestedICIds/suggestionScores never having been cleared for this lesson');
+  assert.ok(html.includes('ic_2') || html.includes('Writes a numeral beyond 10 000'), 'the full candidate pool should render (ic_2 included), not just the stale suggested id (ic_1)');
+});
+
+test('a brand-new lesson from plannerAddLesson()/unitAddLesson() never shows a confidence badge left over from an earlier, unrelated lesson\'s Suggest run', () => {
+  // plannerAddLesson/unitAddLesson reset suggestedICIds when creating a new lesson, but
+  // (unlike plannerOpenLessonDrawer) do not also reset suggestionScores — that gap alone
+  // used to be enough to leak a stale confidence badge into the new lesson's view-mode
+  // IC summary once an IC got linked to it and the drawer was switched to view. The
+  // suggestionLessonId guard closes this regardless, without needing that reset added.
+  resetState();
+  const st = getState();
+  st.curriculumCodes = [{ Code: 'AC9M3N01', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'some descriptor' }];
+  st.instructionalComponents = [{
+    id: 'ic_x', homeDescriptorId: 'AC9M3N01', linkedDescriptorIds: [],
+    name: 'Some intention IC', description: '', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false,
+  }];
+
+  // Run Suggest for an existing lesson first, leaving suggestionScores/suggestionLessonId
+  // pointing at ic_x for that lesson (unrelated to the new lesson we're about to create).
+  const ulIdx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[ulIdx] = { ...st.lessonPlans[ulIdx], subject: 'Mathematics', intention: 'Some intention text here.' };
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  sandbox.plannerSwitchDrawerToEdit();
+  sandbox.plannerSuggestICsFromIntention();
+  assert.ok(getState().plannerUi.suggestionScores.ic_x !== undefined, 'sanity: Suggest produced a score for ic_x against the existing lesson');
+
+  // Now create a brand-new unit lesson and manually link the SAME IC to it (as if the
+  // teacher added it via search, not Suggest), then view it.
+  sandbox.unitAddLesson('unit_1');
+  const newLessonId = getState().plannerUi.selectedLessonId;
+  sandbox.plannerToggleLessonIC('ic_x');
+  sandbox.plannerSwitchDrawerToView();
+
+  const html = sandbox.plannerDrawerHtml(lessonById(newLessonId), []);
+  assert.ok(!html.includes('planner-ic-confidence'), 'the brand-new lesson must not show a confidence badge computed for a different, unrelated lesson');
 });
 
 test('view mode renders a unit lesson\'s schedule as plain text, with no week/day picker, and no unit-context trailer', () => {
