@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.75
+ * THIS FILE IS VERSION: 1.13.76
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.76 - Fix: marking a unit lesson "taught" from one Week Board occurrence used to set lesson.teachingStatus directly, flipping every other scheduled occurrence of that same lesson to "Taught" too, including ones that hadn't happened yet. Taught state is now tracked per scheduled occurrence — each entry in lesson.scheduledSlots gets an optional `taught` boolean (absent/false by default, tolerated everywhere as optional). A new per-occurrence toggle (board occurrence card + the drawer's schedule chips) appears once a lesson has more than one scheduled occurrence and sets only that slot's flag; teachingStatus is then re-derived (unitLessonDerivedTeachingStatus): 0 taught leaves it as-is (never overwrites a manual "Needs review"/"Reteach"), some-but-not-all becomes "Partially taught", all becomes "Taught". A lesson with 0 or 1 scheduledSlots (all standalone lessons included) is completely unaffected — no toggle appears, no derivation runs, the manual "Teaching status" dropdown works exactly as before. Status badges (board card, Unit Plans row, drawer view mode) now append a "taught/total" fraction for a multi-slot lesson via a new unitLessonStatusBadgeHtml(). unitLessonStats (the only other reader of teachingStatus for a yes/no "is this taught" check — audited every read of teachingStatus in the codebase; the 80%/Coverage Gaps/Bulk Assess systems mentioned in the report turned out to be entirely IC/student-mastery based and never touch lesson.teachingStatus at all) now routes through a new shared unitLessonIsEffectivelyTaught() helper, true when teachingStatus is 'taught' OR at least one occurrence is individually marked taught. plannerMoveScheduledSlot (drag to another day) now preserves a slot's taught flag across the move. Verified in a real browser (Playwright) as well as 14 new automated tests.
  * v1.13.75 - Hardening: suggestedICIds/suggestionScores are session-global state, not stored per lesson, so the IC picker's browse-vs-suggested-results decision (and the view-mode confidence badge) has always depended on every "switch to a different lesson" call site remembering to explicitly clear them — plannerOpenLessonDrawer does; plannerAddLesson/unitAddLesson only cleared suggestedICIds, not suggestionScores, which could leak a stale confidence badge into a brand-new lesson's view-mode summary once an IC was linked to it. Added state.plannerUi.suggestionLessonId, set alongside suggestedICIds/suggestionScores whenever plannerSuggestICsFromIntention runs; plannerICResultsHtml and plannerSelectedICsViewHtml now both check it matches the lesson actually being rendered before trusting either field at all. This closes the plannerAddLesson/unitAddLesson gap and makes the whole mechanism correct by construction — a future call site that forgets to clear can no longer leak suggestion state across lessons, matching the scope-by-lesson-id fix requested in review. The direct card-click/row-click path (open a lesson, run Suggest, switch to a different lesson that never ran it) was re-verified working correctly both before and after this change, in the automated suite and in a real browser via Playwright.
  * v1.13.74 - Fix (review finding on 1.13.73's Lesson Drawer view mode): plannerOpenLessonDrawer() reset suggestedICIds/icSearch/expandedICId but never suggestionScores, and the new view-mode IC summary reads suggestionScores directly, keyed only by IC id with no per-lesson scoping — so opening a different lesson that happens to link the same IC as one just scored via "Suggest from intention" could show that IC's confidence tier as if it applied to the new lesson's (unrelated) intention. suggestionScores is now cleared on every drawer open, same as the other suggestion-session fields. Covered by a new regression test, confirmed to fail against the pre-fix code.
  * v1.13.73 - Weekly Planner/Unit Plans: the Lesson Drawer now opens in a compact, read-only view mode by default for an existing lesson with content (title/subject/status as plain text or a badge, learning intention as text, linked ICs as name + code + confidence tier only, resource links as plain clickable anchors, current schedule as plain text) — an "Edit" button switches to today's full editable form, which now carries a "‹ Done" button to step back to view mode without closing and reopening the drawer. A brand-new lesson (nothing filled in yet) still opens straight into Edit, since there is nothing to view. Applies to both the standalone Weekly Planner drawer and the Unit Plans lesson drawer; the Unit details side panel (linked CDs/assessment notes) in Unit Plans is unaffected. Edit mode's own fields/behaviour are unchanged. New plannerLessonHasContent()/plannerSwitchDrawerToEdit()/plannerSwitchDrawerToView() plus a parallel set of view-mode renderers (plannerStandaloneLessonViewHtml, plannerUnitLessonViewFieldsHtml, unitLessonScheduleViewHtml, plannerResourceLinksViewHtml, plannerSelectedICsViewHtml, unitLessonViewHtml), driven by a new state.plannerUi.drawerMode flag. Verified in a real browser (Playwright) as well as the automated test suite.
@@ -117,7 +118,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.75';
+const APP_VERSION = '1.13.76';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1430,13 +1431,25 @@ function plannerCloseResourcePopover() {
 function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
   const unit = unitForLesson(lesson);
   const unitTitle = unit ? (unit.title || 'Untitled unit') : 'Unit';
-  const isTaught = lesson.teachingStatus === 'taught';
+  // .is-taught (the card's own visual state) reflects THIS occurrence's own taught
+  // flag, not the lesson-wide teachingStatus — a lesson can be "Partially taught 1/2"
+  // overall while this specific day either has or hasn't happened yet, and the two
+  // occurrence cards must be able to disagree. The status badge alongside it still
+  // shows the lesson-wide picture (with its own taught/total fraction).
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  const slot = slots.find(s => s && s.weekKey === weekKey && s.dayKey === dayKey);
+  const isTaught = !!(slot && slot.taught === true);
+  // The per-occurrence taught toggle only makes sense (and only appears) once a lesson
+  // has more than one scheduled occurrence — a single-occurrence lesson has no "which
+  // one do I mean" ambiguity to resolve, so it keeps using the drawer's manual
+  // "Teaching status" dropdown exactly as before this feature existed.
+  const showTaughtToggle = slots.length > 1;
   const openExpr = `plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`;
   return `
     <div class="planner-occ-wrap" data-occurrence="${escapeHtml(weekKey)}|${escapeHtml(dayKey)}"
       ondragover="plannerCardDragOver(event, '${plannerJsStr(dayKey)}', '${plannerJsStr(lesson.id)}')"
     >
-      <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''}"
+      <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''} ${showTaughtToggle ? 'has-taught-toggle' : ''}"
         draggable="true"
         ondragstart="plannerStartOccurrenceDrag(event, '${plannerJsStr(lesson.id)}', '${plannerJsStr(weekKey)}', '${plannerJsStr(dayKey)}')"
         ondragend="plannerEndLessonDrag(event)"
@@ -1445,10 +1458,15 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
         <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
         <div class="planner-lesson-card-tags">
           <span class="planner-unit-chip" title="Unit: ${escapeHtml(unitTitle)}">${escapeHtml(unitTitle)}</span>
-          ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
+          ${unitLessonStatusBadgeHtml(lesson)}
           ${plannerResourceIndicatorHtml(lesson, lesson.id + '::' + weekKey + '::' + dayKey)}
         </div>
         <div class="planner-card-actions">
+          ${showTaughtToggle ? `<button class="planner-occ-taught-toggle ${isTaught ? 'is-on' : ''}" type="button"
+            title="${isTaught ? 'Mark this occurrence as not taught' : 'Mark this occurrence as taught'}"
+            aria-label="${isTaught ? `Mark ${escapeHtml(lesson.title || 'lesson')}'s ${escapeHtml(dayKey)} occurrence as not taught` : `Mark ${escapeHtml(lesson.title || 'lesson')}'s ${escapeHtml(dayKey)} occurrence as taught`}"
+            onclick="event.stopPropagation();unitToggleOccurrenceTaught('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')"
+            onkeydown="event.stopPropagation()">✓</button>` : ''}
           <button class="planner-occ-remove" type="button" title="Remove from this day"
             aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
             onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')"
@@ -2547,11 +2565,14 @@ function isValidResourceLink(link) {
 }
 
 // Append a {weekKey, dayKey} slot to a lesson, de-duping an identical entry so the
-// same lesson cannot stack two cards on one day. Returns a new lesson object.
-function lessonWithScheduledSlot(lesson, weekKey, dayKey) {
+// same lesson cannot stack two cards on one day. Returns a new lesson object. `extra`
+// carries additional fields onto a newly-added slot (e.g. { taught: true }) — used by
+// plannerMoveScheduledSlot to preserve a slot's taught flag across a drag-to-move,
+// since that's implemented as remove-then-add rather than an in-place mutation.
+function lessonWithScheduledSlot(lesson, weekKey, dayKey, extra = {}) {
   const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
   const exists = slots.some(s => s && s.weekKey === weekKey && s.dayKey === dayKey);
-  const next = exists ? slots.slice() : [...slots, { weekKey, dayKey }];
+  const next = exists ? slots.slice() : [...slots, { weekKey, dayKey, ...extra }];
   return { ...lesson, scheduledSlots: next };
 }
 
@@ -2619,8 +2640,12 @@ function plannerMoveScheduledSlot(lessonId, fromWeekKey, fromDayKey, toWeekKey, 
     toast('Already scheduled on that day', 'info');
     return false;
   }
+  // A move is remove-then-add, not an in-place edit — carry the source slot's taught
+  // flag over to the new slot so dragging an occurrence to a different day doesn't
+  // silently reset whether it had been marked taught.
+  const movedSlot = slots.find(s => s && s.weekKey === fromWeekKey && s.dayKey === fromDayKey);
   lesson = lessonWithoutScheduledSlot(lesson, fromWeekKey, fromDayKey);
-  lesson = lessonWithScheduledSlot(lesson, toWk, toDayKey);
+  lesson = lessonWithScheduledSlot(lesson, toWk, toDayKey, movedSlot && movedSlot.taught === true ? { taught: true } : {});
   state.lessonPlans[idx] = lesson;
   saveLessonPlansState();
   return true;
@@ -3139,11 +3164,18 @@ function normalizeLessonPlan(raw = {}) {
     position: Number.isFinite(raw.position) ? raw.position : 0,
     // ── Unit Plans (PR1) ──
     unitId: String(raw.unitId || ''),         // which unit this lesson belongs to (empty = standalone)
-    // [{weekKey, dayKey}] — wired up in PR2. Drop malformed entries (see isValidScheduledSlot)
-    // and de-dupe identical (weekKey,dayKey) pairs, so stale/hand-edited localStorage can't strand
-    // a lesson or render the same occurrence twice (where a single ✕ would remove both).
+    // [{weekKey, dayKey, taught?}] — wired up in PR2; `taught` (per-occurrence, added
+    // later) tracks whether THIS scheduled day was actually taught, independent of any
+    // other occurrence of the same lesson (see unitToggleOccurrenceTaught). Drop
+    // malformed entries (see isValidScheduledSlot) and de-dupe identical (weekKey,dayKey)
+    // pairs, so stale/hand-edited localStorage can't strand a lesson or render the same
+    // occurrence twice (where a single ✕ would remove both). Rebuilt fresh rather than
+    // just filtered, so a malformed `taught` (anything but the literal boolean `true`)
+    // silently normalises to absent/false instead of being carried through as garbage —
+    // absent and false are equivalent everywhere this is read.
     scheduledSlots: (Array.isArray(raw.scheduledSlots) ? raw.scheduledSlots.filter(isValidScheduledSlot) : [])
-      .filter((s, i, arr) => arr.findIndex(o => o.weekKey === s.weekKey && o.dayKey === s.dayKey) === i),
+      .filter((s, i, arr) => arr.findIndex(o => o.weekKey === s.weekKey && o.dayKey === s.dayKey) === i)
+      .map(s => (s.taught === true ? { weekKey: s.weekKey, dayKey: s.dayKey, taught: true } : { weekKey: s.weekKey, dayKey: s.dayKey })),
     teachingStatus: ['planned','taught','partially-taught','needs-review','reteach'].includes(raw.teachingStatus) ? raw.teachingStatus : (status === 'taught' ? 'taught' : 'planned'),
     // Reference material for the lesson (video/worksheet/slides/etc). [] by default.
     // Drop malformed entries (see isValidResourceLink) and rebuild fresh {label,url}
@@ -3561,9 +3593,27 @@ function unitGetLessons(unit) {
   return (unit.lessonIds || []).map(id => byId.get(id)).filter(Boolean);
 }
 
+// Whether a unit lesson counts as "taught" for downstream stats/gating that just need
+// a yes/no signal rather than the full five-way teachingStatus (unit progress stats
+// today — see unitLessonStats). True when teachingStatus is 'taught' outright (the
+// common case, since unitLessonDerivedTeachingStatus already sets this whenever every
+// scheduled occurrence is taught — including a single-occurrence lesson) OR when at
+// least one occurrence of a multi-slot lesson has been marked taught individually
+// even though teachingStatus itself is still 'partially-taught' — a lesson someone
+// has started teaching shouldn't read as entirely untaught just because it also has
+// future occurrences that haven't happened yet. One shared helper so every call site
+// that needs this yes/no signal reads slot data the same way, rather than each
+// reinterpreting it independently.
+function unitLessonIsEffectivelyTaught(lesson) {
+  if (!lesson) return false;
+  if (lesson.teachingStatus === 'taught') return true;
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  return slots.some(s => s && s.taught === true);
+}
+
 function unitLessonStats(unit) {
   const lessons = unitGetLessons(unit);
-  return { total: lessons.length, taught: lessons.filter(l => l.teachingStatus === 'taught').length };
+  return { total: lessons.length, taught: lessons.filter(unitLessonIsEffectivelyTaught).length };
 }
 
 function unitTeachingStatusMeta(status) {
@@ -3573,6 +3623,70 @@ function unitTeachingStatusMeta(status) {
 function unitTeachingStatusBadgeHtml(status) {
   const meta = unitTeachingStatusMeta(status);
   return `<span class="unit-status-badge is-${meta.key}">${meta.label}</span>`;
+}
+
+// Status badge for a unit lesson specifically (as opposed to unitTeachingStatusBadgeHtml,
+// which just renders a bare status key) — appends a "taught/total" fraction for a
+// lesson scheduled on more than one occurrence, so partial progress through a
+// multi-slot lesson is visible at a glance rather than collapsed into one label. A
+// lesson with 0 or 1 scheduledSlots renders exactly as before (no fraction — there's
+// at most one occurrence to report on).
+function unitLessonStatusBadgeHtml(lesson) {
+  const meta = unitTeachingStatusMeta(lesson.teachingStatus);
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  if (slots.length <= 1) return `<span class="unit-status-badge is-${meta.key}">${meta.label}</span>`;
+  const taughtCount = slots.filter(s => s && s.taught === true).length;
+  return `<span class="unit-status-badge is-${meta.key}">${meta.label} ${taughtCount}/${slots.length}</span>`;
+}
+
+// Recomputes a unit lesson's overall teachingStatus from its per-occurrence taught
+// flags — the derived counterpart to the manual "Teaching status" dropdown
+// (unitSetLessonTeachingStatus), which sets the whole lesson's status directly and is
+// untouched by this. Only meaningful for a lesson scheduled on MORE THAN ONE
+// occurrence — a lesson with 0 or 1 scheduledSlots keeps whatever teachingStatus it
+// already has and is otherwise unaffected by this feature (see
+// unitToggleOccurrenceTaught / the per-occurrence toggle UI, both of which only
+// appear for a lesson with more than one slot in the first place, so this early
+// return is a defensive backstop rather than the primary gate).
+//   - 0 of N occurrences taught: leave teachingStatus exactly as it is — this is what
+//     stops a manual "Needs review"/"Reteach" choice from being silently overwritten
+//     just because no occurrence has been marked taught yet.
+//   - Some but not all taught: 'partially-taught'.
+//   - All taught: 'taught'.
+function unitLessonDerivedTeachingStatus(lesson) {
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  if (slots.length <= 1) return lesson.teachingStatus;
+  const taughtCount = slots.filter(s => s && s.taught === true).length;
+  if (taughtCount === 0) return lesson.teachingStatus;
+  if (taughtCount === slots.length) return 'taught';
+  return 'partially-taught';
+}
+
+// Toggle whether ONE specific scheduled occurrence has been taught — the per-occurrence
+// counterpart to marking a lesson taught from the Week Board, fixing the bug where
+// that used to set lesson.teachingStatus directly and so flipped every occurrence of
+// the same lesson to "Taught" at once, including ones that hadn't happened yet. This
+// only ever touches the one matching slot; the lesson's overall teachingStatus is then
+// re-derived from however many of its occurrences are now marked (see
+// unitLessonDerivedTeachingStatus). Only reachable through UI rendered for a lesson
+// with more than one scheduled occurrence (see plannerUnitOccurrenceCardHtml /
+// unitLessonScheduleHtml) — a single-occurrence lesson keeps using the manual dropdown
+// exactly as before, since there's no per-occurrence ambiguity for it to resolve.
+function unitToggleOccurrenceTaught(lessonId, weekKey, dayKey) {
+  const idx = state.lessonPlans.findIndex(l => l.id === lessonId);
+  if (idx < 0) return;
+  const lesson = state.lessonPlans[idx];
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  const slotIdx = slots.findIndex(s => s && s.weekKey === weekKey && s.dayKey === dayKey);
+  if (slotIdx < 0) return;
+  const nextSlots = slots.slice();
+  const nowTaught = !(nextSlots[slotIdx].taught === true);
+  nextSlots[slotIdx] = nowTaught ? { weekKey, dayKey, taught: true } : { weekKey, dayKey };
+  const nextLesson = { ...lesson, scheduledSlots: nextSlots };
+  nextLesson.teachingStatus = unitLessonDerivedTeachingStatus(nextLesson);
+  state.lessonPlans[idx] = nextLesson;
+  saveLessonPlansState();
+  renderView();
 }
 
 // ── Routing: list vs detail ──
@@ -3857,7 +3971,7 @@ function unitLessonRowHtml(unit, lesson) {
         ${intentionShort ? `<div class="unit-lesson-intention">${escapeHtml(intentionShort)}</div>` : ''}
         <div class="unit-lesson-tags">
           <span class="unit-lesson-chip">${icCount} IC${icCount === 1 ? '' : 's'}</span>
-          ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
+          ${unitLessonStatusBadgeHtml(lesson)}
           <span class="unit-lesson-chip">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
         </div>
       </div>
@@ -3941,7 +4055,7 @@ function plannerUnitLessonViewFieldsHtml(lesson) {
       </div>
       <div class="form-group">
         <label class="form-label">Teaching status</label>
-        ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
+        ${unitLessonStatusBadgeHtml(lesson)}
       </div>
 
       ${plannerResourceLinksViewHtml(lesson)}
@@ -3975,18 +4089,27 @@ function unitLessonDrawerHtml(lesson) {
 
 // Non-drag scheduling fallback (for touch / tablet use): pick a week + weekday and add
 // it to this lesson's scheduledSlots, the same result as dragging the lesson onto the
-// board. Also lists the lesson's current slots, each with a per-slot ✕ remove (not a
-// bulk "clear all"). Mirrors the board: appends to scheduledSlots, leaves teachingStatus alone.
+// board. Also lists the lesson's current slots, each with a per-slot taught toggle and
+// ✕ remove (not a bulk "clear all"). Mirrors the board: appends to scheduledSlots,
+// leaves teachingStatus alone (unitToggleOccurrenceTaught re-derives it separately).
 function unitLessonScheduleHtml(lesson) {
   // Only render well-formed slots (mirrors normalize + the board loop), so a stale or
   // malformed entry can't throw or render a broken chip in the drawer.
   const slots = (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [])
     .filter(isValidScheduledSlot);
   const dayLabels = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' };
+  // Same "only for a multi-slot lesson" gate as the board's per-occurrence toggle
+  // (see plannerUnitOccurrenceCardHtml) — a single-occurrence lesson keeps using the
+  // manual "Teaching status" dropdown above, unchanged.
+  const showTaughtToggle = slots.length > 1;
   const slotList = slots.length
     ? slots.map(s => `
-        <span class="planner-slot-chip">
+        <span class="planner-slot-chip ${s.taught === true ? 'is-taught' : ''}">
           ${escapeHtml(plannerWeekRangeLabel(s.weekKey))} · ${escapeHtml(dayLabels[s.dayKey] || s.dayKey)}
+          ${showTaughtToggle ? `<button class="planner-slot-taught-toggle ${s.taught === true ? 'is-on' : ''}" type="button"
+            title="${s.taught === true ? 'Mark as not taught' : 'Mark as taught'}"
+            aria-label="${s.taught === true ? 'Mark this occurrence as not taught' : 'Mark this occurrence as taught'}"
+            onclick="unitToggleOccurrenceTaught('${plannerJsStr(lesson.id)}','${plannerJsStr(s.weekKey)}','${plannerJsStr(s.dayKey)}')">✓</button>` : ''}
           <button class="planner-slot-remove" type="button" title="Remove this slot"
             aria-label="Remove this scheduled slot"
             onclick="unitUnscheduleLessonSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(s.weekKey)}','${plannerJsStr(s.dayKey)}')">×</button>
@@ -4017,13 +4140,14 @@ function unitLessonScheduleHtml(lesson) {
 }
 
 // View-mode counterpart to unitLessonScheduleHtml: current schedule as plain text
-// chips, no week/day picker or per-slot remove control.
+// chips (each showing its own taught state, not just the lesson-wide status), no
+// week/day picker, no per-slot remove or taught-toggle control.
 function unitLessonScheduleViewHtml(lesson) {
   const slots = (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [])
     .filter(isValidScheduledSlot);
   const dayLabels = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' };
   const slotList = slots.length
-    ? slots.map(s => `<span class="planner-slot-chip">${escapeHtml(plannerWeekRangeLabel(s.weekKey))} · ${escapeHtml(dayLabels[s.dayKey] || s.dayKey)}</span>`).join('')
+    ? slots.map(s => `<span class="planner-slot-chip ${s.taught === true ? 'is-taught' : ''}">${escapeHtml(plannerWeekRangeLabel(s.weekKey))} · ${escapeHtml(dayLabels[s.dayKey] || s.dayKey)}${s.taught === true ? ' · ✓ Taught' : ''}</span>`).join('')
     : `<div class="planner-slot-empty">Not scheduled onto the week yet.</div>`;
   return `
     <div class="form-group" style="margin-bottom:0">

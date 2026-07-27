@@ -1428,6 +1428,13 @@ body[data-text-size="large"] {
   /* Reserves room for the ✕ remove button in the top-right actions cluster. */
   padding-right: 32px;
 }
+/* A multi-slot lesson's occurrence card also shows the per-occurrence taught toggle
+   next to ✕ — reserve room for both (24px each + 3px gap + a little breathing room).
+   A single-occurrence lesson has no taught toggle at all, so its card keeps the
+   narrower padding above, unchanged from before this feature existed. */
+.planner-lesson-card.is-unit.has-taught-toggle {
+  padding-right: 58px;
+}
 .planner-unit-chip {
   /* inline-block so max-width + ellipsis actually clamp long unit titles
      (an inline span ignores width/overflow outside a flex/grid context). */
@@ -1472,6 +1479,33 @@ body[data-text-size="large"] {
   color: var(--status-danger-text);
   border-color: var(--status-danger-border);
   background: var(--status-danger-bg);
+}
+/* Per-occurrence "mark taught" toggle — same size/shape as the ✕ remove button next
+   to it, distinguished by icon (✓) and colour (green once on) rather than layout. */
+.planner-occ-taught-toggle {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text3);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.planner-occ-taught-toggle:hover {
+  color: var(--status-success-text);
+  border-color: var(--status-success-border);
+  background: var(--status-success-bg);
+}
+.planner-occ-taught-toggle.is-on {
+  color: var(--status-success-text);
+  border-color: var(--status-success-border);
+  background: var(--status-success-bg);
 }
 
 /* Left rail: each unit's unscheduled lessons, draggable onto a day. */
@@ -1596,6 +1630,30 @@ body[data-text-size="large"] {
   justify-content: center;
 }
 .planner-slot-remove:hover { color: var(--status-danger-text); }
+/* A slot marked taught tints its whole chip green rather than just the toggle, so a
+   taught occurrence is distinguishable from the rest of the list at a glance. */
+.planner-slot-chip.is-taught {
+  background: var(--status-success-bg);
+  border-color: var(--status-success-border);
+  color: var(--status-success-text);
+}
+.planner-slot-taught-toggle {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.5;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.planner-slot-taught-toggle:hover { opacity: 1; }
+.planner-slot-taught-toggle.is-on { opacity: 1; }
 .planner-slot-empty {
   font-size: var(--helper-size);
   color: var(--text3);

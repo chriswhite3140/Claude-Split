@@ -2815,6 +2815,196 @@ test('the full render pipeline does not throw with the drawer open in either vie
   assert.doesNotThrow(() => realRenderView(), 'a unit lesson in edit mode should render without throwing');
 });
 
+// ── Per-occurrence taught tracking for multi-slot unit lessons ──────────────────
+console.log('Per-occurrence taught tracking for multi-slot unit lessons');
+
+test('normalizeLessonPlan preserves a well-formed taught:true slot and normalises anything else to absent', () => {
+  const lesson = sandbox.normalizeLessonPlan({
+    id: 'x', unitId: 'unit_1', scheduledSlots: [
+      { weekKey: WEEK_A, dayKey: 'mon', taught: true },
+      { weekKey: WEEK_A, dayKey: 'tue' }, // absent — the ordinary case
+      { weekKey: WEEK_A, dayKey: 'wed', taught: 'true' }, // string, not boolean — malformed
+      { weekKey: WEEK_A, dayKey: 'thu', taught: 1 }, // truthy but not boolean — malformed
+    ],
+  });
+  eqJson(lesson.scheduledSlots, [
+    { weekKey: WEEK_A, dayKey: 'mon', taught: true },
+    { weekKey: WEEK_A, dayKey: 'tue' },
+    { weekKey: WEEK_A, dayKey: 'wed' },
+    { weekKey: WEEK_A, dayKey: 'thu' },
+  ], 'only a literal boolean true survives as taught:true; anything else normalises to absent, not to false');
+});
+
+test('isValidScheduledSlot tolerates a slot with or without a taught field — it is optional, never required', () => {
+  assert.strictEqual(sandbox.isValidScheduledSlot({ weekKey: WEEK_A, dayKey: 'mon' }), true, 'a slot with no taught field is still valid');
+  assert.strictEqual(sandbox.isValidScheduledSlot({ weekKey: WEEK_A, dayKey: 'mon', taught: true }), true, 'a slot with taught:true is still valid');
+});
+
+test('plannerMoveScheduledSlot (drag to another day) preserves a taught occurrence\'s taught flag', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }] };
+  sandbox.plannerMoveScheduledSlot('ul_1', WEEK_A, 'mon', WEEK_A, 'wed');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'wed', taught: true }], 'the moved slot must keep taught:true, not reset it just because it changed days');
+});
+
+test('plannerMoveScheduledSlot does not spuriously add a taught flag to a not-yet-taught occurrence', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerMoveScheduledSlot('ul_1', WEEK_A, 'mon', WEEK_A, 'wed');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'wed' }], 'a slot that was never taught must not gain a taught field just from moving');
+});
+
+test('unitToggleOccurrenceTaught on a 2-slot lesson sets only the toggled slot, leaving the other slot and lesson identity untouched', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }, { weekKey: WEEK_A, dayKey: 'wed' }], 'only the Monday slot should be marked taught; Wednesday must be untouched');
+});
+
+test('unitToggleOccurrenceTaught derives partially-taught, then taught, as occurrences are marked one by one', () => {
+  resetState();
+  const st = getState();
+  st.lessonPlans[st.lessonPlans.findIndex(l => l.id === 'ul_1')].teachingStatus = 'planned';
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'partially-taught', '1 of 2 occurrences taught should auto-compute to partially-taught');
+
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'wed');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', '2 of 2 occurrences taught should auto-compute to taught');
+});
+
+test('unitToggleOccurrenceTaught is a toggle — un-marking a taught occurrence recomputes back down from taught to partially-taught', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'wed');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'sanity: both marked, fully taught');
+
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'wed'); // un-mark one of the two
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'partially-taught', 'un-marking one of two taught occurrences should recompute down to partially-taught');
+  eqJson(lessonById('ul_1').scheduledSlots, [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }, { weekKey: WEEK_A, dayKey: 'wed' }]);
+});
+
+test('0 of N occurrences taught never overwrites the lesson\'s current teachingStatus — including the documented edge case of un-marking the last taught occurrence', () => {
+  resetState();
+  const st = getState();
+  // ul_2 starts as 'reteach' in the fixture — a deliberate manual choice that must
+  // survive scheduling slots with nothing marked taught yet.
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_2', WEEK_A, 'wed');
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'reteach', 'scheduling slots with none taught yet must not disturb a manual "Reteach" choice');
+
+  // Mark one, then un-mark it again — the ONLY occurrence ever marked taught is now
+  // unmarked, so taughtCount is back to 0. Per spec this leaves teachingStatus exactly
+  // as it currently reads (documented, accepted behaviour — not rolled back further).
+  sandbox.unitToggleOccurrenceTaught('ul_2', WEEK_A, 'mon');
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'partially-taught', 'sanity: marking one of two occurrences auto-computes to partially-taught, overriding the manual Reteach choice');
+  sandbox.unitToggleOccurrenceTaught('ul_2', WEEK_A, 'mon'); // un-mark the only taught occurrence
+  assert.strictEqual(lessonById('ul_2').teachingStatus, 'partially-taught', 'back to 0 of 2 taught leaves teachingStatus exactly as it currently is (partially-taught, stale) rather than resetting it — correctable via the manual dropdown like any other status change');
+});
+
+test('a multi-slot lesson\'s per-occurrence taught toggle only appears once it has more than one scheduled occurrence — a single-occurrence lesson keeps behaving exactly as today', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const singleSlotHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  assert.ok(!singleSlotHtml.includes('planner-occ-taught-toggle'), 'a single-occurrence lesson\'s board card must not show the new per-occurrence toggle');
+  assert.ok(singleSlotHtml.includes('planner-occ-remove'), 'the ✕ remove control should still be there, unaffected');
+  assert.ok(!singleSlotHtml.includes('has-taught-toggle'), 'the card should not reserve the wider action-cluster padding either, since there is nothing extra to reserve space for');
+
+  const singleSlotScheduleHtml = sandbox.unitLessonScheduleHtml(lessonById('ul_1'));
+  assert.ok(!singleSlotScheduleHtml.includes('planner-slot-taught-toggle'), 'the drawer\'s schedule chip for a single-occurrence lesson must not show the toggle either');
+
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed'); // now a 2-slot lesson
+  const multiSlotHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  assert.ok(multiSlotHtml.includes('planner-occ-taught-toggle'), 'once scheduled on more than one day, the board card should show the per-occurrence toggle');
+  assert.ok(multiSlotHtml.includes('has-taught-toggle'), 'the card should reserve the wider padding once the toggle is present');
+
+  const multiSlotScheduleHtml = sandbox.unitLessonScheduleHtml(lessonById('ul_1'));
+  assert.ok(multiSlotScheduleHtml.includes('planner-slot-taught-toggle'), 'the drawer\'s schedule chips should show the toggle too, once there is more than one');
+});
+
+test('unitLessonDerivedTeachingStatus leaves a single- or zero-slot lesson\'s teachingStatus completely unchanged, regardless of that one slot\'s own taught flag', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], teachingStatus: 'needs-review', scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }] };
+  assert.strictEqual(sandbox.unitLessonDerivedTeachingStatus(lessonById('ul_1')), 'needs-review', 'a single scheduled occurrence, even one marked taught, must not auto-derive a new status');
+
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [] };
+  assert.strictEqual(sandbox.unitLessonDerivedTeachingStatus(lessonById('ul_1')), 'needs-review', 'a lesson with no scheduled slots at all must not auto-derive a new status either');
+});
+
+test('the manual "Teaching status" dropdown (unitSetLessonTeachingStatus) still directly overrides any auto-derived status, untouched by this feature', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'wed');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'sanity: fully auto-derived taught');
+
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'ul_1';
+  sandbox.unitSetLessonTeachingStatus('needs-review');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'needs-review', 'the manual dropdown must still be able to directly override an auto-derived status');
+});
+
+test('unitLessonStatusBadgeHtml shows no fraction for a 0- or 1-slot lesson, and a taught/total fraction once there is more than one occurrence', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+
+  // Check for an actual digit/digit fraction, not a bare "/" — every badge already
+  // contains one as part of its own closing </span> tag.
+  const hasFraction = html => /\d+\/\d+/.test(html);
+
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], teachingStatus: 'planned', scheduledSlots: [] };
+  assert.ok(!hasFraction(sandbox.unitLessonStatusBadgeHtml(lessonById('ul_1'))), 'a lesson with no scheduled slots should show no fraction');
+
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon' }] };
+  assert.ok(!hasFraction(sandbox.unitLessonStatusBadgeHtml(lessonById('ul_1'))), 'a lesson with exactly one scheduled slot should show no fraction');
+
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], teachingStatus: 'partially-taught', scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }, { weekKey: WEEK_A, dayKey: 'wed' }, { weekKey: WEEK_A, dayKey: 'fri' }] };
+  const html = sandbox.unitLessonStatusBadgeHtml(lessonById('ul_1'));
+  assert.ok(html.includes('1/3'), 'a lesson with 1 of 3 occurrences taught should show a 1/3 fraction');
+  assert.ok(html.includes('Partially taught'), 'the status label itself should still render alongside the fraction');
+});
+
+test('unitLessonIsEffectivelyTaught / unitLessonStats count a lesson as taught once ANY occurrence is taught, without requiring every occurrence to be', () => {
+  resetState();
+  const st = getState();
+  const idx1 = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx1] = { ...st.lessonPlans[idx1], teachingStatus: 'partially-taught', scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'mon', taught: true }, { weekKey: WEEK_A, dayKey: 'wed' }] };
+  assert.strictEqual(sandbox.unitLessonIsEffectivelyTaught(lessonById('ul_1')), true, 'a lesson with 1 of 2 occurrences taught should count as effectively taught');
+
+  const idx2 = st.lessonPlans.findIndex(l => l.id === 'ul_2');
+  st.lessonPlans[idx2] = { ...st.lessonPlans[idx2], teachingStatus: 'reteach', scheduledSlots: [{ weekKey: WEEK_A, dayKey: 'tue' }, { weekKey: WEEK_A, dayKey: 'thu' }] };
+  assert.strictEqual(sandbox.unitLessonIsEffectivelyTaught(lessonById('ul_2')), false, 'a lesson with 0 occurrences taught (and not manually set to taught) must not count');
+
+  const unit = st.unitPlans.find(u => u.id === 'unit_1');
+  const stats = sandbox.unitLessonStats(unit);
+  assert.strictEqual(stats.total, 2, 'sanity: the unit has 2 lessons');
+  assert.strictEqual(stats.taught, 1, 'only ul_1 (partially taught, at least one occurrence complete) should count towards the unit\'s taught total');
+});
+
+test('the full render pipeline does not throw with a multi-slot lesson mid-way through being taught', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon');
+  assert.doesNotThrow(() => realRenderView(), 'the board should render without throwing with one of two occurrences marked taught');
+
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  assert.doesNotThrow(() => realRenderView(), 'the lesson drawer (view mode) should render without throwing');
+  sandbox.plannerSwitchDrawerToEdit();
+  assert.doesNotThrow(() => realRenderView(), 'the lesson drawer (edit mode, showing the schedule chips) should render without throwing');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
