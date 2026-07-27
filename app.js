@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.74
+ * THIS FILE IS VERSION: 1.13.75
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.75 - Hardening: suggestedICIds/suggestionScores are session-global state, not stored per lesson, so the IC picker's browse-vs-suggested-results decision (and the view-mode confidence badge) has always depended on every "switch to a different lesson" call site remembering to explicitly clear them — plannerOpenLessonDrawer does; plannerAddLesson/unitAddLesson only cleared suggestedICIds, not suggestionScores, which could leak a stale confidence badge into a brand-new lesson's view-mode summary once an IC was linked to it. Added state.plannerUi.suggestionLessonId, set alongside suggestedICIds/suggestionScores whenever plannerSuggestICsFromIntention runs; plannerICResultsHtml and plannerSelectedICsViewHtml now both check it matches the lesson actually being rendered before trusting either field at all. This closes the plannerAddLesson/unitAddLesson gap and makes the whole mechanism correct by construction — a future call site that forgets to clear can no longer leak suggestion state across lessons, matching the scope-by-lesson-id fix requested in review. The direct card-click/row-click path (open a lesson, run Suggest, switch to a different lesson that never ran it) was re-verified working correctly both before and after this change, in the automated suite and in a real browser via Playwright.
  * v1.13.74 - Fix (review finding on 1.13.73's Lesson Drawer view mode): plannerOpenLessonDrawer() reset suggestedICIds/icSearch/expandedICId but never suggestionScores, and the new view-mode IC summary reads suggestionScores directly, keyed only by IC id with no per-lesson scoping — so opening a different lesson that happens to link the same IC as one just scored via "Suggest from intention" could show that IC's confidence tier as if it applied to the new lesson's (unrelated) intention. suggestionScores is now cleared on every drawer open, same as the other suggestion-session fields. Covered by a new regression test, confirmed to fail against the pre-fix code.
  * v1.13.73 - Weekly Planner/Unit Plans: the Lesson Drawer now opens in a compact, read-only view mode by default for an existing lesson with content (title/subject/status as plain text or a badge, learning intention as text, linked ICs as name + code + confidence tier only, resource links as plain clickable anchors, current schedule as plain text) — an "Edit" button switches to today's full editable form, which now carries a "‹ Done" button to step back to view mode without closing and reopening the drawer. A brand-new lesson (nothing filled in yet) still opens straight into Edit, since there is nothing to view. Applies to both the standalone Weekly Planner drawer and the Unit Plans lesson drawer; the Unit details side panel (linked CDs/assessment notes) in Unit Plans is unaffected. Edit mode's own fields/behaviour are unchanged. New plannerLessonHasContent()/plannerSwitchDrawerToEdit()/plannerSwitchDrawerToView() plus a parallel set of view-mode renderers (plannerStandaloneLessonViewHtml, plannerUnitLessonViewFieldsHtml, unitLessonScheduleViewHtml, plannerResourceLinksViewHtml, plannerSelectedICsViewHtml, unitLessonViewHtml), driven by a new state.plannerUi.drawerMode flag. Verified in a real browser (Playwright) as well as the automated test suite.
  * v1.13.72 - Fix: plannerSuggestICsFromIntention's candidate filter "failed open" for an IC whose homeDescriptorId couldn't be resolved in state.curriculumCodes (e.g. a stub IC loaded before its descriptor CSV), letting it into the scored/ranked list and the toast's suggestion count — but plannerICResultsHtml's own subjectPool requires a resolved, subject-matching descriptor to render an IC at all, so that orphan could never actually appear in the results panel. It only consumed one of the 20 ranked slots (crowding out a real match once 20+ orphans existed) and made the toast's count overstate what actually rendered. Now dropped from the candidate pool at the same filter stage, consistent with the renderer. Covered by two new regression tests, confirmed to fail against the pre-fix code.
@@ -116,7 +117,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.74';
+const APP_VERSION = '1.13.75';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -416,7 +417,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, drawerMode: 'view', draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null, openResourcePopoverCardKey: null, icSuggestionGroupsOpen: {} },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, drawerMode: 'view', draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, suggestionLessonId: null, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null, openResourcePopoverCardKey: null, icSuggestionGroupsOpen: {} },
   unitPlans: loadUnitPlansState(),
   unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   driveSync: { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 },
@@ -1702,7 +1703,10 @@ function plannerSelectedICsViewHtml(lesson) {
   const ids = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : [];
   if (!ids.length) return `<div style="font-size:12px;color:var(--text3)">No ICs linked yet.</div>`;
   const icObjs = ids.map(id => state.instructionalComponents.find(x => x.id === id)).filter(Boolean);
-  const scores = state.plannerUi.suggestionScores || {};
+  // suggestionScores is session-global, not per lesson — only trust it when
+  // suggestionLessonId confirms it was actually computed for THIS lesson (see the
+  // matching guard in plannerICResultsHtml for the full rationale).
+  const scores = state.plannerUi.suggestionLessonId === lesson.id ? (state.plannerUi.suggestionScores || {}) : {};
   const maxScore = Math.max(1, ...icObjs.map(ic => scores[ic.id] || 0));
   return ids.map(id => {
     const ic = state.instructionalComponents.find(x => x.id === id);
@@ -1775,10 +1779,21 @@ function plannerICResultsHtml(lesson) {
     (ic.homeDescriptorId || '').toLowerCase().includes(search)
   );
 
+  // suggestedICIds/suggestionScores are session-global, not stored per lesson — but
+  // suggestionLessonId records which lesson they were actually computed for, so a
+  // result from a DIFFERENT lesson's "Suggest from intention" run can never leak into
+  // this one's picker, even if some future call site that switches the selected lesson
+  // forgets to explicitly clear suggestedICIds/suggestionScores (see plannerOpenLessonDrawer,
+  // plannerSwitchDrawerToEdit, plannerAddLesson, unitAddLesson — every path that changes
+  // which lesson is being edited). This check is the actual guarantee; the explicit
+  // clears elsewhere are just tidiness on top of it.
+  const suggestionsAreForThisLesson = state.plannerUi.suggestionLessonId === lesson.id
+    && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
+
   let resultIcs;
   if (search) {
     resultIcs = pool.filter(matchesICSearch).slice(0, 30);
-  } else if (Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length) {
+  } else if (suggestionsAreForThisLesson) {
     const sugg = new Set(state.plannerUi.suggestedICIds);
     resultIcs = pool.filter(ic => sugg.has(ic.id));
   } else {
@@ -1789,8 +1804,8 @@ function plannerICResultsHtml(lesson) {
   const createRow = `<button class="planner-ic-create" type="button" onclick="plannerOpenCreateICModal()">+ Create new IC</button>`;
 
   // Confidence is meaningful only for intention suggestions (not text search/browse).
-  const scores = state.plannerUi.suggestionScores || {};
-  const showConfidence = !search && Array.isArray(state.plannerUi.suggestedICIds) && state.plannerUi.suggestedICIds.length > 0;
+  const scores = suggestionsAreForThisLesson ? (state.plannerUi.suggestionScores || {}) : {};
+  const showConfidence = !search && suggestionsAreForThisLesson;
 
   // Unit context (Issue 3): ICs covering the unit's linked CDs are the lesson's
   // primary focus, so they get their own group (in browse/search, not the suggestion
@@ -2086,6 +2101,7 @@ function plannerEnsureUiState() {
   if (typeof state.plannerUi.icSearch !== 'string') state.plannerUi.icSearch = '';
   if (!Array.isArray(state.plannerUi.suggestedICIds)) state.plannerUi.suggestedICIds = [];
   if (!state.plannerUi.suggestionScores || typeof state.plannerUi.suggestionScores !== 'object') state.plannerUi.suggestionScores = {};
+  if (typeof state.plannerUi.suggestionLessonId === 'undefined') state.plannerUi.suggestionLessonId = null;
   if (typeof state.plannerUi.expandedICId === 'undefined') state.plannerUi.expandedICId = null;
   if (typeof state.plannerUi.icShowAllYears !== 'boolean') state.plannerUi.icShowAllYears = false;
   if (typeof state.plannerUi.pendingStubForLessonId === 'undefined') state.plannerUi.pendingStubForLessonId = null;
@@ -3070,6 +3086,12 @@ function plannerSuggestICsFromIntention() {
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = suggested;
   state.plannerUi.suggestionScores = scores;
+  // Records WHICH lesson these results belong to — plannerICResultsHtml/
+  // plannerSelectedICsViewHtml both check this against the lesson they're actually
+  // rendering before trusting suggestedICIds/suggestionScores at all, so a stale
+  // result can never render against the wrong lesson even if some future call site
+  // forgets to explicitly clear suggestedICIds/suggestionScores when switching lessons.
+  state.plannerUi.suggestionLessonId = lesson.id;
   // Fresh suggestion run — collapsible group open/closed state should reset to its
   // defaults (see plannerICResultsHtml), not carry over toggles from a previous,
   // unrelated set of suggestions.
