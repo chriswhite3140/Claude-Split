@@ -3259,6 +3259,16 @@ test('the expanded-state header toggle (small square icon button) also got the c
   assert.ok(/background:\s*var\(--surface-alt\)/.test(baseRule), 'the expanded toggle should use --surface-alt rather than blending into the card\'s own --surface background');
 });
 
+test('at phone widths (<768px), a collapsed panel is a short horizontal button rather than the desktop\'s full-height stretched strip with a rotated label', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const mobileBlockMatch = css.match(/@media \(max-width: 767px\) \{[\s\S]*?\n\}/);
+  assert.ok(mobileBlockMatch, 'the mobile (<768px) responsive block must still be present');
+  const mobileCss = mobileBlockMatch[0];
+  assert.ok(/\.planner-unit-rail\.is-collapsed,\s*\n\s*\.planner-shell-drawer\.is-collapsed\s*\{\s*\n\s*min-height:\s*0;/.test(mobileCss), 'a collapsed panel must drop the desktop 300px min-height at phone widths — otherwise it stacks full-width AND stays 300px tall, i.e. most of the screen becomes an oversized tap target');
+  assert.ok(/\.planner-unit-rail\.is-collapsed \.planner-panel-collapse-toggle,\s*\n\s*\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle\s*\{\s*\n\s*flex-direction:\s*row;\s*\n\s*height:\s*44px;/.test(mobileCss), 'the collapsed button must switch to a short, fixed-height horizontal layout at phone widths, not the desktop\'s full-height vertical stack');
+  assert.ok(/::before,\s*\n\s*\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle::before\s*\{\s*\n\s*writing-mode:\s*horizontal-tb;/.test(mobileCss), 'the rotated vertical label must switch back to normal horizontal text at phone widths, since a rotated label only makes sense against the desktop\'s narrow, tall strip');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
