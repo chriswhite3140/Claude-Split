@@ -1554,7 +1554,12 @@ test('an IC\'s own home descriptor determines its year eligibility — a linkedD
   assert.ok(!suggested.includes('ic_leaked'), 'an IC homed on an out-of-year descriptor must not leak through just because it is tethered to an in-year one');
 });
 
-test('an IC whose home descriptor cannot be resolved fails open (still suggested) rather than being silently hidden', () => {
+test('an IC whose home descriptor cannot be resolved is dropped from suggestions, not failed open — the renderer could never show it anyway', () => {
+  // plannerICResultsHtml's own subjectPool requires a resolved, subject-matching
+  // descriptor to render an IC (see its `cd && cd.Subject === subject` check) — so a
+  // "fail open" IC here would never actually reach the screen. It would only occupy
+  // one of the 20 ranked slots and make the toast's count claim more matches than the
+  // results panel ends up showing. Dropping it here keeps the two paths consistent.
   resetState();
   resetClassSettings();
   setSuggestICsFixture();
@@ -1571,7 +1576,39 @@ test('an IC whose home descriptor cannot be resolved fails open (still suggested
 
   sandbox.plannerSuggestICsFromIntention();
   const suggested = getState().plannerUi.suggestedICIds;
-  assert.ok(suggested.includes('ic_orphaned_home'), 'a data gap (unresolvable home descriptor) should not silently hide the IC');
+  assert.ok(!suggested.includes('ic_orphaned_home'), 'an IC with an unresolvable home descriptor must not be suggested — it can never render, so counting it would make the toast lie about how many results actually show');
+});
+
+test('orphan-home ICs do not consume ranking capacity that a resolvable, lower-scoring match should get', () => {
+  // Before this fix, 20+ unresolvable-home ICs could fail open into `scored`, fill the
+  // entire 20-slot cap on their own (their score is irrelevant once there are enough of
+  // them), and push out a real, resolvable candidate — even though none of those orphans
+  // could ever actually render (see the test above). Excluding them at the filter stage
+  // means the cap is only ever spent on ICs that can genuinely appear in the results.
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'CD_REAL', Subject: 'Mathematics', Strand: 'Number', 'Year Level': 'Year 3', Descriptor: 'a real descriptor' },
+  ];
+  const orphanICs = Array.from({ length: 25 }, (_, i) => ({
+    id: `ic_orphan_${i}`, homeDescriptorId: 'AC9DOES_NOT_EXIST', linkedDescriptorIds: [],
+    name: 'Partition numbers using place value understanding for addition', description: 'Student can partition numbers using place value understanding for addition strategies.',
+    isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false,
+  }));
+  const realIC = {
+    id: 'ic_real', homeDescriptorId: 'CD_REAL', linkedDescriptorIds: [],
+    name: 'Partition numbers using place value', description: 'Student can partition numbers using place value understanding.',
+    isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false,
+  };
+  st.instructionalComponents = [...orphanICs, realIC];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: 'Mathematics', intention: 'Partition numbers using place value understanding.' };
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  sandbox.plannerSuggestICsFromIntention();
+  const suggested = getState().plannerUi.suggestedICIds;
+  assert.ok(suggested.includes('ic_real'), 'the one resolvable, genuinely matching IC must be suggested even though 25 unresolvable ICs would otherwise have filled the cap');
 });
 
 // Fixture for the unit-CD priority boost: ic_high scores much higher on tokens and

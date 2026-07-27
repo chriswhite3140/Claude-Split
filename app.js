@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.71
+ * THIS FILE IS VERSION: 1.13.72
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.72 - Fix: plannerSuggestICsFromIntention's candidate filter "failed open" for an IC whose homeDescriptorId couldn't be resolved in state.curriculumCodes (e.g. a stub IC loaded before its descriptor CSV), letting it into the scored/ranked list and the toast's suggestion count — but plannerICResultsHtml's own subjectPool requires a resolved, subject-matching descriptor to render an IC at all, so that orphan could never actually appear in the results panel. It only consumed one of the 20 ranked slots (crowding out a real match once 20+ orphans existed) and made the toast's count overstate what actually rendered. Now dropped from the candidate pool at the same filter stage, consistent with the renderer. Covered by two new regression tests, confirmed to fail against the pre-fix code.
  * v1.13.71 - Fix two review findings on 1.13.70's IC suggestion scoring rework: (1) PLANNER_SUGGESTION_STOPWORDS wrongly stripped genuine subject-content nouns that happen to recur often within their own subject — "algorithms", "patterns", "numbers", "texts", "data", "relationships", "systems", and ~55 others — alongside real generic filler, so an intention like "Create algorithms and identify patterns" or "Represent numbers" lost every scorable token and produced zero suggestions even when a bundled IC's text matched almost exactly. The stopword list has been manually re-reviewed word-by-word: only genuine process/instructional filler is kept (~58 words); every subject-content noun has been removed and is scorable again. (2) The unit-CD boost's `.slice(0, 20)` was applied to the combined unit-linked + non-unit list, so a unit whose linked CDs alone produced 20+ qualifying ICs could crowd out every non-unit match entirely, regardless of score — contrary to "priority boost, not a restriction". Each side is now capped at 20 independently and concatenated, so a higher-scoring non-unit IC always gets a chance to show. Both fixes are covered by new regression tests confirmed to fail against the pre-fix code.
  * v1.13.70 - Fix: "Suggest from intention" could confidently label an obviously-unrelated IC "Strong" (e.g. a multiplication/halving IC for a "mental addition and subtraction with place value partitioning" intention), from three compounding causes, all fixed together. (1) Generic curriculum-speak tokens ("using", "strategies", "solve", "problems", "calculation", ...) inflated coincidental overlaps — stripped via a new empirically-derived stopword list (word frequency across every data/MASTER_Content_Descriptors_*.csv file's own descriptor text). (2) plannerConfidenceTier() only compared a score to the pool's own max (ratio-based), so a uniformly weak pool's best-of-a-bad-bunch still read "Strong" — added an absolute floor (PLANNER_MIN_STRONG_SCORE) a raw score must also clear, plus a lower floor (PLANNER_MIN_SUGGESTION_SCORE) below which a match isn't suggested at all. (3) Scoring happened at the descriptor level and every IC under it inherited an identical score, even though ICs under one broad descriptor can vary hugely in specificity — plannerSuggestICsFromIntention now scores each candidate IC directly against its own name/description/exampleOfSuccess text (plannerScoreIC), gathering candidates via each IC's own homeDescriptorId rather than pre-ranking descriptors and expanding via getICsForDescriptor. The class-year-level filter, the unit-CD boost/grouping from 1.13.66-68, and the subject filter are all unchanged and confirmed still working. Validated against real curriculum ICs bundled in data/: for a Year 4 class with the exact intention above, all four real ICs under AC9M4N06 (a descriptor spanning "addition and subtraction, and multiplication and division") previously inherited an identical "Strong" tag — now the two multiplication ICs and the division IC score 0 and are excluded entirely, while the genuinely relevant addition-strategy IC still surfaces (see PR description for the full before/after).
  * v1.13.68 - Weekly Planner: "Suggest from intention" results now render as four collapsible groups instead of a flat list — Strong matches (this unit's CDs / other CDs) and Other matches (this unit's CDs / other CDs), in that order, each headed with its own count; a group with zero results is hidden entirely. Only the lead group (this unit's strong matches) is open by default, the rest start collapsed. Standalone lessons and units with no linkedCDIds set have no "linked" distinction to make, so the two "…this unit's CDs" groups are always empty and collapse away — leaving a plain Strong/Other split. "+ Create new IC" still stays pinned below all four groups. Group open/collapsed state resets to its defaults on every fresh suggestion run. The scoring/ranking logic, class-year-level filter, cross-year IC leak protection, and the separate "From this unit's CDs" browse-mode grouping are all unchanged.
@@ -113,7 +114,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.71';
+const APP_VERSION = '1.13.72';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2860,17 +2861,20 @@ function plannerSuggestICsFromIntention() {
   // Candidate pool: every non-archived, non-teacher-suppressed IC whose OWN home
   // descriptor (never a linked-only tether — see below) matches this lesson's subject,
   // is enabled in class settings, and matches the class's year level(s). An
-  // unresolvable home descriptor fails open (can't determine subject/year), same
-  // fail-open precedent as plannerDescriptorMatchesYearLevels itself uses for a
-  // missing row. Scoring each IC against its own text (not its parent descriptor's)
-  // means a descriptor reached only via linkedDescriptorIds no longer "lends" its
-  // score to an unrelated IC — every IC now stands on its own content.
+  // unresolvable home descriptor is dropped here rather than failing open:
+  // plannerICResultsHtml's own subjectPool requires a resolved, subject-matching
+  // descriptor to render an IC at all, so a "fail open" IC here could never actually
+  // be shown — it would just occupy one of the 20 ranked slots and inflate the toast's
+  // suggestion count above what actually renders. Scoring each IC against its own text
+  // (not its parent descriptor's) means a descriptor reached only via
+  // linkedDescriptorIds no longer "lends" its score to an unrelated IC — every IC now
+  // stands on its own content.
   const cdByCode = new Map(state.curriculumCodes.map(c => [c.Code, c]));
   const scored = state.instructionalComponents
     .filter(ic => !ic.isArchived && !(ic.ownerTier === 'system_default' && ic.suppressedByTeacher))
     .filter(ic => {
       const cd = cdByCode.get(ic.homeDescriptorId);
-      if (!cd) return true;
+      if (!cd) return false;
       if (cd.Subject !== lesson.subject || !isCurriculumCodeEnabled(cd)) return false;
       return plannerDescriptorMatchesYearLevels(cd, classYearLevels);
     })
