@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.73
+ * THIS FILE IS VERSION: 1.13.74
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.74 - Fix (review finding on 1.13.73's Lesson Drawer view mode): plannerOpenLessonDrawer() reset suggestedICIds/icSearch/expandedICId but never suggestionScores, and the new view-mode IC summary reads suggestionScores directly, keyed only by IC id with no per-lesson scoping — so opening a different lesson that happens to link the same IC as one just scored via "Suggest from intention" could show that IC's confidence tier as if it applied to the new lesson's (unrelated) intention. suggestionScores is now cleared on every drawer open, same as the other suggestion-session fields. Covered by a new regression test, confirmed to fail against the pre-fix code.
  * v1.13.73 - Weekly Planner/Unit Plans: the Lesson Drawer now opens in a compact, read-only view mode by default for an existing lesson with content (title/subject/status as plain text or a badge, learning intention as text, linked ICs as name + code + confidence tier only, resource links as plain clickable anchors, current schedule as plain text) — an "Edit" button switches to today's full editable form, which now carries a "‹ Done" button to step back to view mode without closing and reopening the drawer. A brand-new lesson (nothing filled in yet) still opens straight into Edit, since there is nothing to view. Applies to both the standalone Weekly Planner drawer and the Unit Plans lesson drawer; the Unit details side panel (linked CDs/assessment notes) in Unit Plans is unaffected. Edit mode's own fields/behaviour are unchanged. New plannerLessonHasContent()/plannerSwitchDrawerToEdit()/plannerSwitchDrawerToView() plus a parallel set of view-mode renderers (plannerStandaloneLessonViewHtml, plannerUnitLessonViewFieldsHtml, unitLessonScheduleViewHtml, plannerResourceLinksViewHtml, plannerSelectedICsViewHtml, unitLessonViewHtml), driven by a new state.plannerUi.drawerMode flag. Verified in a real browser (Playwright) as well as the automated test suite.
  * v1.13.72 - Fix: plannerSuggestICsFromIntention's candidate filter "failed open" for an IC whose homeDescriptorId couldn't be resolved in state.curriculumCodes (e.g. a stub IC loaded before its descriptor CSV), letting it into the scored/ranked list and the toast's suggestion count — but plannerICResultsHtml's own subjectPool requires a resolved, subject-matching descriptor to render an IC at all, so that orphan could never actually appear in the results panel. It only consumed one of the 20 ranked slots (crowding out a real match once 20+ orphans existed) and made the toast's count overstate what actually rendered. Now dropped from the candidate pool at the same filter stage, consistent with the renderer. Covered by two new regression tests, confirmed to fail against the pre-fix code.
  * v1.13.71 - Fix two review findings on 1.13.70's IC suggestion scoring rework: (1) PLANNER_SUGGESTION_STOPWORDS wrongly stripped genuine subject-content nouns that happen to recur often within their own subject — "algorithms", "patterns", "numbers", "texts", "data", "relationships", "systems", and ~55 others — alongside real generic filler, so an intention like "Create algorithms and identify patterns" or "Represent numbers" lost every scorable token and produced zero suggestions even when a bundled IC's text matched almost exactly. The stopword list has been manually re-reviewed word-by-word: only genuine process/instructional filler is kept (~58 words); every subject-content noun has been removed and is scorable again. (2) The unit-CD boost's `.slice(0, 20)` was applied to the combined unit-linked + non-unit list, so a unit whose linked CDs alone produced 20+ qualifying ICs could crowd out every non-unit match entirely, regardless of score — contrary to "priority boost, not a restriction". Each side is now capped at 20 independently and concatenated, so a higher-scoring non-unit IC always gets a chance to show. Both fixes are covered by new regression tests confirmed to fail against the pre-fix code.
@@ -115,7 +116,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.73';
+const APP_VERSION = '1.13.74';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2305,6 +2306,12 @@ function plannerOpenLessonDrawer(lessonId) {
   state.plannerUi.drawerMode = plannerLessonHasContent(lesson) ? 'view' : 'edit';
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
+  // suggestionScores is scored against whichever lesson's intention last ran through
+  // Suggest — without this reset, opening a different lesson that happens to link the
+  // same IC would show that IC's confidence tier from the PREVIOUS lesson's unrelated
+  // suggestion run in the new view-mode summary (plannerSelectedICsViewHtml reads
+  // suggestionScores directly, keyed only by IC id, with no per-lesson scoping).
+  state.plannerUi.suggestionScores = {};
   state.plannerUi.expandedICId = null;
   state.plannerUi.icShowAllYears = false;  // default the IC picker to the unit's year
   renderView();

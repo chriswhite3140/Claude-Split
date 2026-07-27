@@ -2627,6 +2627,33 @@ test('a linked IC\'s confidence tier shows in the view-mode row only when live s
   assert.ok(html.includes('planner-ic-confidence'), 'a confidence badge should render once live suggestion data exists for this IC');
 });
 
+test('opening a different lesson that happens to link the same IC does not inherit the previous lesson\'s stale confidence tier', () => {
+  // Suggestion scores are keyed only by IC id, with no per-lesson scoping — if two
+  // lessons both link the same IC, a score computed for lesson A's intention must not
+  // leak into lesson B's view-mode summary as if it meant something for lesson B too.
+  resetState();
+  const st = getState();
+  st.instructionalComponents = [{
+    id: 'ic_shared', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [],
+    name: 'Reads a numeral beyond 10 000', description: '', isArchived: false, ownerTier: 'system_default', suppressedByTeacher: false,
+  }];
+  const saIdx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[saIdx] = { ...st.lessonPlans[saIdx], linkedICIds: ['ic_shared'] };
+  const ulIdx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[ulIdx] = { ...st.lessonPlans[ulIdx], linkedICIds: ['ic_shared'] };
+
+  // Open lesson A (sa_1) and simulate a live "Suggest" score for the shared IC.
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  getState().plannerUi.suggestionScores = { ic_shared: 5 };
+  const saHtml = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(saHtml.includes('planner-ic-confidence'), 'sanity: the shared IC shows a confidence tier while its score is live for this lesson');
+
+  // Now open lesson B (ul_1), which links the same IC but was never scored itself.
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  const ulHtml = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
+  assert.ok(!ulHtml.includes('planner-ic-confidence'), 'a different lesson opened afterward must not inherit the previous lesson\'s stale confidence tier for the same IC');
+});
+
 test('view mode renders a unit lesson\'s schedule as plain text, with no week/day picker, and no unit-context trailer', () => {
   resetState();
   const st = getState();
