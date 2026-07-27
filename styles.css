@@ -1952,6 +1952,39 @@ body[data-text-size="large"] {
   color: var(--status-danger-text);
 }
 
+/* ── Lesson Drawer view-only mode ── */
+.planner-drawer-mode-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+.planner-view-value {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: var(--dense-body-size);
+  line-height: var(--dense-line-height);
+  color: var(--text);
+  padding: 2px 0;
+}
+.planner-view-multiline {
+  white-space: pre-wrap;
+}
+.planner-selected-ics-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.planner-view-ic-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.planner-view-ic-row:last-child {
+  border-bottom: none;
+}
+
 .planner-ic-create {
   width: 100%;
   margin-top: 4px;

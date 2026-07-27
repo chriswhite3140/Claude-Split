@@ -143,6 +143,7 @@ function resetState() {
   st.plannerUi.weekKey = WEEK_A;
   st.plannerUi.selectedLessonId = null;
   st.plannerUi.drawerOpen = false;
+  st.plannerUi.drawerMode = 'view';
   st.plannerUi.draggingLessonId = null;
   st.plannerUi.draggingSlot = null;
   st.plannerUi.insertionTarget = null;
@@ -440,10 +441,19 @@ test('clicking the card body opens the drawer, for both card types', () => {
   assert.strictEqual(st.plannerUi.drawerOpen, true, 'clicking a unit occurrence card body should open the drawer');
   assert.strictEqual(st.currentView, 'planner', 'must stay on the Weekly Planner, not navigate to Unit Plans');
 
-  // The drawer opens in the exact same fully-editable mode as before — no separate
-  // read-only quick-view was introduced by making the card body clickable.
-  const html = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
-  assert.ok(html.includes('Teaching status'), 'the unit lesson drawer should render its full editable field set, unchanged');
+  // ul_1 has real content (title/subject from the fixture), so the drawer defaults to
+  // the read-only view — clicking a card no longer always drops straight into the full
+  // editable form. It still shows the lesson's own data and an explicit way into
+  // editing, both without navigating away.
+  assert.strictEqual(getState().plannerUi.drawerMode, 'view', 'a lesson with content should open in view mode by default');
+  const viewHtml = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
+  assert.ok(viewHtml.includes('Intro to fractions'), 'view mode should show the lesson\'s own title');
+  assert.ok(viewHtml.includes('Teaching status'), 'the field label should still be present in view mode');
+  assert.ok(!viewHtml.includes('<select'), 'view mode must not render the editable dropdowns');
+
+  sandbox.plannerSwitchDrawerToEdit();
+  const editHtml = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
+  assert.ok(editHtml.includes('Teaching status') && editHtml.includes('<select'), 'the unit lesson drawer should still render its full editable field set once switched to Edit');
 });
 
 test('pressing Enter or Space on a focused standalone card runs the literal onkeydown code and opens the drawer; other keys do not', () => {
@@ -553,6 +563,10 @@ test('clicking a unit occurrence populates the drawer with the full unit lesson 
   assert.strictEqual(st.plannerUi.selectedLessonId, 'ul_1');
   assert.strictEqual(st.plannerUi.drawerOpen, true);
 
+  // This lesson has real content, so it opens in view mode by default (see the
+  // dedicated view-mode tests below) — switch to Edit to exercise this test's actual
+  // subject: the full editable field set.
+  sandbox.plannerSwitchDrawerToEdit();
   const html = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
   assert.ok(html.includes('value="Halves and quarters"'), 'title should populate');
   assert.ok(html.includes('Mathematics') && html.includes('selected'), 'subject should populate');
@@ -571,6 +585,7 @@ test('clicking a standalone card populates the drawer with the standalone edit f
   const st = getState();
   const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
   st.lessonPlans[idx] = { ...st.lessonPlans[idx], title: 'Spelling test', subject: 'English', dayKey: 'wed', intention: 'Weekly spelling check.' };
+  sandbox.plannerSwitchDrawerToEdit(); // this test's subject is the editable field set specifically
   const html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }, { key: 'wed', label: 'Wednesday' }]);
   assert.ok(html.includes('value="Spelling test"'), 'title should populate');
   assert.ok(html.includes('Weekly spelling check.'), 'learning intention should populate');
@@ -2495,6 +2510,209 @@ test('duplicating a lesson or unit does not carry over an open resource popover 
   st.plannerUi.openResourcePopoverCardKey = 'not-a-real-lesson-id';
   assert.doesNotThrow(() => sandbox.plannerLessonCardHtml(lessonById('sa_1')));
   assert.ok(!sandbox.plannerLessonCardHtml(lessonById('sa_1')).includes('planner-resource-popover'), 'a stale/foreign open id must not force this lesson\'s popover open');
+});
+
+// ── Lesson Drawer view-only mode ─────────────────────────────────────────────────
+console.log('Lesson Drawer view-only mode');
+
+test('plannerLessonHasContent: a freshly created lesson has nothing to view yet; any single real field flips it to true', () => {
+  resetState();
+  const blank = sandbox.normalizeLessonPlan({ id: 'x', title: 'New Lesson', subject: '', intention: '', linkedICIds: [], resourceLinks: [] });
+  assert.strictEqual(sandbox.plannerLessonHasContent(blank), false, 'a lesson with only the default title and nothing else has nothing to view');
+
+  assert.strictEqual(sandbox.plannerLessonHasContent(sandbox.normalizeLessonPlan({ id: 'x', title: 'New Lesson', subject: 'Mathematics' })), true, 'a subject alone counts as content');
+  assert.strictEqual(sandbox.plannerLessonHasContent(sandbox.normalizeLessonPlan({ id: 'x', title: 'New Lesson', intention: 'Add two-digit numbers.' })), true, 'an intention alone counts as content');
+  assert.strictEqual(sandbox.plannerLessonHasContent(sandbox.normalizeLessonPlan({ id: 'x', title: 'New Lesson', linkedICIds: ['ic_1'] })), true, 'a linked IC alone counts as content');
+  assert.strictEqual(sandbox.plannerLessonHasContent(sandbox.normalizeLessonPlan({ id: 'x', title: 'New Lesson', resourceLinks: [{ label: '', url: 'https://example.com' }] })), true, 'a resource link alone counts as content');
+  assert.strictEqual(sandbox.plannerLessonHasContent(sandbox.normalizeLessonPlan({ id: 'x', title: 'Real title' })), true, 'a real (non-default) title alone counts as content');
+});
+
+test('opening an existing lesson with content defaults the drawer to view mode', () => {
+  resetState();
+  // ul_1 and sa_1 both carry real content from the fixture (title + subject).
+  sandbox.plannerOpenLessonDrawer('ul_1');
+  assert.strictEqual(getState().plannerUi.drawerMode, 'view', 'a unit lesson with content should default to view mode');
+
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  assert.strictEqual(getState().plannerUi.drawerMode, 'view', 'a standalone lesson with content should default to view mode, via the card-click path too');
+});
+
+test('plannerAddLesson() opens its brand-new lesson directly in edit mode, since there is nothing to view yet', () => {
+  resetState();
+  sandbox.plannerAddLesson();
+  assert.strictEqual(getState().plannerUi.drawerMode, 'edit', 'a freshly created standalone lesson has no content, so it should skip view mode entirely');
+});
+
+test('unitAddLesson() opens its brand-new lesson directly in edit mode, even though it inherits the unit\'s subject', () => {
+  // unitAddLesson stamps the new lesson with unit.subject (Mathematics in the fixture),
+  // so a generic "has any field set" check would wrongly call this lesson "has content"
+  // and default it to view mode — it must not, since title/intention/ICs are all still
+  // blank. This is forced explicitly rather than routed through plannerLessonHasContent.
+  resetState();
+  const st = getState();
+  assert.ok(st.unitPlans[0].subject, 'sanity: the fixture unit has a subject set');
+  sandbox.unitAddLesson('unit_1');
+  assert.strictEqual(getState().plannerUi.drawerMode, 'edit', 'a freshly created unit lesson should open in edit mode regardless of the subject it inherited');
+});
+
+test('view mode renders a standalone lesson\'s fields as plain text/badges, with no inputs, search box, or Suggest control', () => {
+  resetState();
+  const st = getState();
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = {
+    ...st.lessonPlans[idx], title: 'Spelling test', subject: 'English', dayKey: 'wed',
+    intention: 'Weekly spelling check.', resourceLinks: [{ label: 'Word list', url: 'https://example.com/words' }],
+  };
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  assert.strictEqual(getState().plannerUi.drawerMode, 'view', 'sanity: this content-bearing lesson should default to view mode');
+
+  const html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }, { key: 'wed', label: 'Wednesday' }]);
+  assert.ok(html.includes('Spelling test'), 'title should show as text');
+  assert.ok(html.includes('English'), 'subject should show as text');
+  assert.ok(html.includes('Wednesday'), 'day should show as text, resolved to its label');
+  assert.ok(html.includes('Weekly spelling check.'), 'learning intention should show as text');
+  assert.ok(/<a[^>]*href="https:\/\/example\.com\/words"[^>]*>Word list<\/a>/.test(html), 'resource link should render as a plain clickable anchor');
+  assert.ok(!html.includes('plannerRemoveResourceLink'), 'view mode must not offer a remove control on resource links');
+  assert.ok(!html.includes('plannerAddResourceLink'), 'view mode must not offer an add-link control');
+  assert.ok(!html.includes('<input'), 'view mode must render no text inputs at all');
+  assert.ok(!html.includes('<select'), 'view mode must render no dropdowns at all');
+  assert.ok(!html.includes('<textarea'), 'view mode must render no textareas at all');
+  assert.ok(!html.includes('planner-ic-search'), 'the IC search box must not render in view mode');
+  assert.ok(!html.includes('Suggest from intention'), 'the Suggest control must not render in view mode');
+  assert.ok(!html.includes('Mark as taught') && !html.includes('Mark as planned'), 'the status-toggle button must not render in view mode — status is a badge only');
+  assert.ok(html.includes('>Edit<'), 'an Edit button should be present to switch into the full editable form');
+});
+
+test('view mode shows a linked IC compactly — name + code only, no description/example/common error', () => {
+  resetState();
+  const st = getState();
+  st.instructionalComponents = [{
+    id: 'ic_1', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [],
+    name: 'Reads a numeral beyond 10 000', description: 'A description that must not appear in view mode.',
+    exampleOfSuccess: 'An example that must not appear in view mode.', commonError: 'An error note that must not appear in view mode.',
+    isArchived: false, ownerTier: 'system_default', suppressedByTeacher: false,
+  }];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], linkedICIds: ['ic_1'] };
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+
+  const html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(html.includes('Reads a numeral beyond 10 000'), 'the IC name should show');
+  assert.ok(html.includes('AC9M2N01'), 'the IC\'s home descriptor code should show');
+  assert.ok(!html.includes('A description that must not appear in view mode.'), 'description must not render in the compact view row');
+  assert.ok(!html.includes('An example that must not appear in view mode.'), 'example of success must not render in the compact view row');
+  assert.ok(!html.includes('An error note that must not appear in view mode.'), 'common error must not render in the compact view row');
+  assert.ok(!html.includes('planner-ic-remove'), 'view mode must not offer a remove control on linked ICs');
+});
+
+test('a linked IC\'s confidence tier shows in the view-mode row only when live suggestion data exists for it, and is silently omitted otherwise', () => {
+  resetState();
+  const st = getState();
+  st.instructionalComponents = [{
+    id: 'ic_1', homeDescriptorId: 'AC9M2N01', linkedDescriptorIds: [],
+    name: 'Reads a numeral beyond 10 000', description: '', isArchived: false, ownerTier: 'system_default', suppressedByTeacher: false,
+  }];
+  const idx = st.lessonPlans.findIndex(l => l.id === 'sa_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], linkedICIds: ['ic_1'] };
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+
+  // No live suggestionScores data for this IC (a fresh drawer open resets suggestedICIds,
+  // and this lesson was never scored) — no confidence tier should render at all.
+  let html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(!html.includes('planner-ic-confidence'), 'no confidence badge should render when there is no live suggestion score for this IC');
+
+  // Now simulate a live score for this exact IC (as if it had just been suggested).
+  getState().plannerUi.suggestionScores = { ic_1: 5 };
+  html = sandbox.plannerDrawerHtml(lessonById('sa_1'), [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(html.includes('planner-ic-confidence'), 'a confidence badge should render once live suggestion data exists for this IC');
+});
+
+test('view mode renders a unit lesson\'s schedule as plain text, with no week/day picker, and no unit-context trailer', () => {
+  resetState();
+  const st = getState();
+  st.unitPlans[0] = { ...st.unitPlans[0], linkedCDIds: ['AC9M3N01'], assessmentNotes: 'Exit ticket each fortnight.' };
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  assert.strictEqual(getState().plannerUi.drawerMode, 'view', 'sanity: this content-bearing unit lesson should default to view mode');
+
+  const html = sandbox.plannerDrawerHtml(lessonById('ul_1'), []);
+  assert.ok(html.includes('Intro to fractions'), 'title should show as text');
+  assert.ok(html.includes(sandbox.plannerWeekRangeLabel(WEEK_A)), 'the scheduled week should show as text');
+  assert.ok(!html.includes('unit-schedule-week') && !html.includes('unit-schedule-day'), 'the week/day picker selects must not render in view mode');
+  assert.ok(!html.includes('Add to week'), 'the Add-to-week button must not render in view mode');
+  assert.ok(!html.includes('<select'), 'view mode must render no dropdowns at all');
+  // The unit-context trailer (linked CDs + assessment notes) is unit-editing content,
+  // not part of viewing this lesson — Unit Plans' own separate side panel covers it.
+  assert.ok(!html.includes('Unit:'), 'the unit-context trailer must not render in view mode');
+  assert.ok(!html.includes('unit-cd-panel'), 'the linked-CD panel must not render in view mode');
+  assert.ok(!html.includes('Exit ticket each fortnight.'), 'assessment notes must not render in view mode');
+});
+
+test('Unit Plans\' own lesson drawer (unitLessonDrawerHtml) respects the same view/edit mode as the Weekly Planner\'s', () => {
+  resetState();
+  const st = getState();
+  const lidx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[lidx] = { ...st.lessonPlans[lidx], intention: 'Halve a shape into two equal parts.' };
+  sandbox.plannerOpenLessonDrawer('ul_1'); // the actual Unit Plans lesson-row click path
+  assert.strictEqual(getState().plannerUi.drawerMode, 'view');
+
+  const viewHtml = sandbox.unitLessonDrawerHtml(lessonById('ul_1'));
+  assert.ok(viewHtml.includes('Halve a shape into two equal parts.'), 'view mode should show the lesson\'s own intention as text');
+  assert.ok(!viewHtml.includes('<textarea'), 'view mode must render no textareas');
+  assert.ok(!viewHtml.includes('Add to week'), 'view mode must not offer the schedule picker');
+
+  sandbox.plannerSwitchDrawerToEdit();
+  const editHtml = sandbox.unitLessonDrawerHtml(lessonById('ul_1'));
+  assert.ok(editHtml.includes('<textarea'), 'edit mode should still render the full editable field set, unchanged');
+  assert.ok(editHtml.includes('Add to week'), 'edit mode should still offer the schedule picker, unchanged');
+});
+
+test('plannerSwitchDrawerToEdit()/plannerSwitchDrawerToView() toggle the drawer between modes without touching selectedLessonId or drawerOpen', () => {
+  resetState();
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  const st = getState();
+  assert.strictEqual(st.plannerUi.drawerMode, 'view');
+
+  sandbox.plannerSwitchDrawerToEdit();
+  assert.strictEqual(st.plannerUi.drawerMode, 'edit', 'Edit button should switch into edit mode');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'sa_1', 'the same lesson should stay selected');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'the drawer should stay open, not close and reopen');
+
+  sandbox.plannerSwitchDrawerToView();
+  assert.strictEqual(st.plannerUi.drawerMode, 'view', 'Done should switch back to view mode');
+  assert.strictEqual(st.plannerUi.selectedLessonId, 'sa_1', 'the same lesson should still stay selected');
+  assert.strictEqual(st.plannerUi.drawerOpen, true, 'the drawer should still stay open');
+});
+
+test('entering edit mode resets the IC search box and any leftover suggestion results from a previous edit session', () => {
+  resetState();
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  sandbox.plannerSwitchDrawerToEdit();
+  const st = getState();
+  st.plannerUi.icSearch = 'a stale search';
+  st.plannerUi.suggestedICIds = ['some_id'];
+  st.plannerUi.expandedICId = 'some_id';
+
+  sandbox.plannerSwitchDrawerToView();
+  sandbox.plannerSwitchDrawerToEdit();
+  assert.strictEqual(st.plannerUi.icSearch, '', 're-entering edit mode should clear a stale search box');
+  eqJson(st.plannerUi.suggestedICIds, [], 're-entering edit mode should clear stale suggestion results');
+  assert.strictEqual(st.plannerUi.expandedICId, null, 're-entering edit mode should collapse any expanded IC detail');
+});
+
+test('the full render pipeline does not throw with the drawer open in either view or edit mode', () => {
+  resetState();
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  assert.doesNotThrow(() => realRenderView(), 'view mode should render without throwing');
+  sandbox.plannerSwitchDrawerToEdit();
+  assert.doesNotThrow(() => realRenderView(), 'edit mode should render without throwing');
+
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  assert.doesNotThrow(() => realRenderView(), 'a unit lesson in view mode should render without throwing');
+  sandbox.plannerSwitchDrawerToEdit();
+  assert.doesNotThrow(() => realRenderView(), 'a unit lesson in edit mode should render without throwing');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────

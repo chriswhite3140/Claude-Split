@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.72
+ * THIS FILE IS VERSION: 1.13.73
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.73 - Weekly Planner/Unit Plans: the Lesson Drawer now opens in a compact, read-only view mode by default for an existing lesson with content (title/subject/status as plain text or a badge, learning intention as text, linked ICs as name + code + confidence tier only, resource links as plain clickable anchors, current schedule as plain text) — an "Edit" button switches to today's full editable form, which now carries a "‹ Done" button to step back to view mode without closing and reopening the drawer. A brand-new lesson (nothing filled in yet) still opens straight into Edit, since there is nothing to view. Applies to both the standalone Weekly Planner drawer and the Unit Plans lesson drawer; the Unit details side panel (linked CDs/assessment notes) in Unit Plans is unaffected. Edit mode's own fields/behaviour are unchanged. New plannerLessonHasContent()/plannerSwitchDrawerToEdit()/plannerSwitchDrawerToView() plus a parallel set of view-mode renderers (plannerStandaloneLessonViewHtml, plannerUnitLessonViewFieldsHtml, unitLessonScheduleViewHtml, plannerResourceLinksViewHtml, plannerSelectedICsViewHtml, unitLessonViewHtml), driven by a new state.plannerUi.drawerMode flag. Verified in a real browser (Playwright) as well as the automated test suite.
  * v1.13.72 - Fix: plannerSuggestICsFromIntention's candidate filter "failed open" for an IC whose homeDescriptorId couldn't be resolved in state.curriculumCodes (e.g. a stub IC loaded before its descriptor CSV), letting it into the scored/ranked list and the toast's suggestion count — but plannerICResultsHtml's own subjectPool requires a resolved, subject-matching descriptor to render an IC at all, so that orphan could never actually appear in the results panel. It only consumed one of the 20 ranked slots (crowding out a real match once 20+ orphans existed) and made the toast's count overstate what actually rendered. Now dropped from the candidate pool at the same filter stage, consistent with the renderer. Covered by two new regression tests, confirmed to fail against the pre-fix code.
  * v1.13.71 - Fix two review findings on 1.13.70's IC suggestion scoring rework: (1) PLANNER_SUGGESTION_STOPWORDS wrongly stripped genuine subject-content nouns that happen to recur often within their own subject — "algorithms", "patterns", "numbers", "texts", "data", "relationships", "systems", and ~55 others — alongside real generic filler, so an intention like "Create algorithms and identify patterns" or "Represent numbers" lost every scorable token and produced zero suggestions even when a bundled IC's text matched almost exactly. The stopword list has been manually re-reviewed word-by-word: only genuine process/instructional filler is kept (~58 words); every subject-content noun has been removed and is scorable again. (2) The unit-CD boost's `.slice(0, 20)` was applied to the combined unit-linked + non-unit list, so a unit whose linked CDs alone produced 20+ qualifying ICs could crowd out every non-unit match entirely, regardless of score — contrary to "priority boost, not a restriction". Each side is now capped at 20 independently and concatenated, so a higher-scoring non-unit IC always gets a chance to show. Both fixes are covered by new regression tests confirmed to fail against the pre-fix code.
  * v1.13.70 - Fix: "Suggest from intention" could confidently label an obviously-unrelated IC "Strong" (e.g. a multiplication/halving IC for a "mental addition and subtraction with place value partitioning" intention), from three compounding causes, all fixed together. (1) Generic curriculum-speak tokens ("using", "strategies", "solve", "problems", "calculation", ...) inflated coincidental overlaps — stripped via a new empirically-derived stopword list (word frequency across every data/MASTER_Content_Descriptors_*.csv file's own descriptor text). (2) plannerConfidenceTier() only compared a score to the pool's own max (ratio-based), so a uniformly weak pool's best-of-a-bad-bunch still read "Strong" — added an absolute floor (PLANNER_MIN_STRONG_SCORE) a raw score must also clear, plus a lower floor (PLANNER_MIN_SUGGESTION_SCORE) below which a match isn't suggested at all. (3) Scoring happened at the descriptor level and every IC under it inherited an identical score, even though ICs under one broad descriptor can vary hugely in specificity — plannerSuggestICsFromIntention now scores each candidate IC directly against its own name/description/exampleOfSuccess text (plannerScoreIC), gathering candidates via each IC's own homeDescriptorId rather than pre-ranking descriptors and expanding via getICsForDescriptor. The class-year-level filter, the unit-CD boost/grouping from 1.13.66-68, and the subject filter are all unchanged and confirmed still working. Validated against real curriculum ICs bundled in data/: for a Year 4 class with the exact intention above, all four real ICs under AC9M4N06 (a descriptor spanning "addition and subtraction, and multiplication and division") previously inherited an identical "Strong" tag — now the two multiplication ICs and the division IC score 0 and are excluded entirely, while the genuinely relevant addition-strategy IC still surfaces (see PR description for the full before/after).
@@ -114,7 +115,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.72';
+const APP_VERSION = '1.13.73';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -414,7 +415,7 @@ let state = {
   assessmentScale: null, // loaded in init
   classSettings: loadClassSettings(),  // class/teacher group config — loaded from localStorage
   lessonPlans: loadLessonPlansState(),
-  plannerUi: { selectedLessonId: null, drawerOpen: false, draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null, openResourcePopoverCardKey: null, icSuggestionGroupsOpen: {} },
+  plannerUi: { selectedLessonId: null, drawerOpen: false, drawerMode: 'view', draggingLessonId: null, draggingSlot: null, insertionTarget: null, dayOrder: {}, icSearch: '', suggestedICIds: [], suggestionScores: {}, expandedICId: null, weekKey: null, pendingStubForLessonId: null, datePickerOpen: false, datePickerMonth: null, openResourcePopoverCardKey: null, icSuggestionGroupsOpen: {} },
   unitPlans: loadUnitPlansState(),
   unitPlansUi: { openUnitId: null, cdSearch: '', cdShowAllYears: false, draggingLessonId: null },
   driveSync: { lastSyncedAt: null, syncing: false, consecutiveFailures: 0 },
@@ -1250,7 +1251,7 @@ function renderPlanner(main) {
       <aside class="card planner-shell-drawer">
         <div class="card-head">
           <div class="card-title">Lesson Drawer</div>
-          <div style="font-size:12px;color:var(--text3)">${state.plannerUi.drawerOpen && selectedLesson ? 'Editing selected lesson' : 'Select a lesson card'}</div>
+          <div style="font-size:12px;color:var(--text3)">${state.plannerUi.drawerOpen && selectedLesson ? (state.plannerUi.drawerMode === 'edit' ? 'Editing selected lesson' : 'Viewing selected lesson') : 'Select a lesson card'}</div>
         </div>
         ${state.plannerUi.drawerOpen && selectedLesson
           ? plannerDrawerHtml(selectedLesson, plannerDays)
@@ -1501,11 +1502,26 @@ function plannerUnitSidebarLessonHtml(lesson) {
 
 // Right-hand Lesson Drawer on the Weekly Planner. Pure dispatcher on lesson type — clicking
 // any board card (standalone or unit) opens this drawer in place, never navigating to
-// another view (see plannerOpenLessonDrawer). Each branch below is a
-// self-contained "edit mode" renderer; a future quick-view (read-only summary) can sit
-// as a separate layer in front of either without touching this edit-mode content.
+// another view (see plannerOpenLessonDrawer). Each branch below dispatches again on
+// state.plannerUi.drawerMode: a compact read-only "view" renderer (the default for an
+// existing lesson with content — see plannerLessonHasContent) or the original,
+// fully-editable "edit" renderer (unchanged fields/behaviour, just entered via the
+// Edit button instead of always-on).
 function plannerDrawerHtml(lesson, plannerDays) {
-  return lesson.unitId ? plannerUnitLessonEditHtml(lesson) : plannerStandaloneLessonEditHtml(lesson, plannerDays);
+  const editing = state.plannerUi.drawerMode === 'edit';
+  if (lesson.unitId) return editing ? plannerUnitLessonEditHtml(lesson) : unitLessonViewHtml(lesson);
+  return editing ? plannerStandaloneLessonEditHtml(lesson, plannerDays) : plannerStandaloneLessonViewHtml(lesson, plannerDays);
+}
+
+// Small header shown at the top of Edit mode, letting the teacher step back to the
+// compact view-only summary without closing and reopening the drawer.
+function plannerDrawerEditHeaderHtml() {
+  return `<div class="planner-drawer-mode-bar"><button class="btn" type="button" onclick="plannerSwitchDrawerToView()">‹ Done</button></div>`;
+}
+
+// Small header shown at the top of View mode with the single entry point into editing.
+function plannerDrawerViewHeaderHtml() {
+  return `<div class="planner-drawer-mode-bar"><button class="btn btn-primary" type="button" onclick="plannerSwitchDrawerToEdit()">Edit</button></div>`;
 }
 
 function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
@@ -1519,6 +1535,7 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
     + (lesson.dayKey === 'unscheduled' ? `<option value="unscheduled" selected>Unscheduled (legacy — pick a day)</option>` : '');
   return `
     <div style="padding:16px">
+      ${plannerDrawerEditHeaderHtml()}
       <div class="form-group">
         <label class="form-label">Title</label>
         <input class="form-input" type="text" value="${escapeHtml(lesson.title || '')}" oninput="plannerUpdateSelectedLessonField('title', this.value)">
@@ -1565,6 +1582,50 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
   `;
 }
 
+// View-mode counterpart to plannerStandaloneLessonEditHtml: every field as plain text/
+// badges, no inputs/dropdowns, no IC search or Suggest controls, resource links as
+// plain clickable anchors. Same field order as edit mode.
+function plannerStandaloneLessonViewHtml(lesson, plannerDays) {
+  const isTaught = lesson.status === 'taught';
+  const dayMeta = plannerDays.find(day => day.key === lesson.dayKey);
+  const dayLabel = dayMeta ? dayMeta.label
+    : (lesson.dayKey === 'unscheduled' ? 'Unscheduled (legacy)' : (lesson.dayKey || 'Not scheduled'));
+  return `
+    <div style="padding:16px">
+      ${plannerDrawerViewHeaderHtml()}
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <div class="planner-view-value">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Subject</label>
+        <div class="planner-view-value">${escapeHtml(lesson.subject || 'No subject set')}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Day</label>
+        <div class="planner-view-value">${escapeHtml(dayLabel)}</div>
+      </div>
+
+      ${plannerResourceLinksViewHtml(lesson)}
+
+      <div class="form-group">
+        <label class="form-label">Learning intention</label>
+        <div class="planner-view-value planner-view-multiline">${lesson.intention ? escapeHtml(lesson.intention) : 'No learning intention set yet.'}</div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Instructional Components</label>
+        <div class="planner-selected-ics-view">${plannerSelectedICsViewHtml(lesson)}</div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Status</label>
+        ${unitTeachingStatusBadgeHtml(isTaught ? 'taught' : 'planned')}
+      </div>
+    </div>
+  `;
+}
+
 // Unit lesson edit mode, opened by clicking its board card — the Weekly Planner's own
 // drawer, not a navigation to Unit Plans (see plannerOpenLessonDrawer). Shares its core
 // fields (title/subject/teaching status/intention/ICs) with the Unit Plans detail
@@ -1591,9 +1652,26 @@ function plannerUnitLessonEditHtml(lesson) {
     : '';
   return `
     <div style="padding:16px">
+      ${plannerDrawerEditHeaderHtml()}
       ${plannerUnitLessonFieldsHtml(lesson)}
       ${unitLessonScheduleHtml(lesson)}
       ${unitContext}
+    </div>
+  `;
+}
+
+// View-mode counterpart to plannerUnitLessonEditHtml — shared by both places a unit
+// lesson's drawer can be reached from (the Weekly Planner board and Unit Plans' own
+// lesson row), same as the edit-mode fields are shared via plannerUnitLessonFieldsHtml.
+// Deliberately omits the unit-context trailer (linked CDs/assessment notes) — that's
+// unit-editing content, not part of viewing this lesson, and Unit Plans already shows
+// it in its own separate "Unit details" side panel regardless of drawer mode.
+function unitLessonViewHtml(lesson) {
+  return `
+    <div style="padding:16px">
+      ${plannerDrawerViewHeaderHtml()}
+      ${plannerUnitLessonViewFieldsHtml(lesson)}
+      ${unitLessonScheduleViewHtml(lesson)}
     </div>
   `;
 }
@@ -1606,6 +1684,36 @@ function plannerSelectedICsHtml(lesson) {
     const label = ic ? (ic.name || ic.id) : id;
     const code = ic?.homeDescriptorId ? `<span class="planner-ic-chip">${escapeHtml(ic.homeDescriptorId)}</span> ` : '';
     return `<span class="planner-selected-ic">${code}${escapeHtml(label)}<button class="planner-ic-remove" type="button" onclick="plannerToggleLessonIC('${plannerJsStr(id)}')" title="Remove IC">×</button></span>`;
+  }).join('');
+}
+
+// View-mode counterpart to plannerSelectedICsHtml: title + code + confidence tier
+// only, no description/example/common error and no remove control. Confidence tiers
+// are ephemeral session state from the last "Suggest from intention" run
+// (state.plannerUi.suggestionScores), never persisted on the lesson or IC — so a tier
+// only shows when that data is still live for this exact IC (e.g. the teacher just ran
+// Suggest, ticked some ICs, then hit Done). Reopening an already-built lesson in a
+// later session simply shows title + code, which is the honest state — there is no
+// stored score to show. Normalises against the linked ICs themselves (there is no
+// candidate pool to compare against in view mode), matching how plannerICResultsHtml
+// normalises against only the ICs actually rendered there.
+function plannerSelectedICsViewHtml(lesson) {
+  const ids = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : [];
+  if (!ids.length) return `<div style="font-size:12px;color:var(--text3)">No ICs linked yet.</div>`;
+  const icObjs = ids.map(id => state.instructionalComponents.find(x => x.id === id)).filter(Boolean);
+  const scores = state.plannerUi.suggestionScores || {};
+  const maxScore = Math.max(1, ...icObjs.map(ic => scores[ic.id] || 0));
+  return ids.map(id => {
+    const ic = state.instructionalComponents.find(x => x.id === id);
+    const label = ic ? (ic.name || ic.id) : id;
+    const code = ic?.homeDescriptorId || '';
+    const conf = ic ? plannerConfidenceTier(scores[ic.id] || 0, maxScore) : null;
+    return `
+      <div class="planner-view-ic-row">
+        <span class="planner-ic-option-label">${escapeHtml(label)}</span>
+        ${code ? `<span class="planner-ic-chip">${escapeHtml(code)}</span>` : ''}
+        ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
+      </div>`;
   }).join('');
 }
 
@@ -1965,6 +2073,7 @@ function plannerEnsureUiState() {
   if (!state.plannerUi || typeof state.plannerUi !== 'object') state.plannerUi = {};
   if (typeof state.plannerUi.selectedLessonId === 'undefined') state.plannerUi.selectedLessonId = null;
   if (typeof state.plannerUi.drawerOpen === 'undefined') state.plannerUi.drawerOpen = false;
+  if (state.plannerUi.drawerMode !== 'view' && state.plannerUi.drawerMode !== 'edit') state.plannerUi.drawerMode = 'view';
   if (typeof state.plannerUi.draggingLessonId === 'undefined') state.plannerUi.draggingLessonId = null;
   if (typeof state.plannerUi.draggingSlot === 'undefined') state.plannerUi.draggingSlot = null;
   // Within-day drag-to-reorder (session-only, never persisted): insertionTarget tracks
@@ -2174,10 +2283,26 @@ document.addEventListener('click', function() {
   if (state.currentView === 'planner' && state.plannerUi && state.plannerUi.openResourcePopoverCardKey) plannerCloseResourcePopover();
 });
 
+// Whether a lesson has anything worth showing in the read-only drawer view yet. A
+// freshly created lesson (plannerAddLesson/unitAddLesson always stamp the literal
+// title 'New Lesson' and leave everything else blank) has nothing meaningful to
+// look at, so it should open straight into Edit instead of a near-empty view screen.
+function plannerLessonHasContent(lesson) {
+  if (!lesson) return false;
+  const hasTitle = !!(lesson.title || '').trim() && lesson.title !== 'New Lesson';
+  const hasSubject = !!(lesson.subject || '').trim();
+  const hasIntention = !!(lesson.intention || '').trim();
+  const hasICs = Array.isArray(lesson.linkedICIds) && lesson.linkedICIds.length > 0;
+  const hasResourceLinks = Array.isArray(lesson.resourceLinks) && lesson.resourceLinks.length > 0;
+  return hasTitle || hasSubject || hasIntention || hasICs || hasResourceLinks;
+}
+
 function plannerOpenLessonDrawer(lessonId) {
-  if (!state.lessonPlans.some(lesson => lesson.id === lessonId)) return;
+  const lesson = state.lessonPlans.find(l => l.id === lessonId);
+  if (!lesson) return;
   state.plannerUi.selectedLessonId = lessonId;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.drawerMode = plannerLessonHasContent(lesson) ? 'view' : 'edit';
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
   state.plannerUi.expandedICId = null;
@@ -2202,6 +2327,26 @@ function plannerOpenLessonDrawerFromCard(lessonId) {
     state.unitPlansUi.cdShowAllYears = false;
   }
   plannerOpenLessonDrawer(lessonId);
+}
+
+// Mode switch for the already-open drawer (same selected lesson, same drawerOpen
+// state) — lets a teacher jump into editing, or step back out to the compact summary,
+// without closing and reopening. Entering Edit resets the IC search/suggestion state
+// the same way first opening the drawer does, so a stale search from an earlier
+// Edit session in this same drawer-open doesn't linger when re-entering.
+function plannerSwitchDrawerToEdit() {
+  plannerEnsureUiState();
+  state.plannerUi.drawerMode = 'edit';
+  state.plannerUi.icSearch = '';
+  state.plannerUi.suggestedICIds = [];
+  state.plannerUi.expandedICId = null;
+  renderView();
+}
+
+function plannerSwitchDrawerToView() {
+  plannerEnsureUiState();
+  state.plannerUi.drawerMode = 'view';
+  renderView();
 }
 
 function plannerStartLessonDrag(ev, lessonId) {
@@ -2577,6 +2722,7 @@ function plannerAddLesson(dayKey) {
   saveLessonPlansState();
   state.plannerUi.selectedLessonId = newLesson.id;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.drawerMode = 'edit';  // a brand-new lesson has nothing to view yet
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
   state.plannerUi.expandedICId = null;
@@ -2736,6 +2882,25 @@ function plannerResourceLinksHtml(lesson) {
         <input class="form-input" id="planner-resource-url" type="text" placeholder="https://...">
         <button class="btn" type="button" onclick="plannerAddResourceLink()">Add link</button>
       </div>
+    </div>
+  `;
+}
+
+// View-mode counterpart to plannerResourceLinksHtml: clickable links only, no
+// add/edit/remove controls — reuses the same list/link/empty-state classes so a link
+// looks identical whether the drawer is in Edit or View mode.
+function plannerResourceLinksViewHtml(lesson) {
+  const links = Array.isArray(lesson.resourceLinks) ? lesson.resourceLinks : [];
+  const listHtml = links.length
+    ? links.map(link => `
+        <div class="planner-resource-link">
+          <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label || link.url)}</a>
+        </div>`).join('')
+    : `<div class="planner-resource-empty">No resource links yet.</div>`;
+  return `
+    <div class="form-group">
+      <label class="form-label">Resource Links</label>
+      <div class="planner-resource-list">${listHtml}</div>
     </div>
   `;
 }
@@ -3618,7 +3783,7 @@ function renderUnitDetail(main, unit) {
         ${hasDrawer
           ? `<aside class="card unit-drawer-col">
                <div class="card-head">
-                 <div class="card-title">Edit lesson</div>
+                 <div class="card-title">${state.plannerUi.drawerMode === 'edit' ? 'Edit lesson' : 'View lesson'}</div>
                  <button class="btn" type="button" onclick="unitCloseLessonDrawer()">Close</button>
                </div>
                ${unitLessonDrawerHtml(drawerLesson)}
@@ -3732,9 +3897,47 @@ function plannerUnitLessonFieldsHtml(lesson) {
   `;
 }
 
+// View-mode counterpart to plannerUnitLessonFieldsHtml — same field set/order, but
+// plain text/badges, no IC search/Suggest controls, no year-filter toggle (that
+// toggle only exists to help pick new candidates, which view mode doesn't do).
+function plannerUnitLessonViewFieldsHtml(lesson) {
+  return `
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <div class="planner-view-value">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Subject</label>
+        <div class="planner-view-value">${escapeHtml(lesson.subject || 'No subject set')}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Teaching status</label>
+        ${unitTeachingStatusBadgeHtml(lesson.teachingStatus)}
+      </div>
+
+      ${plannerResourceLinksViewHtml(lesson)}
+
+      <div class="form-group">
+        <label class="form-label">Learning intention</label>
+        <div class="planner-view-value planner-view-multiline">${lesson.intention ? escapeHtml(lesson.intention) : 'No learning intention set yet.'}</div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Instructional Components</label>
+        <div class="planner-selected-ics-view">${plannerSelectedICsViewHtml(lesson)}</div>
+      </div>
+  `;
+}
+
+// Unit Plans' own lesson drawer — dispatches on the same shared drawerMode flag as
+// the Weekly Planner's board-click drawer (plannerDrawerHtml), so switching modes in
+// either place behaves identically. View mode is unitLessonViewHtml, the same
+// renderer plannerDrawerHtml uses for a unit lesson opened from the board.
 function unitLessonDrawerHtml(lesson) {
+  if (state.plannerUi.drawerMode !== 'edit') return unitLessonViewHtml(lesson);
   return `
     <div style="padding:16px">
+      ${plannerDrawerEditHeaderHtml()}
       ${plannerUnitLessonFieldsHtml(lesson)}
       ${unitLessonScheduleHtml(lesson)}
     </div>
@@ -3780,6 +3983,23 @@ function unitLessonScheduleHtml(lesson) {
         </select>
         <button class="btn btn-primary" type="button" onclick="unitScheduleLessonFromDrawer('${plannerJsStr(lesson.id)}')">Add to week</button>
       </div>
+    </div>
+  `;
+}
+
+// View-mode counterpart to unitLessonScheduleHtml: current schedule as plain text
+// chips, no week/day picker or per-slot remove control.
+function unitLessonScheduleViewHtml(lesson) {
+  const slots = (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [])
+    .filter(isValidScheduledSlot);
+  const dayLabels = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri' };
+  const slotList = slots.length
+    ? slots.map(s => `<span class="planner-slot-chip">${escapeHtml(plannerWeekRangeLabel(s.weekKey))} · ${escapeHtml(dayLabels[s.dayKey] || s.dayKey)}</span>`).join('')
+    : `<div class="planner-slot-empty">Not scheduled onto the week yet.</div>`;
+  return `
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label">Schedule</label>
+      <div class="planner-slot-list">${slotList}</div>
     </div>
   `;
 }
@@ -3845,6 +4065,7 @@ function unitAddLesson(unitId) {
   saveUnitPlansState();
   state.plannerUi.selectedLessonId = lesson.id;
   state.plannerUi.drawerOpen = true;
+  state.plannerUi.drawerMode = 'edit';  // a brand-new lesson has nothing to view yet
   state.plannerUi.icSearch = '';
   state.plannerUi.suggestedICIds = [];
   state.plannerUi.expandedICId = null;
