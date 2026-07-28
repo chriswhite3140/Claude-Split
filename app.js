@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.81
+ * THIS FILE IS VERSION: 1.13.82
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.82 - Independent scroll per panel: the Weekly Planner's Unit lessons rail/Lesson Drawer and Unit Plans' Lesson sequence/Edit lesson/Unit details columns previously had no capped height, so each grew as tall as its content and the whole page had to scroll to reach anything — and scrolling one long panel scrolled every other panel out of view along with it. Each of these six panels (not the Week Board, which keeps its own horizontal day-column scroll unchanged, and not the collapsed edge-tab state from the previous two PRs, which still renders at its existing min-height: 300px, untouched) now caps its height to roughly the visible viewport (max-height: calc(100vh - 170px) for the Weekly Planner, calc(100vh - 120px) for Unit Plans — Unit Plans' topbar is shorter) via a flex-column layout: the header (.card-head, now flex-shrink: 0) stays pinned at its natural size while only the body below it scrolls (flex: 1; min-height: 0; overflow-y: auto). The Lesson Drawer's five separate content-rendering functions (standalone/unit lesson, view/edit mode, shared between the Weekly Planner and Unit Plans' own drawer) now share one new lesson-drawer-body wrapper class instead of five bare, unstyled `<div style="padding:16px">`s. One known, minor trade-off: the resource-link popover on a Unit lessons rail pill can be clipped by a sub-pixel-to-a-few-pixels amount if opened on the very last pill while the rail is scrolled to its absolute bottom (verified live — in practice the popover still renders essentially at the panel's edge and stays fully readable/usable; this is the same class of edge-of-viewport tradeoff the popover already had before per-panel scroll existed, just relocated to the panel's own edge instead of the page's). 7 new regression tests (5 confirmed to fail against the pre-fix code); all 196 tests pass. Verified live in a real browser (Playwright): internal scroll + pinned headers on both layouts, the Week Board and collapsed strips fully unaffected, and no page-level scroll needed for either view at a normal laptop window size.
  * v1.13.81 - Fix a review finding on 1.13.80's collapsed-panel discoverability fix: filling the collapsed strip via align-items: stretch is correct at laptop/tablet widths, where a collapsed panel is a narrow 40px column, but at phone widths (<768px) the existing mobile rule stacks it full viewport-width instead — combined with the panel's 300px min-height, the "fill the strip" button became a roughly full-width, 300px-tall tap target rather than a slim tab, confirmed live via Playwright (343x300px on a 375px viewport) and easy to accidentally reopen while scrolling. A new phone-width override drops the collapsed panel's min-height to 0 and switches the button to a short, fixed 44px horizontal bar with the label read normally instead of rotated (writing-mode: horizontal-tb) — an ordinary compact button instead of the desktop treatment applied unchanged. Laptop/tablet widths are unaffected (re-verified live: still the full-height 40px strip). 1 new regression test, confirmed to fail against the pre-fix code; all 189 tests pass.
  * v1.13.80 - Weekly Planner: improved discoverability of the collapsed Unit lessons/Lesson Drawer toggle (styles.css only, no markup or logic changes). The collapsed strip's re-expand button previously stayed pinned at its base rule's fixed height: 22px — the collapsed-state override only reset width, never height — so it sat as a tiny icon at the top of an otherwise-empty 40px-wide, 300px-tall strip that read as blank margin rather than a control. The button now fills the whole strip via align-items: stretch on the collapsed container (a height: 100% on the button itself doesn't work here, since the panel's own height comes from min-height rather than an explicit height, so a percentage height has no definite parent to resolve against — confirmed empirically via Playwright: height: 100% alone only reached 128px of the available 300px, stretch reaches the full height). Each collapsed strip also now shows a rotated, uppercase text label ("Unit lessons" / "Lesson Drawer", via a ::before pseudo-element scoped to the existing .planner-unit-rail/.planner-shell-drawer parent classes — no new classes or markup needed) so what's hidden is legible without hovering. Both the collapsed strip and the small expanded-state header icon button move from the low-contrast --text3/--surface (blends into the plain card) to --text2/--surface-alt at rest, so the control is visibly interactive before it's ever hovered — hover styling is unchanged. The collapse/expand logic, state, and grid column widths/breakpoints from the previous two PRs are untouched. 4 new regression tests (all 4 confirmed to fail against the pre-fix code); all 188 tests pass. Verified in a real browser (Playwright), in both light and dark mode.
  * v1.13.79 - Fix two review findings on 1.13.78's collapsible planner panels. (1) At phone widths (<768px), removing the old @media (max-width: 1024px) single-column rule meant the default-expanded three-column grid (200px+ rail, 260px+ drawer, plus gaps) overflowed the viewport outright — e.g. a 375px phone had ~343px available, well under the two side panels' combined minimums alone — leaving the Week Board at effectively zero width and pushing the Lesson Drawer off-screen, undiscoverable without scrolling sideways. A new @media (max-width: 767px) rule (matching the codebase's existing mobile breakpoint, used elsewhere for the nav sidebar) forces .planner-shell-layout back to a single stacked column via !important, since a stylesheet rule can only override the per-render inline grid-template-columns by being more important, not more specific — restoring the pre-collapsible-panel stacking behaviour at true phone widths while leaving the collapsible side-by-side layout fully intact for laptop/tablet widths, which is what this feature actually targets. (2) plannerOpenLessonDrawer, plannerAddLesson, and unitAddLesson all set drawerOpen = true to show a lesson, but none of them cleared drawerCollapsed — so opening a lesson (or worse, creating a brand-new one via + Add Lesson) while the drawer was left collapsed silently succeeded with no visible change, since the drawer stayed rendered as a 40px collapsed tab. All three now also clear drawerCollapsed, so any action that means to show the drawer always actually shows it. 5 new regression tests (4 confirmed to fail against the pre-fix code); all 184 tests pass.
@@ -123,7 +124,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.81';
+const APP_VERSION = '1.13.82';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1576,7 +1577,7 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
   const dayOptions = plannerDays.map(day => `<option value="${day.key}" ${lesson.dayKey === day.key ? 'selected' : ''}>${day.label}</option>`).join('')
     + (lesson.dayKey === 'unscheduled' ? `<option value="unscheduled" selected>Unscheduled (legacy — pick a day)</option>` : '');
   return `
-    <div style="padding:16px">
+    <div class="lesson-drawer-body" style="padding:16px">
       ${plannerDrawerEditHeaderHtml()}
       <div class="form-group">
         <label class="form-label">Title</label>
@@ -1633,7 +1634,7 @@ function plannerStandaloneLessonViewHtml(lesson, plannerDays) {
   const dayLabel = dayMeta ? dayMeta.label
     : (lesson.dayKey === 'unscheduled' ? 'Unscheduled (legacy)' : (lesson.dayKey || 'Not scheduled'));
   return `
-    <div style="padding:16px">
+    <div class="lesson-drawer-body" style="padding:16px">
       ${plannerDrawerViewHeaderHtml()}
       <div class="form-group">
         <label class="form-label">Title</label>
@@ -1693,7 +1694,7 @@ function plannerUnitLessonEditHtml(lesson) {
       </div>`
     : '';
   return `
-    <div style="padding:16px">
+    <div class="lesson-drawer-body" style="padding:16px">
       ${plannerDrawerEditHeaderHtml()}
       ${plannerUnitLessonFieldsHtml(lesson)}
       ${unitLessonScheduleHtml(lesson)}
@@ -1710,7 +1711,7 @@ function plannerUnitLessonEditHtml(lesson) {
 // it in its own separate "Unit details" side panel regardless of drawer mode.
 function unitLessonViewHtml(lesson) {
   return `
-    <div style="padding:16px">
+    <div class="lesson-drawer-body" style="padding:16px">
       ${plannerDrawerViewHeaderHtml()}
       ${plannerUnitLessonViewFieldsHtml(lesson)}
       ${unitLessonScheduleViewHtml(lesson)}
@@ -4157,7 +4158,7 @@ function plannerUnitLessonViewFieldsHtml(lesson) {
 function unitLessonDrawerHtml(lesson) {
   if (state.plannerUi.drawerMode !== 'edit') return unitLessonViewHtml(lesson);
   return `
-    <div style="padding:16px">
+    <div class="lesson-drawer-body" style="padding:16px">
       ${plannerDrawerEditHeaderHtml()}
       ${plannerUnitLessonFieldsHtml(lesson)}
       ${unitLessonScheduleHtml(lesson)}

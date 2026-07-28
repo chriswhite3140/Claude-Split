@@ -352,6 +352,10 @@ body[data-text-size="large"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* No-op for an ordinary block-level card; keeps the header pinned at its natural
+     size (never squeezed) for the specific cards below that are flex columns with a
+     capped height and a scrollable body. */
+  flex-shrink: 0;
 }
 
 .card-title {
@@ -1139,17 +1143,55 @@ body[data-text-size="large"] {
    child corners, which the box's own border-radius already does on its own background/
    border regardless of this property) — these two cards can host an absolutely
    positioned resource-link popover that needs to render past a card/pill's edge
-   instead of being clipped. Neither container relies on clipping for layout (no fixed
-   height, align-items: start above), so this is safe. */
+   instead of being clipped. .planner-shell-board never scrolls internally, so this
+   still fully avoids clipping there; .planner-unit-rail's own scrollable body below
+   (.planner-unit-rail-body) is a separate, nested overflow context that a popover
+   opened near the bottom of a long, scrolled list can still be clipped by — a
+   pre-existing kind of tradeoff (previously that same popover could render below the
+   visible page viewport instead), not a new one this rule can fix on its own. */
 .planner-shell-board,
 .planner-unit-rail {
   overflow: visible;
+}
+
+/* Independent scroll per panel: each of these caps its own height to roughly the
+   visible viewport (100vh minus the sticky topbar + .content's top padding, with a
+   little breathing room) instead of growing as tall as its content and pushing the
+   whole page to scroll — scrolling one long panel to its bottom no longer scrolls
+   every other panel out of view along with it. display: flex + flex-direction:
+   column keeps the header (.card-head, flex-shrink: 0 above) pinned at its natural
+   size; only the body below it (.planner-unit-rail-body / .lesson-drawer-body,
+   flex: 1; min-height: 0; overflow-y: auto — see those rules) scrolls. Deliberately
+   excludes .is-collapsed — a collapsed panel is a slim edge tab and must keep
+   rendering at its current (min-height: 300px) size, untouched by this. The Week
+   Board (.planner-shell-board) is deliberately NOT included here — it already
+   handles overflow horizontally (scrolling through days), and capping its height
+   too would be a different problem (seeing multiple weeks' worth of content) that
+   this task is not about. */
+.planner-unit-rail:not(.is-collapsed),
+.planner-shell-drawer:not(.is-collapsed) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 170px);
 }
 
 .planner-shell-placeholder {
   padding: 14px;
   color: var(--text3);
   font-size: var(--helper-size);
+}
+
+/* Shared scrollable body for a lesson drawer's rendered content — used both by the
+   Weekly Planner's Lesson Drawer (.planner-shell-drawer) and Unit Plans' own lesson
+   drawer (.unit-drawer-col), which render the exact same set of functions
+   (plannerStandaloneLessonEditHtml / plannerStandaloneLessonViewHtml /
+   plannerUnitLessonEditHtml / unitLessonViewHtml / unitLessonDrawerHtml's own edit
+   branch — all five share this one wrapper class instead of five near-duplicate
+   rules). Same fill-then-scroll behaviour as .planner-unit-rail-body above. */
+.lesson-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* Collapse/expand control for the Unit lessons rail and Lesson Drawer — lives on the
@@ -1616,6 +1658,14 @@ body[data-text-size="large"] {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Fills whatever height .planner-unit-rail (a capped-height flex column, see
+     above) has left below its header, and scrolls internally once its own content
+     exceeds that. min-height: 0 overrides flex's default min-height: auto, which
+     would otherwise refuse to shrink below the content's own height and defeat the
+     scroll entirely. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .planner-unit-rail-empty {
   border: 1px dashed var(--border2);
@@ -2667,12 +2717,30 @@ body[data-text-size="large"] {
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 360px) minmax(240px, 300px);
 }
 
+/* Independent scroll per column, same approach as the Weekly Planner's
+   .planner-shell-layout panels above: cap each column's height to roughly the
+   visible viewport (Unit Plans' topbar is shorter than the Weekly Planner's, hence
+   the smaller offset) and let only its own body scroll, so paging through a long
+   lesson sequence doesn't scroll the Unit details / Edit lesson columns out of
+   view. There is no collapsed state to exclude here — Unit Plans' three-column
+   layout has no collapse feature. */
+.unit-seq-col,
+.unit-drawer-col,
+.unit-side-col {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 120px);
+}
+
 /* ── Lesson sequence ── */
 .unit-seq-body {
   padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .unit-seq-empty {
   border: 1px dashed var(--border2);
@@ -2815,6 +2883,9 @@ body[data-text-size="large"] {
 }
 .unit-side-body {
   padding: 14px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .unit-cd-hint,
 .unit-cd-empty {

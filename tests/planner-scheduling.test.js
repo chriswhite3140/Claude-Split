@@ -3269,6 +3269,124 @@ test('at phone widths (<768px), a collapsed panel is a short horizontal button r
   assert.ok(/::before,\s*\n\s*\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle::before\s*\{\s*\n\s*writing-mode:\s*horizontal-tb;/.test(mobileCss), 'the rotated vertical label must switch back to normal horizontal text at phone widths, since a rotated label only makes sense against the desktop\'s narrow, tall strip');
 });
 
+// ── Independent scroll per panel (Weekly Planner + Unit Plans) ──────────────────
+console.log('Independent scroll per panel (Weekly Planner + Unit Plans)');
+
+test('.card-head is pinned (flex-shrink: 0) so it never gets squeezed by a capped-height flex-column panel', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.card-head\s*\{[^}]*\}/)[0];
+  assert.ok(/flex-shrink:\s*0/.test(rule), '.card-head must not shrink within a flex-column panel');
+});
+
+test('the Unit lessons rail and Lesson Drawer cap their height to the viewport when expanded, but explicitly exclude the collapsed edge tab', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.planner-unit-rail:not\(\.is-collapsed\),\s*\n\.planner-shell-drawer:not\(\.is-collapsed\)\s*\{[^}]*\}/);
+  assert.ok(rule, 'a :not(.is-collapsed)-scoped max-height rule must exist for both panels');
+  assert.ok(/display:\s*flex/.test(rule[0]) && /flex-direction:\s*column/.test(rule[0]), 'the panel must be a flex column so its header can stay pinned while its body scrolls');
+  assert.ok(/max-height:\s*calc\(100vh - \d+px\)/.test(rule[0]), 'height must be tied to the viewport, not left uncapped');
+  // Sanity: the rule must NOT also apply unscoped (i.e. it must not exist without the
+  // :not(.is-collapsed) exclusion) — a collapsed panel has to keep rendering at its
+  // existing min-height: 300px, untouched by this new max-height.
+  assert.ok(!/\n\.planner-unit-rail,\n\.planner-shell-drawer\s*\{[^}]*max-height/.test(css), 'the max-height rule must not apply to the collapsed strip too');
+});
+
+test('the Week Board is deliberately NOT height-capped — only its own day columns scroll horizontally, unaffected by this change', () => {
+  const rawCss = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  // Strip comments first — prose explaining that .planner-shell-board is deliberately
+  // excluded (which necessarily mentions both "planner-shell-board" and "max-height"
+  // in the same paragraph) would otherwise false-positive this check.
+  const css = rawCss.replace(/\/\*[\s\S]*?\*\//g, '');
+  const boardMaxHeightRules = css.match(/[^}]*\.planner-shell-board[^}]*\{[^}]*max-height[^}]*\}/g) || [];
+  assert.strictEqual(boardMaxHeightRules.length, 0, '.planner-shell-board must never be given a max-height — it should keep growing to fit its content, relying only on its existing horizontal scroll');
+});
+
+test('.planner-unit-rail-body and the shared .lesson-drawer-body both fill their remaining panel height and scroll independently', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const railBodyRule = css.match(/\.planner-unit-rail-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(railBodyRule) && /min-height:\s*0/.test(railBodyRule) && /overflow-y:\s*auto/.test(railBodyRule), 'the rail body must be flex: 1; min-height: 0; overflow-y: auto to scroll independently within the now-capped rail');
+  const drawerBodyRule = css.match(/\.lesson-drawer-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(drawerBodyRule) && /min-height:\s*0/.test(drawerBodyRule) && /overflow-y:\s*auto/.test(drawerBodyRule), 'the shared lesson-drawer-body class must be flex: 1; min-height: 0; overflow-y: auto');
+});
+
+test('every lesson-drawer-rendering function (standalone/unit, view/edit, on both the Weekly Planner and Unit Plans) wraps its content in the shared scrollable lesson-drawer-body class', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+
+  // Standalone, view mode (default for a lesson with content).
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'standalone view mode must use lesson-drawer-body');
+
+  // Standalone, edit mode.
+  sandbox.plannerSwitchDrawerToEdit();
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'standalone edit mode must use lesson-drawer-body');
+
+  // Unit lesson, view mode, via the Weekly Planner drawer. A unit lesson only stays
+  // selected if it has a scheduled occurrence on the currently displayed week (see
+  // renderPlanner's reachability check) — schedule it first, same as every other
+  // test in this file that opens a unit lesson's drawer.
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'unit lesson view mode (Weekly Planner) must use lesson-drawer-body');
+
+  // Unit lesson, edit mode, via the Weekly Planner drawer.
+  sandbox.plannerSwitchDrawerToEdit();
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'unit lesson edit mode (Weekly Planner) must use lesson-drawer-body');
+
+  // Unit Plans' own drawer, both modes. Unlike the Weekly Planner, Unit Plans only
+  // requires the lesson to belong to the open unit (see renderUnitDetail) — no
+  // scheduled-on-this-week requirement.
+  st.currentView = 'unit-plans';
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.openUnitId = 'unit_1';
+  st.plannerUi.selectedLessonId = 'ul_1';
+  st.plannerUi.drawerOpen = true;
+  st.plannerUi.drawerMode = 'view';
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'Unit Plans view mode must use lesson-drawer-body');
+
+  st.plannerUi.drawerMode = 'edit';
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'Unit Plans edit mode must use lesson-drawer-body');
+});
+
+test('Unit Plans\' three columns (Lesson sequence, Edit/View lesson, Unit details) each cap their height to the viewport and scroll their own body independently — no collapse state to exclude, unlike the Weekly Planner', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const colRule = css.match(/\.unit-seq-col,\s*\n\.unit-drawer-col,\s*\n\.unit-side-col\s*\{[^}]*\}/);
+  assert.ok(colRule, 'the shared three-column max-height rule must exist');
+  assert.ok(/display:\s*flex/.test(colRule[0]) && /flex-direction:\s*column/.test(colRule[0]) && /max-height:\s*calc\(100vh - \d+px\)/.test(colRule[0]), 'all three columns must be capped flex columns');
+
+  const seqBodyRule = css.match(/\.unit-seq-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(seqBodyRule) && /min-height:\s*0/.test(seqBodyRule) && /overflow-y:\s*auto/.test(seqBodyRule), 'the lesson sequence body must scroll independently');
+
+  const sideBodyRule = css.match(/\.unit-side-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(sideBodyRule) && /min-height:\s*0/.test(sideBodyRule) && /overflow-y:\s*auto/.test(sideBodyRule), 'the unit details body must scroll independently');
+});
+
+test('the full render pipeline does not throw for either layout with the new scroll-container structure in place', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+  assert.doesNotThrow(() => realRenderView(), 'Weekly Planner, drawer closed');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  assert.doesNotThrow(() => realRenderView(), 'Weekly Planner, unit lesson drawer open');
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.doesNotThrow(() => realRenderView(), 'Weekly Planner, drawer collapsed with a lesson still selected underneath');
+
+  st.currentView = 'unit-plans';
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.openUnitId = 'unit_1';
+  assert.doesNotThrow(() => realRenderView(), 'Unit Plans, 2-column (no lesson drawer)');
+  st.plannerUi.selectedLessonId = 'ul_1';
+  st.plannerUi.drawerOpen = true;
+  assert.doesNotThrow(() => realRenderView(), 'Unit Plans, 3-column (lesson drawer open)');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
