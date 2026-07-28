@@ -17,7 +17,7 @@ This is the **new ClassTracker build** (`claude-split`). The old v1 app lives in
 - `styles.css` — all styling
 - `docs/` — design documents (see caveat below — several are stale and describe planned/historical state, not necessarily what's built)
 - `data/` — curriculum source files (CSV, XLSX)
-- `apps-script/` — Google Apps Script backend source (e.g. `DriveBackup.gs`), mirroring what's deployed at the `API_URL` configured in `app.js`
+- `apps-script/` — Google Apps Script backend source. `DriveBackup.gs` is checked into the repo for review but is **not yet deployed** — see its own header comment for the manual copy/wire/redeploy steps still required before Drive backup sync actually works
 - `tests/` — automated regression test suite (`node tests/planner-scheduling.test.js`; see Testing below)
 - `.github/workflows/` — Claude Code GitHub Actions workflows
 
@@ -58,7 +58,7 @@ No feature should bypass ICs. If a feature does not connect to ICs, it is out of
 
 Google Apps Script connects to Google Sheets for data storage. The frontend communicates with it via fetch calls to a deployed Apps Script URL configured in `app.js` (`API_URL`).
 
-Planner/Unit Plan data (units + lessons) is not part of this Sheets backend — see "Known gaps" below. It does get a periodic JSON safety-net backup to the teacher's own Google Drive, through the same Apps Script deployment (`apps-script/DriveBackup.gs`, `driveBackupSave`/`driveBackupLoad` actions) — this protects against a cache clear or lost device, it is not a queryable data source.
+Planner/Unit Plan data (units + lessons) is not part of this Sheets backend — see "Known gaps" below. The frontend has code to back it up as JSON to the teacher's own Google Drive (`driveBackupSave`/`driveBackupLoad` actions, called from `app.js`'s "DRIVE BACKUP SYNC" section), but the Apps Script side of that (`apps-script/DriveBackup.gs`) is not yet deployed — see "Known gaps" below before assuming this protection is actually in effect.
 
 ---
 
@@ -77,14 +77,14 @@ Planner/Unit Plan data (units + lessons) is not part of this Sheets backend — 
 
 ## Current build status
 
-`app.js` is at **v1.13.86** (~11,600 lines). This is a mature, actively-developed build — most of the structural gaps a June 2026 assessment identified have since been closed. Two genuine gaps remain (see below).
+`app.js` is at **v1.13.86** (~11,600 lines). This is a mature, actively-developed build — most of the structural gaps a June 2026 assessment identified have since been closed. Three genuine gaps remain (see below).
 
 ### Built and working
 - CSV auto-fetch + `buildDescriptorIndex()` (descriptorType typing, elaborations)
 - IC data model — ownership tiers (`system_default` / `teacher_original` / `teacher_stub`), draft/stub ICs with a promotion flow, suppression, `homeDescriptorId`/`linkedDescriptorIds` tethering (schema §2.3)
 - **Weekly Planner** — single consolidated planning surface (the old separate "Plan & Log" and legacy Weekly Planner were retired in v1.13.0). Week-based board (Unscheduled + Mon–Fri) with drag-to-schedule; collapsible Unit-lessons rail and Lesson Drawer side panels, each with independent scroll; a lesson's `intention` field drives an IC-suggestion engine (confidence-tiered Strong/Partial/Weak, class year-level filtered, boosted toward a unit's own linked CDs, stopword-filtered token scoring); 1–3 linked ICs per lesson; resource links (label + URL, http/https-only); per-occurrence taught-status tracking for a lesson scheduled on more than one day
 - **Unit Plans** — a layer above the Weekly Planner (v1.13.24+): units group lessons into a sequence (add/reorder/delete), linked curriculum descriptors with year-level defaulting, assessment notes, whole-unit/single-lesson duplicate, its own 3-column view (lesson sequence / edit-view lesson drawer / unit details) reusing the Weekly Planner's lesson-editing UI
-- **Drive backup sync** — periodic JSON backup of unit plans + lessons to the teacher's Google Drive (see Backend above); not full Sheets persistence
+- **Drive backup sync (frontend only — not yet live)** — `app.js` is fully wired to back up unit plans + lessons as JSON to the teacher's Google Drive (dirty-tracking, retry, a sync-status indicator), but the Apps Script backend it calls isn't deployed yet, so no actual backup happens until that manual step is done (see "Known gaps")
 - **Daily Wizard** — attendance → codes/ICs (manual pick, or AI-assisted suggestion with a keyword-scorer fallback when no API key is configured) → per-student IC scan (`got_it`/`needs_review`) → conditional quick-mastery step for students at ≥80% IC coverage
 - Mastery + coverage — 80% validity gate, IC skill rollup (OR-scoring across tethered/linked ICs) feeding Bulk Assess and Coverage Gaps consistently, strand-history signals, coverage heatmap and class-overview views
 - Sheets backend for teaching/mastery data (Students, Progress, TaughtLog, TaughtICs, StandardsJudgments, ProgressionPlacements)
@@ -95,9 +95,10 @@ Planner/Unit Plan data (units + lessons) is not part of this Sheets backend — 
 
 ### Known gaps
 - **The Daily Wizard is still isolated from planned lessons.** Opening it (`openDailyLogWizard()`) always starts from a blank slate — it never reads `state.lessonPlans`. Outcome records (`TaughtLog`, `TaughtICs`, `Progress`) still carry no `lessonId`. There is no way to see what was actually logged against a specific planned lesson, or to seed a day's log from what was planned for it.
-- **Planning data (units + lessons) is still localStorage-first, not Sheets-backed.** The Drive JSON backup (above) is a safety net against data loss, not a substitute — it's not queryable, and outcome data still can't be joined to it (a consequence of the `lessonId` gap above).
+- **Planning data (units + lessons) is still localStorage-first, not Sheets-backed.** The Drive JSON backup (above) is meant as a safety net against data loss, not a substitute — it's not queryable, and outcome data still can't be joined to it (a consequence of the `lessonId` gap above).
+- **The Drive backup's Apps Script side isn't deployed, so the safety net above isn't actually in effect yet.** `apps-script/DriveBackup.gs` is checked into the repo but, per its own header, still has to be manually copied into the live Apps Script project, wired into `doPost`, and redeployed. Until then, every `driveBackupSave`/`driveBackupLoad` call fails — handled gracefully in the UI (a "Drive sync failed — retry" indicator, see `driveSyncIndicatorHtml()`), but a teacher clearing their browser cache or losing their device today loses their planning data with no real backup to fall back on, despite the UI suggesting sync is happening.
 
-There is no prescribed order for closing these — scope and sequence any work on them per the specific task at hand, verifying against `app.js` first rather than assuming either gap's status.
+There is no prescribed order for closing these — scope and sequence any work on them per the specific task at hand, verifying against `app.js`/`apps-script/` first rather than assuming any gap's status.
 
 ---
 
