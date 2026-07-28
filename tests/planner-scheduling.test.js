@@ -3477,6 +3477,43 @@ test('capturePanelScrollPositions / restorePanelScrollPositions never throw acro
   assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different open unit');
 });
 
+// ── Review fix: rail text truncation regression from the independent-scroll PR ──
+console.log('Unit lessons rail scrollbar-width compensation (truncation regression fix)');
+
+test('the expanded Unit lessons rail track is widened by 12px at both ends to compensate for its own internal scrollbar, while the Week Board and Lesson Drawer tracks are untouched', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.planner-shell-layout\s*\{[^}]*\}/)[0];
+  assert.ok(/grid-template-columns:\s*minmax\(212px, 252px\) minmax\(0, 1fr\) minmax\(260px, 320px\)/.test(rule), 'the rail track must grow from minmax(200px, 240px) to minmax(212px, 252px); the middle (Week Board) and third (Lesson Drawer) tracks must be exactly as before');
+  // Strip comments first — the rule's own explanatory comment intentionally
+  // mentions the old value for context, which would otherwise false-positive this.
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/minmax\(200px,\s*240px\)/.test(cssWithoutComments), 'the old, too-narrow rail track value must not remain in any live (non-comment) CSS rule');
+});
+
+test('the per-render inline grid-template-columns style in renderPlanner reflects the same widened rail track when expanded, the same untouched 40px when collapsed, and leaves the Lesson Drawer track untouched in both cases', () => {
+  resetState();
+
+  realRenderView();
+  let html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(/grid-template-columns:\s*minmax\(212px, 252px\) minmax\(0, 1fr\) minmax\(260px, 320px\)/.test(html), 'expanded rail must render at minmax(212px, 252px); the drawer track must remain minmax(260px, 320px)');
+
+  sandbox.plannerToggleRailCollapsed();
+  realRenderView();
+  html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(/grid-template-columns:\s*40px minmax\(0, 1fr\) minmax\(260px, 320px\)/.test(html), 'collapsing the rail must still shrink it to exactly 40px, unaffected by the width fix; the drawer track must remain minmax(260px, 320px)');
+});
+
+test('.planner-unit-rail-body uses a slim, explicitly-sized scrollbar so its own internal scroll costs a small, known amount of the narrow rail column rather than an uncontrolled OS-default width', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const railBodyRules = css.match(/\.planner-unit-rail-body[^{]*\{[^}]*\}/g) || [];
+  const joined = railBodyRules.join('\n');
+  assert.ok(/scrollbar-width:\s*thin/.test(joined), 'Firefox must get the thin scrollbar-width, not the default full-width one');
+  const webkitWidthRule = css.match(/\.planner-unit-rail-body::-webkit-scrollbar\s*\{[^}]*\}/);
+  assert.ok(webkitWidthRule && /width:\s*8px/.test(webkitWidthRule[0]), 'Chromium/WebKit must get an explicit, narrow 8px scrollbar width');
+  assert.ok(/\.planner-unit-rail-body::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--border2\)/.test(css), 'the scrollbar thumb must use the existing --border2 theme token, not a hardcoded colour, per project convention');
+  assert.ok(/\.planner-unit-rail-body::-webkit-scrollbar-thumb:hover\s*\{[^}]*background:\s*var\(--text3\)/.test(css), 'the scrollbar thumb must darken on hover using the existing --text3 theme token');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
