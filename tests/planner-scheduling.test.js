@@ -3269,6 +3269,214 @@ test('at phone widths (<768px), a collapsed panel is a short horizontal button r
   assert.ok(/::before,\s*\n\s*\.planner-shell-drawer\.is-collapsed \.planner-panel-collapse-toggle::before\s*\{\s*\n\s*writing-mode:\s*horizontal-tb;/.test(mobileCss), 'the rotated vertical label must switch back to normal horizontal text at phone widths, since a rotated label only makes sense against the desktop\'s narrow, tall strip');
 });
 
+// ── Independent scroll per panel (Weekly Planner + Unit Plans) ──────────────────
+console.log('Independent scroll per panel (Weekly Planner + Unit Plans)');
+
+test('.card-head is pinned (flex-shrink: 0) so it never gets squeezed by a capped-height flex-column panel', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.card-head\s*\{[^}]*\}/)[0];
+  assert.ok(/flex-shrink:\s*0/.test(rule), '.card-head must not shrink within a flex-column panel');
+});
+
+test('the Unit lessons rail and Lesson Drawer cap their height to the viewport when expanded, but explicitly exclude the collapsed edge tab', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.planner-unit-rail:not\(\.is-collapsed\),\s*\n\.planner-shell-drawer:not\(\.is-collapsed\)\s*\{[^}]*\}/);
+  assert.ok(rule, 'a :not(.is-collapsed)-scoped max-height rule must exist for both panels');
+  assert.ok(/display:\s*flex/.test(rule[0]) && /flex-direction:\s*column/.test(rule[0]), 'the panel must be a flex column so its header can stay pinned while its body scrolls');
+  assert.ok(/max-height:\s*calc\(100vh - \d+px\)/.test(rule[0]), 'height must be tied to the viewport, not left uncapped');
+  // Sanity: the rule must NOT also apply unscoped (i.e. it must not exist without the
+  // :not(.is-collapsed) exclusion) — a collapsed panel has to keep rendering at its
+  // existing min-height: 300px, untouched by this new max-height.
+  assert.ok(!/\n\.planner-unit-rail,\n\.planner-shell-drawer\s*\{[^}]*max-height/.test(css), 'the max-height rule must not apply to the collapsed strip too');
+});
+
+test('the Week Board is deliberately NOT height-capped — only its own day columns scroll horizontally, unaffected by this change', () => {
+  const rawCss = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  // Strip comments first — prose explaining that .planner-shell-board is deliberately
+  // excluded (which necessarily mentions both "planner-shell-board" and "max-height"
+  // in the same paragraph) would otherwise false-positive this check.
+  const css = rawCss.replace(/\/\*[\s\S]*?\*\//g, '');
+  const boardMaxHeightRules = css.match(/[^}]*\.planner-shell-board[^}]*\{[^}]*max-height[^}]*\}/g) || [];
+  assert.strictEqual(boardMaxHeightRules.length, 0, '.planner-shell-board must never be given a max-height — it should keep growing to fit its content, relying only on its existing horizontal scroll');
+});
+
+test('.planner-unit-rail-body and the shared .lesson-drawer-body both fill their remaining panel height and scroll independently', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const railBodyRule = css.match(/\.planner-unit-rail-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(railBodyRule) && /min-height:\s*0/.test(railBodyRule) && /overflow-y:\s*auto/.test(railBodyRule), 'the rail body must be flex: 1; min-height: 0; overflow-y: auto to scroll independently within the now-capped rail');
+  const drawerBodyRule = css.match(/\.lesson-drawer-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(drawerBodyRule) && /min-height:\s*0/.test(drawerBodyRule) && /overflow-y:\s*auto/.test(drawerBodyRule), 'the shared lesson-drawer-body class must be flex: 1; min-height: 0; overflow-y: auto');
+});
+
+test('every lesson-drawer-rendering function (standalone/unit, view/edit, on both the Weekly Planner and Unit Plans) wraps its content in the shared scrollable lesson-drawer-body class', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+
+  // Standalone, view mode (default for a lesson with content).
+  sandbox.plannerOpenLessonDrawerFromCard('sa_1');
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'standalone view mode must use lesson-drawer-body');
+
+  // Standalone, edit mode.
+  sandbox.plannerSwitchDrawerToEdit();
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'standalone edit mode must use lesson-drawer-body');
+
+  // Unit lesson, view mode, via the Weekly Planner drawer. A unit lesson only stays
+  // selected if it has a scheduled occurrence on the currently displayed week (see
+  // renderPlanner's reachability check) — schedule it first, same as every other
+  // test in this file that opens a unit lesson's drawer.
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'unit lesson view mode (Weekly Planner) must use lesson-drawer-body');
+
+  // Unit lesson, edit mode, via the Weekly Planner drawer.
+  sandbox.plannerSwitchDrawerToEdit();
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'unit lesson edit mode (Weekly Planner) must use lesson-drawer-body');
+
+  // Unit Plans' own drawer, both modes. Unlike the Weekly Planner, Unit Plans only
+  // requires the lesson to belong to the open unit (see renderUnitDetail) — no
+  // scheduled-on-this-week requirement.
+  st.currentView = 'unit-plans';
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.openUnitId = 'unit_1';
+  st.plannerUi.selectedLessonId = 'ul_1';
+  st.plannerUi.drawerOpen = true;
+  st.plannerUi.drawerMode = 'view';
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'Unit Plans view mode must use lesson-drawer-body');
+
+  st.plannerUi.drawerMode = 'edit';
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="lesson-drawer-body"'), 'Unit Plans edit mode must use lesson-drawer-body');
+});
+
+test('Unit Plans\' three columns (Lesson sequence, Edit/View lesson, Unit details) each cap their height to the viewport and scroll their own body independently — no collapse state to exclude, unlike the Weekly Planner', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const colRule = css.match(/\.unit-seq-col,\s*\n\.unit-drawer-col,\s*\n\.unit-side-col\s*\{[^}]*\}/);
+  assert.ok(colRule, 'the shared three-column max-height rule must exist');
+  assert.ok(/display:\s*flex/.test(colRule[0]) && /flex-direction:\s*column/.test(colRule[0]) && /max-height:\s*calc\(100vh - \d+px\)/.test(colRule[0]), 'all three columns must be capped flex columns');
+
+  const seqBodyRule = css.match(/\.unit-seq-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(seqBodyRule) && /min-height:\s*0/.test(seqBodyRule) && /overflow-y:\s*auto/.test(seqBodyRule), 'the lesson sequence body must scroll independently');
+
+  const sideBodyRule = css.match(/\.unit-side-body\s*\{[^}]*\}/)[0];
+  assert.ok(/flex:\s*1/.test(sideBodyRule) && /min-height:\s*0/.test(sideBodyRule) && /overflow-y:\s*auto/.test(sideBodyRule), 'the unit details body must scroll independently');
+});
+
+test('the full render pipeline does not throw for either layout with the new scroll-container structure in place', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+  assert.doesNotThrow(() => realRenderView(), 'Weekly Planner, drawer closed');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerOpenLessonDrawerFromCard('ul_1');
+  assert.doesNotThrow(() => realRenderView(), 'Weekly Planner, unit lesson drawer open');
+  sandbox.plannerToggleDrawerCollapsed();
+  assert.doesNotThrow(() => realRenderView(), 'Weekly Planner, drawer collapsed with a lesson still selected underneath');
+
+  st.currentView = 'unit-plans';
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.openUnitId = 'unit_1';
+  assert.doesNotThrow(() => realRenderView(), 'Unit Plans, 2-column (no lesson drawer)');
+  st.plannerUi.selectedLessonId = 'ul_1';
+  st.plannerUi.drawerOpen = true;
+  assert.doesNotThrow(() => realRenderView(), 'Unit Plans, 3-column (lesson drawer open)');
+});
+
+// ── Review fixes: short-viewport min/max-height conflict, nested scroll at the ──
+// ── stacking breakpoints, and scroll position lost on every re-render ───────────
+test('min-height never exceeds max-height on either layout — a short viewport (e.g. a phone in landscape) must not force a panel taller than its own cap', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const plannerRule = css.match(/\.planner-unit-rail:not\(\.is-collapsed\),\s*\n\.planner-shell-drawer:not\(\.is-collapsed\)\s*\{[^}]*\}/)[0];
+  assert.ok(/min-height:\s*min\(300px,\s*calc\(100vh - 170px\)\)/.test(plannerRule), 'the Weekly Planner panels\' min-height must be clamped with min() against the same max-height budget, not a bare 300px that could exceed it');
+
+  // .unit-drawer-col, .unit-side-col appears twice (the max-height rule shared with
+  // .unit-seq-col, and this dedicated min-height rule) — match every occurrence and
+  // find the one that actually sets min-height, rather than grabbing whichever the
+  // regex engine happens to match first.
+  const unitRules = css.match(/\.unit-drawer-col,\s*\n\.unit-side-col\s*\{[^}]*\}/g) || [];
+  const unitMinHeightRule = unitRules.find(r => /min-height/.test(r));
+  assert.ok(unitMinHeightRule, 'a .unit-drawer-col, .unit-side-col rule setting min-height must exist');
+  assert.ok(/min-height:\s*min\(200px,\s*calc\(100vh - 120px\)\)/.test(unitMinHeightRule), 'Unit Plans\' drawer/side columns\' min-height must likewise be clamped against their own max-height budget');
+});
+
+test('independent per-panel scroll is disabled once each layout stacks into a single column, restoring natural-height page scroll instead of trapping gestures inside one panel', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+
+  const tabletBlock = css.match(/@media \(max-width: 1024px\) \{[\s\S]*?\n\}/)[0];
+  assert.ok(/\.unit-seq-col,\s*\n\s*\.unit-drawer-col,\s*\n\s*\.unit-side-col\s*\{\s*\n\s*max-height:\s*none;/.test(tabletBlock), 'Unit Plans stacks at <1024px — its three columns must drop max-height there so each grows to its natural height and the page scrolls through them, instead of each column keeping its own internal scrollbar');
+
+  const mobileBlock = css.match(/@media \(max-width: 767px\) \{[\s\S]*?\n\}/)[0];
+  assert.ok(/\.planner-unit-rail:not\(\.is-collapsed\),\s*\n\s*\.planner-shell-drawer:not\(\.is-collapsed\)\s*\{\s*\n\s*max-height:\s*none;/.test(mobileBlock), 'the Weekly Planner stacks at <768px — its expanded panels must likewise drop max-height there');
+});
+
+test('capturePanelScrollPositions reads the PREVIOUS render\'s identity (main\'s own data-prev-* attributes), not the live state — which by the time renderView() runs has always already been updated to the new value by whatever action triggered it', () => {
+  resetState();
+  const st = getState();
+  const mainStub = documentStub.getElementById('main-content');
+
+  // Simulate what a prior renderView() call would have stamped after rendering
+  // the Weekly Planner with ul_1 selected.
+  mainStub.dataset.prevView = 'planner';
+  mainStub.dataset.prevSelectedLessonId = 'ul_1';
+  mainStub.dataset.prevOpenUnitId = '';
+
+  // Now simulate showView('unit-plans') having already flipped state.currentView
+  // BEFORE renderView() (and therefore capturePanelScrollPositions) ever runs —
+  // exactly the ordering that made the pre-fix version always compare a value
+  // against itself and never detect navigation.
+  st.currentView = 'unit-plans';
+  st.plannerUi.selectedLessonId = 'ul_1'; // unchanged — same lesson id happens to be selected
+
+  const positions = sandbox.capturePanelScrollPositions(mainStub);
+  assert.strictEqual(positions.view, 'planner', 'must capture the PREVIOUS view from main\'s stamped attribute, not state.currentView, which is already \'unit-plans\' by this point');
+  assert.strictEqual(positions.selectedLessonId, 'ul_1', 'must likewise capture the previous selected-lesson snapshot, not live state');
+});
+
+test('restorePanelScrollPositions correctly detects a view switch (even with the same lesson id happening to be selected in both) and skips restoring, instead of the pre-fix bug where the guard always matched and could apply a stale scroll position onto unrelated new content', () => {
+  resetState();
+  const st = getState();
+  const mainStub = documentStub.getElementById('main-content');
+  mainStub.dataset.prevView = 'planner';
+  mainStub.dataset.prevSelectedLessonId = 'ul_1';
+  mainStub.dataset.prevOpenUnitId = '';
+
+  const positions = { 'lesson-drawer-body': 300, view: 'planner', selectedLessonId: 'ul_1', openUnitId: '' };
+  st.currentView = 'unit-plans'; // navigated away, same lesson id still selected
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  sandbox.restorePanelScrollPositions(mainStub, positions);
+  // The real scrollTop-skip itself needs a live DOM to observe directly (verified
+  // live via Playwright); what's testable here is that the identity snapshot for
+  // the NEXT render is correctly refreshed to the new view/lesson regardless —
+  // proving the guard is reading real, current values rather than stale ones that
+  // would otherwise cause every future comparison to keep drifting.
+  assert.strictEqual(mainStub.dataset.prevView, 'unit-plans', 'must re-stamp the new current view for the next render to compare against');
+  assert.strictEqual(mainStub.dataset.prevSelectedLessonId, 'ul_1', 'must re-stamp the new current lesson id too');
+});
+
+test('capturePanelScrollPositions / restorePanelScrollPositions never throw across every identity-change combination', () => {
+  resetState();
+  const st = getState();
+  const mainStub = documentStub.getElementById('main-content');
+  const positions = sandbox.capturePanelScrollPositions(mainStub);
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'first-ever render, nothing stamped yet');
+
+  st.plannerUi.selectedLessonId = 'ul_2';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different lesson now selected');
+
+  st.currentView = 'unit-plans';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different view entirely');
+
+  st.unitPlansUi = st.unitPlansUi || {};
+  st.unitPlansUi.openUnitId = 'unit_2';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different open unit');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
