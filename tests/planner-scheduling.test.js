@@ -3514,6 +3514,62 @@ test('.planner-unit-rail-body uses a slim, explicitly-sized scrollbar so its own
   assert.ok(/\.planner-unit-rail-body::-webkit-scrollbar-thumb:hover\s*\{[^}]*background:\s*var\(--text3\)/.test(css), 'the scrollbar thumb must darken on hover using the existing --text3 theme token');
 });
 
+// ── Unit lessons rail: wrap titles onto 2 lines instead of ellipsis-truncating ──
+console.log('Unit lessons rail title wrap (readability regression fix)');
+
+test('.planner-unit-pill-title clamps to 2 lines instead of the old single-line nowrap+ellipsis truncation', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.planner-unit-pill-title\s*\{[^}]*\}/)[0];
+  assert.ok(!/white-space:\s*nowrap/.test(rule), 'the old single-line nowrap must be gone — that was what forced an ellipsis after just a few words');
+  assert.ok(/display:\s*-webkit-box/.test(rule) && /-webkit-line-clamp:\s*2/.test(rule) && /-webkit-box-orient:\s*vertical/.test(rule), 'must use the standard 2-line clamp technique, so a title wraps onto a 2nd line before any ellipsis kicks in');
+  assert.ok(/overflow:\s*hidden/.test(rule), 'overflow: hidden must remain — still needed for the clamp to cut off a 3rd line with an ellipsis on the rare title too long for even 2 lines');
+});
+
+test('the rail lesson title carries a title="..." attribute with the full, unescaped-back-to-plain-text title, as a native-tooltip fallback for a title too long for the 2-line clamp — not a custom hover UI', () => {
+  resetState();
+  const st = getState();
+  st.lessonPlans[0].title = 'Mental addition and subtraction strategies using place value partitioning, part 2';
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('class="planner-unit-pill-title" title="Mental addition and subtraction strategies using place value partitioning, part 2"'), 'the title attribute must carry the exact full lesson title, giving a native browser tooltip on hover regardless of how much of the 2-line clamp got used');
+  // The project already has a custom-hover-tooltip helper (truncateWithTooltip / .tt-ellipsis,
+  // which renders a styled ::after popup) — the task explicitly asked for a plain native
+  // tooltip instead, so guard against the rail card having picked that helper up instead.
+  assert.ok(!/planner-unit-pill-title[^"]*tt-ellipsis/.test(html), 'must not use the custom tt-ellipsis hover-popup helper — a plain title attribute only, per the task');
+});
+
+test('a short rail lesson title (fits on one line) still renders correctly and unclamped, with no visual regression for the common case', () => {
+  resetState();
+  const st = getState();
+  st.lessonPlans[0].title = 'Short title';
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('class="planner-unit-pill-title" title="Short title">Short title</div>'), 'a short title must still render plainly inside the same element/attribute structure');
+});
+
+test('the title-wrap fix only touches .planner-unit-pill-title — the sibling meta line (subject/IC count), slot-count badge, drag handle, and drag-to-schedule wiring are all untouched', () => {
+  resetState();
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('planner-unit-pill-meta'), 'the meta line (subject + IC count) must still render');
+  assert.ok(html.includes('planner-unit-slot-count'), 'the slot-count badge must still render');
+  assert.ok(html.includes('planner-unit-drag'), 'the drag handle must still render');
+  assert.ok(/draggable="true"/.test(html), 'drag-to-schedule must remain wired up on the rail cards');
+
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const metaRule = css.match(/\.planner-unit-pill-meta\s*\{[^}]*\}/)[0];
+  assert.ok(!/-webkit-line-clamp|line-clamp/.test(metaRule), 'the meta line must not have picked up the 2-line clamp — only the title wraps, per the task scope');
+});
+
+test('.planner-unit-pill-title is not reused anywhere else in the app — the wrap fix is correctly scoped to the Weekly Planner Unit lessons rail only, not shared with Week Board day cards or Unit Plans\' own lesson list', () => {
+  // Strip the header/changelog block comment first — it documents this exact class by
+  // name (see the v1.13.86 entry), which would otherwise inflate the count without the
+  // class actually being reused in any real markup.
+  const appJsSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//, '');
+  const occurrences = (appJsSrc.match(/planner-unit-pill-title/g) || []).length;
+  assert.strictEqual(occurrences, 1, 'planner-unit-pill-title must appear exactly once in app.js (outside comments) — inside plannerUnitSidebarLessonHtml only — confirming this class (and therefore the fix) is not shared with any other card renderer');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
