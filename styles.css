@@ -1154,10 +1154,12 @@ body[data-text-size="large"] {
 
 /* Collapse/expand control for the Unit lessons rail and Lesson Drawer — lives on the
    panel's own header (never elsewhere on the page). Expanded state: a small square
-   icon button next to the header's subtitle text. */
+   icon button next to the header's subtitle text. background/color are one step
+   stronger than a plain "blend into the card" default so the control reads as
+   interactive at rest, not just on hover. */
 .planner-panel-collapse-toggle {
   border: 1px solid var(--border2);
-  background: var(--surface);
+  background: var(--surface-alt);
   border-radius: 6px;
   width: 22px;
   height: 22px;
@@ -1168,7 +1170,7 @@ body[data-text-size="large"] {
   justify-content: center;
   font-size: 13px;
   line-height: 1;
-  color: var(--text3);
+  color: var(--text2);
   cursor: pointer;
 }
 
@@ -1179,21 +1181,58 @@ body[data-text-size="large"] {
 }
 
 /* Collapsed state: the panel shrinks to a slim edge tab (width set inline alongside
-   grid-template-columns) whose only content is a full-height re-expand button — no
-   header, no body, matching "shrink to a minimal strip" rather than hiding the panel
-   via a toggle elsewhere on the page. */
+   grid-template-columns) whose only content is a re-expand button — no header, no
+   body, matching "shrink to a minimal strip" rather than hiding the panel via a
+   toggle elsewhere on the page. align-items: stretch (rather than a height: 100% on
+   the button) is what actually fills the tab's full height: the aside's own height
+   comes from min-height, not an explicit height, so a percentage height on the
+   button has no definite parent height to resolve against and falls back to its
+   content size — flexbox's own stretch alignment has no such restriction. */
 .planner-unit-rail.is-collapsed,
 .planner-shell-drawer.is-collapsed {
   padding: 0;
   display: flex;
+  align-items: stretch;
 }
 
+/* The button fills the ENTIRE strip (the base rule's fixed height: 22px above would
+   otherwise persist and leave the button only as tall as its own icon glyph) so the
+   whole tab is the clickable target and visually reads as a control, not empty
+   margin. A rotated, uppercase text label names what's hidden so it's legible at a
+   glance without hovering; the chevron glyph (the button's own text content, set
+   inline per panel) sits below it. */
 .planner-unit-rail.is-collapsed .planner-panel-collapse-toggle,
 .planner-shell-drawer.is-collapsed .planner-panel-collapse-toggle {
   width: 100%;
+  height: auto;
   border: none;
   border-radius: 0;
-  background: transparent;
+  background: var(--surface-alt);
+  color: var(--text2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.planner-unit-rail.is-collapsed .planner-panel-collapse-toggle::before,
+.planner-shell-drawer.is-collapsed .planner-panel-collapse-toggle::before {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--label-size);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.planner-unit-rail.is-collapsed .planner-panel-collapse-toggle::before {
+  content: "Unit lessons";
+}
+
+.planner-shell-drawer.is-collapsed .planner-panel-collapse-toggle::before {
+  content: "Lesson Drawer";
 }
 
 .planner-unit-rail.is-collapsed .planner-panel-collapse-toggle:hover,
@@ -2960,6 +2999,31 @@ body[data-text-size="large"] {
      being more important, not merely more specific. Stack all three panels full-width
      instead, matching the sidebar's own collapse-to-stack behavior at this breakpoint. */
   .planner-shell-layout { grid-template-columns: 1fr !important; }
+
+  /* A collapsed rail/drawer stacks full-width here rather than sitting in a narrow
+     40px column (see the grid-template-columns override just above), so the desktop
+     "fill the strip" treatment — align-items: stretch across a 300px-tall panel,
+     see .planner-panel-collapse-toggle above — would turn most of the screen into
+     a single oversized, easy-to-mis-tap control instead of a slim tab. Collapse
+     reads as an ordinary short horizontal button here instead: a fixed compact
+     height, the label laid out horizontally next to the chevron rather than
+     rotated vertically (which only makes sense against a narrow, tall strip). */
+  .planner-unit-rail.is-collapsed,
+  .planner-shell-drawer.is-collapsed {
+    min-height: 0;
+  }
+  .planner-unit-rail.is-collapsed .planner-panel-collapse-toggle,
+  .planner-shell-drawer.is-collapsed .planner-panel-collapse-toggle {
+    flex-direction: row;
+    height: 44px;
+    padding: 0 14px;
+    gap: 8px;
+  }
+  .planner-unit-rail.is-collapsed .planner-panel-collapse-toggle::before,
+  .planner-shell-drawer.is-collapsed .planner-panel-collapse-toggle::before {
+    writing-mode: horizontal-tb;
+    transform: none;
+  }
 
   /* flex:1 + min-height:0 (mirrors desktop) so the optional draft-IC banner
      above .app is absorbed by the flex column instead of overflowing 100vh */
