@@ -1119,7 +1119,12 @@ body[data-text-size="large"] {
    the freed width. This rule is just the un-collapsed default. */
 .planner-shell-layout {
   display: grid;
-  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr) minmax(260px, 320px);
+  /* The first (rail) track is 12px wider at both ends than its pre-independent-
+     -scroll size (was minmax(200px, 240px)) — see .planner-unit-rail-body's own
+     comment for why: its internal scroll costs real width now, and this
+     compensates for it so lesson titles/IC counts aren't truncated more
+     aggressively than before that scroll existed. */
+  grid-template-columns: minmax(212px, 252px) minmax(0, 1fr) minmax(260px, 320px);
   gap: 14px;
   align-items: start;
 }
@@ -1673,6 +1678,30 @@ body[data-text-size="large"] {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+/* The rail's own internal scroll (added alongside the rest of the independent
+   per-panel scroll work) otherwise costs the OS-default scrollbar's full width —
+   measured 15px in this environment, commonly 12-17px+ across platforms — out of
+   an already-narrow ~200-240px column, truncating lesson titles/IC counts more
+   than before that scroll existed. A slim, explicitly-sized scrollbar both shrinks
+   that cost and makes it a known, fixed number the column width below can
+   precisely compensate for, rather than guessing at a variable OS default. */
+.planner-unit-rail-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
+}
+.planner-unit-rail-body::-webkit-scrollbar {
+  width: 8px;
+}
+.planner-unit-rail-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.planner-unit-rail-body::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 4px;
+}
+.planner-unit-rail-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text3);
 }
 .planner-unit-rail-empty {
   border: 1px dashed var(--border2);
