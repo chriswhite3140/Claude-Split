@@ -2911,24 +2911,124 @@ test('0 of N occurrences taught never overwrites the lesson\'s current teachingS
   assert.strictEqual(lessonById('ul_2').teachingStatus, 'partially-taught', 'back to 0 of 2 taught leaves teachingStatus exactly as it currently is (partially-taught, stale) rather than resetting it — correctable via the manual dropdown like any other status change');
 });
 
-test('a multi-slot lesson\'s per-occurrence taught toggle only appears once it has more than one scheduled occurrence — a single-occurrence lesson keeps behaving exactly as today', () => {
+test('the board occurrence card\'s taught checkbox is always present, single- or multi-slot alike — only the drawer\'s own per-slot schedule-chip toggle stays gated to multi-slot lessons', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
   const singleSlotHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
-  assert.ok(!singleSlotHtml.includes('planner-occ-taught-toggle'), 'a single-occurrence lesson\'s board card must not show the new per-occurrence toggle');
+  assert.ok(singleSlotHtml.includes('planner-occ-taught-checkbox'), 'a single-occurrence lesson\'s board card must still show the quick taught checkbox — that is the whole point of this feature');
   assert.ok(singleSlotHtml.includes('planner-occ-remove'), 'the ✕ remove control should still be there, unaffected');
-  assert.ok(!singleSlotHtml.includes('has-taught-toggle'), 'the card should not reserve the wider action-cluster padding either, since there is nothing extra to reserve space for');
 
+  // The drawer's own per-slot schedule-chip toggle (a separate control, in a separate
+  // function — unitLessonScheduleHtml) is explicitly out of scope for this feature and
+  // must keep its existing multi-slot-only gate, untouched.
   const singleSlotScheduleHtml = sandbox.unitLessonScheduleHtml(lessonById('ul_1'));
-  assert.ok(!singleSlotScheduleHtml.includes('planner-slot-taught-toggle'), 'the drawer\'s schedule chip for a single-occurrence lesson must not show the toggle either');
+  assert.ok(!singleSlotScheduleHtml.includes('planner-slot-taught-toggle'), 'the drawer\'s schedule chip for a single-occurrence lesson must not show its own toggle — unrelated to and unaffected by the board checkbox');
 
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed'); // now a 2-slot lesson
   const multiSlotHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
-  assert.ok(multiSlotHtml.includes('planner-occ-taught-toggle'), 'once scheduled on more than one day, the board card should show the per-occurrence toggle');
-  assert.ok(multiSlotHtml.includes('has-taught-toggle'), 'the card should reserve the wider padding once the toggle is present');
+  assert.ok(multiSlotHtml.includes('planner-occ-taught-checkbox'), 'the board checkbox is present for a multi-slot lesson\'s occurrence card too');
 
   const multiSlotScheduleHtml = sandbox.unitLessonScheduleHtml(lessonById('ul_1'));
-  assert.ok(multiSlotScheduleHtml.includes('planner-slot-taught-toggle'), 'the drawer\'s schedule chips should show the toggle too, once there is more than one');
+  assert.ok(multiSlotScheduleHtml.includes('planner-slot-taught-toggle'), 'the drawer\'s schedule chips should still show their own toggle once there is more than one, exactly as before');
+});
+
+// ── Week Board quick "mark as taught" checkbox ───────────────────────────────────
+console.log('Week Board quick "mark as taught" checkbox');
+
+test('checking a standalone lesson card\'s taught checkbox calls plannerSetLessonStatus with that card\'s own lesson id, without needing it selected in the drawer first', () => {
+  resetState();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'sa_1').linkedICIds = ['ic1'];
+  assert.strictEqual(st.plannerUi.selectedLessonId, null, 'sanity: nothing is selected/open in the drawer');
+
+  sandbox.plannerSetLessonStatus('taught', 'sa_1');
+  assert.strictEqual(lessonById('sa_1').status, 'taught', 'the lesson must be marked taught by explicit id, with no drawer selection involved');
+  assert.strictEqual(st.plannerUi.selectedLessonId, null, 'marking taught via the checkbox must not also select/open the lesson in the drawer');
+
+  sandbox.plannerSetLessonStatus('planned', 'sa_1');
+  assert.strictEqual(lessonById('sa_1').status, 'planned', 'unchecking reverses it back to planned');
+});
+
+test('plannerSetLessonStatus with an explicit lessonId still enforces the existing "needs at least one IC" gate, and re-renders so a checkbox\'s already-flipped checked state resets', () => {
+  resetState();
+  const st = getState();
+  assert.deepStrictEqual(lessonById('sa_1').linkedICIds, [], 'sanity: sa_1 starts with no linked ICs');
+
+  sandbox.plannerSetLessonStatus('taught', 'sa_1');
+  assert.strictEqual(lessonById('sa_1').status, 'planned', 'must be rejected — same gate as the drawer\'s own Mark as taught button, just reached via a different call site');
+  assert.strictEqual(toasts[toasts.length - 1].msg, 'Add at least one IC before marking this lesson as taught', 'must show the exact same rejection toast the drawer button already shows');
+});
+
+test('the existing drawer call site (plannerSetLessonStatus with no lessonId) still targets the selected lesson, unaffected by the new optional parameter', () => {
+  resetState();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'sa_1').linkedICIds = ['ic1'];
+  st.plannerUi.selectedLessonId = 'sa_1';
+  sandbox.plannerSetLessonStatus('taught');
+  assert.strictEqual(lessonById('sa_1').status, 'taught', 'omitting lessonId must still fall back to the drawer\'s selectedLessonId, exactly as before this feature');
+});
+
+test('checking a single-occurrence unit lesson\'s board checkbox calls unitSetLessonTeachingStatus with that lesson\'s id — the same function the drawer dropdown uses for this case, not the per-occurrence toggle', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon'); // exactly one occurrence
+  assert.strictEqual(lessonById('ul_1').scheduledSlots.length, 1, 'sanity: single-occurrence');
+
+  sandbox.unitSetLessonTeachingStatus('taught', 'ul_1');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'the lesson\'s overall teachingStatus must flip to taught by explicit id');
+  assert.strictEqual(lessonById('ul_1').scheduledSlots[0].taught, undefined, 'the per-occurrence taught data model is untouched for this path — only teachingStatus changes, exactly like the drawer dropdown already does');
+
+  sandbox.unitSetLessonTeachingStatus('planned', 'ul_1');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'planned', 'unchecking reverses it back to planned');
+});
+
+test('the existing drawer call site (unitSetLessonTeachingStatus with no lessonId) still targets the selected lesson, unaffected by the new optional parameter', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.selectedLessonId = 'ul_1';
+  sandbox.unitSetLessonTeachingStatus('taught');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'omitting lessonId must still fall back to the drawer\'s selectedLessonId, exactly as before this feature');
+});
+
+test('a single-occurrence unit lesson\'s board card reflects lesson.teachingStatus for both its checkbox\'s checked state and its is-taught styling, not the per-occurrence slot flag it doesn\'t actually use', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], teachingStatus: 'taught' };
+
+  const html = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  assert.ok(/planner-occ-taught-checkbox"\s+checked/.test(html), 'the checkbox must render checked once teachingStatus is taught, even though the underlying slot itself was never individually flagged');
+  assert.ok(/planner-lesson-card is-unit is-taught/.test(html), 'the card must also pick up the is-taught styling in this case — previously it only read the (here, never-set) per-slot flag and stayed unstyled despite the badge next to it saying Taught');
+});
+
+test('a multi-slot lesson\'s board checkbox still calls unitToggleOccurrenceTaught, targeting only that one occurrence — reusing the existing per-occurrence mechanism exactly, unmodified', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon');
+  const lesson = lessonById('ul_1');
+  const monSlot = lesson.scheduledSlots.find(s => s.dayKey === 'mon');
+  const wedSlot = lesson.scheduledSlots.find(s => s.dayKey === 'wed');
+  assert.strictEqual(monSlot.taught, true, 'only the targeted (Monday) occurrence is marked taught');
+  assert.strictEqual(wedSlot.taught, undefined, 'the other (Wednesday) occurrence must be completely untouched');
+  assert.strictEqual(lesson.teachingStatus, 'partially-taught', 'the lesson-wide status re-derives from the per-occurrence flags, exactly as this mechanism already did before this feature');
+
+  const monHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
+  const wedHtml = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'wed');
+  assert.ok(/planner-lesson-card is-unit is-taught/.test(monHtml), 'the taught occurrence\'s own card must show is-taught styling');
+  assert.ok(!/planner-lesson-card is-unit is-taught/.test(wedHtml), 'the untaught occurrence\'s own card must not — the two occurrence cards of the same lesson can disagree');
+});
+
+test('the full render pipeline does not throw for any card/lesson combination touched by the new taught checkbox', () => {
+  resetState();
+  assert.doesNotThrow(() => realRenderView(), 'plain week board, nothing scheduled yet beyond the fixture');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  assert.doesNotThrow(() => realRenderView(), 'single-occurrence unit lesson card');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  assert.doesNotThrow(() => realRenderView(), 'multi-occurrence unit lesson card');
+  sandbox.plannerSetLessonStatus('taught', 'sa_1');
+  assert.doesNotThrow(() => realRenderView(), 'standalone lesson card, gate-rejected (sa_1 has no linked ICs) but must still render cleanly');
 });
 
 test('unitLessonDerivedTeachingStatus leaves a single- or zero-slot lesson\'s teachingStatus completely unchanged, regardless of that one slot\'s own taught flag', () => {
