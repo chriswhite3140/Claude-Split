@@ -7,12 +7,20 @@
  * app.js's Drive sync (search app.js for "DRIVE BACKUP SYNC"). It reuses the script's
  * own Drive access — the teacher never sees a separate Google sign-in for this.
  *
- * NOT part of the deployed Apps Script yet. This file is checked into the repo for
- * version control and review; it has to be copied into the Apps Script project behind
- * API_URL (app.js) by hand, then redeployed as the same Web App (same exec URL) —
- * this repo has no access to that separate script project.
+ * DEPLOYED — copied into the Apps Script project behind API_URL (app.js) and wired
+ * into doPost per the repo owner, confirmed working live (sync indicator, restore
+ * banner, manual backup button). This repo has no direct access to that separate
+ * script project, so that status can't be re-confirmed from source alone if it's
+ * ever in question again. Don't trust an already-displayed "Last synced to Drive:
+ * <time>" (driveSyncIndicatorHtml() in app.js) on its own — it's seeded from a
+ * persisted localStorage timestamp on every page load (see driveSyncInitDirtyState),
+ * so it can keep showing an old success time even after this breaks. The real check
+ * is a FRESH sync: click "Backup to Drive now" (Data & Settings) and confirm it
+ * completes ("Last synced to Drive: just now"), not "Drive sync failed — retry" —
+ * don't assume either way from a code comment alone, including this one.
  *
- * Wiring instructions:
+ * Wiring instructions (kept for reference — e.g. redeploying from a new Apps
+ * Script project, or re-wiring after this file changes):
  *   1. Open the Apps Script project for the deployed Web App (script.google.com).
  *   2. Add a new script file (e.g. "DriveBackup.gs") and paste everything below the
  *      dashed line into it.
@@ -34,9 +42,9 @@
  *   4. Deploy > Manage deployments > edit the existing deployment > New version.
  *      The exec URL does not change, so app.js needs no changes for this step.
  *
- * Until step 4 is done, the app's Drive sync calls simply fail — the frontend already
- * handles that gracefully (see driveSyncIndicatorHtml() in app.js): it shows "Drive
- * sync failed — retry" after two failed attempts instead of breaking anything.
+ * If a sync call ever does fail, the frontend already handles it gracefully (see
+ * driveSyncIndicatorHtml() in app.js): it shows "Drive sync failed — retry" after
+ * two failed attempts instead of breaking anything.
  * ---------------------------------------------------------------------------
  */
 
