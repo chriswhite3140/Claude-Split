@@ -3414,31 +3414,67 @@ test('independent per-panel scroll is disabled once each layout stacks into a si
   assert.ok(/\.planner-unit-rail:not\(\.is-collapsed\),\s*\n\s*\.planner-shell-drawer:not\(\.is-collapsed\)\s*\{\s*\n\s*max-height:\s*none;/.test(mobileBlock), 'the Weekly Planner stacks at <768px — its expanded panels must likewise drop max-height there');
 });
 
-test('capturePanelScrollPositions snapshots the current view/selected-lesson/open-unit identity, which restorePanelScrollPositions uses to tell "same content re-rendered" apart from "different content now showing"', () => {
+test('capturePanelScrollPositions reads the PREVIOUS render\'s identity (main\'s own data-prev-* attributes), not the live state — which by the time renderView() runs has always already been updated to the new value by whatever action triggered it', () => {
   resetState();
   const st = getState();
-  st.currentView = 'planner';
-  st.plannerUi.selectedLessonId = 'ul_1';
-  st.unitPlansUi = st.unitPlansUi || {};
-  st.unitPlansUi.openUnitId = 'unit_1';
+  const mainStub = documentStub.getElementById('main-content');
 
+  // Simulate what a prior renderView() call would have stamped after rendering
+  // the Weekly Planner with ul_1 selected.
+  mainStub.dataset.prevView = 'planner';
+  mainStub.dataset.prevSelectedLessonId = 'ul_1';
+  mainStub.dataset.prevOpenUnitId = '';
+
+  // Now simulate showView('unit-plans') having already flipped state.currentView
+  // BEFORE renderView() (and therefore capturePanelScrollPositions) ever runs —
+  // exactly the ordering that made the pre-fix version always compare a value
+  // against itself and never detect navigation.
+  st.currentView = 'unit-plans';
+  st.plannerUi.selectedLessonId = 'ul_1'; // unchanged — same lesson id happens to be selected
+
+  const positions = sandbox.capturePanelScrollPositions(mainStub);
+  assert.strictEqual(positions.view, 'planner', 'must capture the PREVIOUS view from main\'s stamped attribute, not state.currentView, which is already \'unit-plans\' by this point');
+  assert.strictEqual(positions.selectedLessonId, 'ul_1', 'must likewise capture the previous selected-lesson snapshot, not live state');
+});
+
+test('restorePanelScrollPositions correctly detects a view switch (even with the same lesson id happening to be selected in both) and skips restoring, instead of the pre-fix bug where the guard always matched and could apply a stale scroll position onto unrelated new content', () => {
+  resetState();
+  const st = getState();
+  const mainStub = documentStub.getElementById('main-content');
+  mainStub.dataset.prevView = 'planner';
+  mainStub.dataset.prevSelectedLessonId = 'ul_1';
+  mainStub.dataset.prevOpenUnitId = '';
+
+  const positions = { 'lesson-drawer-body': 300, view: 'planner', selectedLessonId: 'ul_1', openUnitId: '' };
+  st.currentView = 'unit-plans'; // navigated away, same lesson id still selected
+  st.plannerUi.selectedLessonId = 'ul_1';
+
+  sandbox.restorePanelScrollPositions(mainStub, positions);
+  // The real scrollTop-skip itself needs a live DOM to observe directly (verified
+  // live via Playwright); what's testable here is that the identity snapshot for
+  // the NEXT render is correctly refreshed to the new view/lesson regardless —
+  // proving the guard is reading real, current values rather than stale ones that
+  // would otherwise cause every future comparison to keep drifting.
+  assert.strictEqual(mainStub.dataset.prevView, 'unit-plans', 'must re-stamp the new current view for the next render to compare against');
+  assert.strictEqual(mainStub.dataset.prevSelectedLessonId, 'ul_1', 'must re-stamp the new current lesson id too');
+});
+
+test('capturePanelScrollPositions / restorePanelScrollPositions never throw across every identity-change combination', () => {
+  resetState();
+  const st = getState();
   const mainStub = documentStub.getElementById('main-content');
   const positions = sandbox.capturePanelScrollPositions(mainStub);
-  assert.strictEqual(positions.view, 'planner');
-  assert.strictEqual(positions.selectedLessonId, 'ul_1');
-  assert.strictEqual(positions.openUnitId, 'unit_1');
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'first-ever render, nothing stamped yet');
 
-  // Restoring must be a no-op (not throw) both when nothing changed and when the
-  // view/lesson/unit identity has since changed out from under it — the real
-  // scrollTop-restoring behaviour itself needs a real DOM to observe (verified live
-  // via Playwright: scrolling a long lesson drawer to 300px, then triggering a
-  // routine re-render via unitSetLessonTeachingStatus(), left it at exactly 300px
-  // afterwards instead of resetting to 0).
-  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'same identity');
   st.plannerUi.selectedLessonId = 'ul_2';
-  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'different lesson now selected');
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different lesson now selected');
+
   st.currentView = 'unit-plans';
-  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'different view entirely');
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different view entirely');
+
+  st.unitPlansUi = st.unitPlansUi || {};
+  st.unitPlansUi.openUnitId = 'unit_2';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different open unit');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────

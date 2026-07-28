@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.83
+ * THIS FILE IS VERSION: 1.13.84
  * Last updated: 2026-07-27
  * ============================================================
  *
@@ -10,6 +10,7 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.84 - Fix a review finding on 1.13.83's scroll-position-preservation fix: capturePanelScrollPositions/restorePanelScrollPositions compared state.currentView/selectedLessonId/openUnitId against themselves, since every action function in this codebase mutates state BEFORE calling renderView(), never after — so by the time renderView()'s own body ran, those fields already described the render about to happen, not the one being replaced, and the "did the logical content actually change" guard could never detect navigation. Concretely: switching from the Weekly Planner to Unit Plans while the same lesson id happened to be selected in both could restore a stale Weekly Planner scroll offset onto Unit Plans' freshly-opened, unrelated drawer. Fixed by stamping main's own data-prev-view/data-prev-selected-lesson-id/data-prev-open-unit-id attributes at the end of every render — main itself is never replaced by innerHTML swaps, only its children are, so reading those attributes back at the START of the next render (before this render's own state mutations or DOM replacement touch anything) gives a true snapshot of what was actually rendered last time, not what's about to be. The same audit found the identical mutate-then-render pattern also broke the lesson/unit identity checks, not just the view one Macroscope flagged — all three are fixed together. Confirmed live: the original same-lesson-edit scroll preservation still works (300 -> 300 across a routine teaching-status change), and the reported cross-view bug is gone (switching views now correctly resets to 0 instead of carrying over 300). 3 new regression tests exercising the fixed capture/restore contract directly (the pre-fix version's bug wasn't reachable through the old set of tests, since none of them changed view/lesson/unit identity between a capture and a restore); all 201 tests pass.
  * v1.13.83 - Fix three review findings on 1.13.82's independent per-panel scroll. (1) Macroscope: on a viewport under ~470px tall (Weekly Planner) or ~320px tall (Unit Plans) — e.g. a phone in landscape — the panels' existing min-height (300px / 200px) won over the new max-height, forcing them taller than their own cap. min-height is now min(300px, calc(100vh - 170px)) / min(200px, calc(100vh - 120px)) — the familiar floor whenever there's room for it, but never exceeding the ceiling; confirmed live at 800x400, the rail no longer exceeds its max-height. (2) Codex: the new max-height/overflow-y: auto stayed active even after each layout's own existing breakpoint stacks its columns into one page-length flow (Unit Plans <1024px, Weekly Planner <768px) — turning the first stacked panel into a nested scroll trap a swipe/wheel gesture couldn't escape to reach the panels below it. Both breakpoints now drop max-height back to none for their panels, which is sufficient on its own to restore natural-height stacking (a flex: 1 body has no leftover space to distribute in an unconstrained container, so overflow-y: auto never actually has anything to scroll) — confirmed live at 700px wide, a 20-lesson rail renders at its full natural height with zero internal scroll. (3) Codex (P1): renderView() replaces main-content's entire innerHTML on every call, so each panel's new scrollable body is a brand-new DOM node every time and always reset to scrollTop 0 — snapping a teacher back to the top of a long list/drawer after routine edits (toggling an IC, changing a field, adding a resource, changing teaching status) that re-render the very panel they're scrolled through. New capturePanelScrollPositions()/restorePanelScrollPositions(), called right before/after the view switch inside renderView(), snapshot and restore each panel body's scrollTop — but only when the render is redrawing the SAME logical content (same view, same selected lesson for the drawer, same open unit for the sequence/details columns), never blindly carrying a stale scroll position into a newly-opened, unrelated lesson or unit. Confirmed live: scrolling a long lesson drawer to 300px, then calling unitSetLessonTeachingStatus() (a routine edit that re-renders), left it at exactly 300px afterwards instead of resetting to 0. 3 new regression tests (all 3 confirmed to fail against the pre-fix code); all 199 tests pass.
  * v1.13.82 - Independent scroll per panel: the Weekly Planner's Unit lessons rail/Lesson Drawer and Unit Plans' Lesson sequence/Edit lesson/Unit details columns previously had no capped height, so each grew as tall as its content and the whole page had to scroll to reach anything — and scrolling one long panel scrolled every other panel out of view along with it. Each of these six panels (not the Week Board, which keeps its own horizontal day-column scroll unchanged, and not the collapsed edge-tab state from the previous two PRs, which still renders at its existing min-height: 300px, untouched) now caps its height to roughly the visible viewport (max-height: calc(100vh - 170px) for the Weekly Planner, calc(100vh - 120px) for Unit Plans — Unit Plans' topbar is shorter) via a flex-column layout: the header (.card-head, now flex-shrink: 0) stays pinned at its natural size while only the body below it scrolls (flex: 1; min-height: 0; overflow-y: auto). The Lesson Drawer's five separate content-rendering functions (standalone/unit lesson, view/edit mode, shared between the Weekly Planner and Unit Plans' own drawer) now share one new lesson-drawer-body wrapper class instead of five bare, unstyled `<div style="padding:16px">`s. One known, minor trade-off: the resource-link popover on a Unit lessons rail pill can be clipped by a sub-pixel-to-a-few-pixels amount if opened on the very last pill while the rail is scrolled to its absolute bottom (verified live — in practice the popover still renders essentially at the panel's edge and stays fully readable/usable; this is the same class of edge-of-viewport tradeoff the popover already had before per-panel scroll existed, just relocated to the panel's own edge instead of the page's). 7 new regression tests (5 confirmed to fail against the pre-fix code); all 196 tests pass. Verified live in a real browser (Playwright): internal scroll + pinned headers on both layouts, the Week Board and collapsed strips fully unaffected, and no page-level scroll needed for either view at a normal laptop window size.
  * v1.13.81 - Fix a review finding on 1.13.80's collapsed-panel discoverability fix: filling the collapsed strip via align-items: stretch is correct at laptop/tablet widths, where a collapsed panel is a narrow 40px column, but at phone widths (<768px) the existing mobile rule stacks it full viewport-width instead — combined with the panel's 300px min-height, the "fill the strip" button became a roughly full-width, 300px-tall tap target rather than a slim tab, confirmed live via Playwright (343x300px on a 375px viewport) and easy to accidentally reopen while scrolling. A new phone-width override drops the collapsed panel's min-height to 0 and switches the button to a short, fixed 44px horizontal bar with the label read normally instead of rotated (writing-mode: horizontal-tb) — an ordinary compact button instead of the desktop treatment applied unchanged. Laptop/tablet widths are unaffected (re-verified live: still the full-height 40px strip). 1 new regression test, confirmed to fail against the pre-fix code; all 189 tests pass.
@@ -125,7 +126,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.83';
+const APP_VERSION = '1.13.84';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1078,6 +1079,17 @@ function showView(v) {
 // ever in the DOM at a time, so that's a sufficient key.
 const PANEL_SCROLL_BODY_CLASSES = ['planner-unit-rail-body', 'lesson-drawer-body', 'unit-seq-body', 'unit-side-body'];
 
+// Every action function in this codebase mutates state (currentView via
+// setCurrentView, selectedLessonId, openUnitId, ...) BEFORE calling renderView() —
+// never after — so by the time renderView()'s own body runs, state.currentView/
+// selectedLessonId/openUnitId already describe the render about to happen, not the
+// one about to be replaced. Reading them directly here would make "did the
+// logical content actually change" always compare a value against itself,
+// permanently unable to detect navigation. main's own data-prev-* attributes are
+// the fix: stamped at the END of every render (below) with what was just
+// rendered, they're read back at the START of the next render, before anything
+// about this render has touched them, giving a true "previous" snapshot to
+// compare the new state against.
 function capturePanelScrollPositions(main) {
   const positions = {};
   if (!main) return positions;
@@ -1090,16 +1102,25 @@ function capturePanelScrollPositions(main) {
   // an edit within it) — not when it now shows something else entirely (a
   // different lesson opened, the drawer closed, a different unit, navigating away),
   // where jumping straight to a stale scroll position would be actively wrong.
-  positions.view = state.currentView;
-  positions.selectedLessonId = state.plannerUi && state.plannerUi.selectedLessonId;
-  positions.openUnitId = state.unitPlansUi && state.unitPlansUi.openUnitId;
+  positions.view = main.dataset.prevView;
+  positions.selectedLessonId = main.dataset.prevSelectedLessonId;
+  positions.openUnitId = main.dataset.prevOpenUnitId;
   return positions;
 }
 
 function restorePanelScrollPositions(main, positions) {
-  if (!main || positions.view !== state.currentView) return;
-  const sameLesson = positions.selectedLessonId === (state.plannerUi && state.plannerUi.selectedLessonId);
-  const sameUnit = positions.openUnitId === (state.unitPlansUi && state.unitPlansUi.openUnitId);
+  if (!main) return;
+  const currentView = state.currentView || '';
+  const currentLessonId = (state.plannerUi && state.plannerUi.selectedLessonId) || '';
+  const currentUnitId = (state.unitPlansUi && state.unitPlansUi.openUnitId) || '';
+  // Stamp what's true NOW for the next render to compare against — always, even
+  // when nothing is restored below, so the "previous" snapshot never goes stale.
+  main.dataset.prevView = currentView;
+  main.dataset.prevSelectedLessonId = currentLessonId;
+  main.dataset.prevOpenUnitId = currentUnitId;
+  if (positions.view !== currentView) return;
+  const sameLesson = positions.selectedLessonId === currentLessonId;
+  const sameUnit = positions.openUnitId === currentUnitId;
   PANEL_SCROLL_BODY_CLASSES.forEach(cls => {
     if (!(cls in positions)) return;
     // planner-unit-rail-body's content (every unit lesson) doesn't depend on which
@@ -1113,8 +1134,8 @@ function restorePanelScrollPositions(main, positions) {
 
 function renderView() {
   const main = document.getElementById('main-content');
-  if (main) main.setAttribute('data-view', state.currentView || 'dashboard');
   const panelScrollPositions = capturePanelScrollPositions(main);
+  if (main) main.setAttribute('data-view', state.currentView || 'dashboard');
   switch(state.currentView) {
     case 'dashboard':               renderDashboard(main); break;
     case 'students':                renderStudents(main); break;
