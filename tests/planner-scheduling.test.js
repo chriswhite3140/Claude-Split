@@ -2968,17 +2968,18 @@ test('the existing drawer call site (plannerSetLessonStatus with no lessonId) st
   assert.strictEqual(lessonById('sa_1').status, 'taught', 'omitting lessonId must still fall back to the drawer\'s selectedLessonId, exactly as before this feature');
 });
 
-test('checking a single-occurrence unit lesson\'s board checkbox calls unitSetLessonTeachingStatus with that lesson\'s id — the same function the drawer dropdown uses for this case, not the per-occurrence toggle', () => {
+test('checking a single-occurrence unit lesson\'s board checkbox calls unitSetSingleOccurrenceTaught with that lesson\'s id — which itself uses unitSetLessonTeachingStatus (the same function the drawer dropdown uses for this case), not the per-occurrence toggle', () => {
   resetState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon'); // exactly one occurrence
   assert.strictEqual(lessonById('ul_1').scheduledSlots.length, 1, 'sanity: single-occurrence');
 
-  sandbox.unitSetLessonTeachingStatus('taught', 'ul_1');
+  sandbox.unitSetSingleOccurrenceTaught('ul_1', WEEK_A, 'mon', true);
   assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'the lesson\'s overall teachingStatus must flip to taught by explicit id');
-  assert.strictEqual(lessonById('ul_1').scheduledSlots[0].taught, undefined, 'the per-occurrence taught data model is untouched for this path — only teachingStatus changes, exactly like the drawer dropdown already does');
+  assert.strictEqual(lessonById('ul_1').scheduledSlots[0].taught, true, 'the slot\'s own flag is reconciled to match teachingStatus too, so a later transition to multi-slot (or a stale-status edge case) never finds it out of sync');
 
-  sandbox.unitSetLessonTeachingStatus('planned', 'ul_1');
+  sandbox.unitSetSingleOccurrenceTaught('ul_1', WEEK_A, 'mon', false);
   assert.strictEqual(lessonById('ul_1').teachingStatus, 'planned', 'unchecking reverses it back to planned');
+  assert.strictEqual(lessonById('ul_1').scheduledSlots[0].taught, undefined, 'and the slot\'s own flag is reconciled back too');
 });
 
 test('the existing drawer call site (unitSetLessonTeachingStatus with no lessonId) still targets the selected lesson, unaffected by the new optional parameter', () => {
@@ -2989,7 +2990,7 @@ test('the existing drawer call site (unitSetLessonTeachingStatus with no lessonI
   assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'omitting lessonId must still fall back to the drawer\'s selectedLessonId, exactly as before this feature');
 });
 
-test('a single-occurrence unit lesson\'s board card reflects lesson.teachingStatus for both its checkbox\'s checked state and its is-taught styling, not the per-occurrence slot flag it doesn\'t actually use', () => {
+test('a single-occurrence unit lesson\'s board card reflects lesson.teachingStatus for its checkbox\'s checked state and is-taught styling when the slot itself was never individually flagged', () => {
   resetState();
   const st = getState();
   sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
@@ -2999,6 +3000,35 @@ test('a single-occurrence unit lesson\'s board card reflects lesson.teachingStat
   const html = sandbox.plannerUnitOccurrenceCardHtml(lessonById('ul_1'), WEEK_A, 'mon');
   assert.ok(/planner-occ-taught-checkbox"\s+checked/.test(html), 'the checkbox must render checked once teachingStatus is taught, even though the underlying slot itself was never individually flagged');
   assert.ok(/planner-lesson-card is-unit is-taught/.test(html), 'the card must also pick up the is-taught styling in this case — previously it only read the (here, never-set) per-slot flag and stayed unstyled despite the badge next to it saying Taught');
+});
+
+// ── Review fix: a lesson reduced to one slot must keep honoring that slot's own ────
+// ── taught flag, even if plannerUnscheduleSlot left teachingStatus stale ───────────
+test('a lesson reduced from multi- to single-slot keeps reading its surviving occurrence\'s own taught flag, even though plannerUnscheduleSlot deliberately leaves teachingStatus stale', () => {
+  resetState();
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon'); // mark Monday taught; Wednesday stays untaught
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'partially-taught', 'sanity: 1 of 2 taught');
+
+  sandbox.plannerUnscheduleSlot('ul_1', WEEK_A, 'wed'); // remove the untaught occurrence
+  const lesson = lessonById('ul_1');
+  assert.strictEqual(lesson.scheduledSlots.length, 1, 'sanity: down to one slot');
+  assert.strictEqual(lesson.scheduledSlots[0].taught, true, 'sanity: the surviving Monday slot is still individually flagged taught');
+  assert.strictEqual(lesson.teachingStatus, 'partially-taught', 'sanity: plannerUnscheduleSlot leaves teachingStatus untouched — now stale, per its own documented behaviour');
+
+  const html = sandbox.plannerUnitOccurrenceCardHtml(lesson, WEEK_A, 'mon');
+  assert.ok(/planner-occ-taught-checkbox"\s+checked/.test(html), 'the checkbox must still show checked, honoring the surviving slot\'s own taught flag rather than only the now-stale lesson-wide teachingStatus');
+  assert.ok(/planner-lesson-card is-unit is-taught/.test(html), 'the card must still pick up is-taught styling for the same reason');
+
+  // Now uncheck it — must clear BOTH signals, or the stale slot flag would keep making
+  // it read as taught again on the very next render.
+  sandbox.unitSetSingleOccurrenceTaught('ul_1', WEEK_A, 'mon', false);
+  const afterUncheck = lessonById('ul_1');
+  assert.strictEqual(afterUncheck.teachingStatus, 'planned', 'teachingStatus must be cleared');
+  assert.strictEqual(afterUncheck.scheduledSlots[0].taught, undefined, 'the surviving slot\'s own stale taught flag must also be reconciled/cleared — otherwise it would keep reading as taught via the flag alone');
+  const htmlAfterUncheck = sandbox.plannerUnitOccurrenceCardHtml(afterUncheck, WEEK_A, 'mon');
+  assert.ok(!/planner-occ-taught-checkbox"\s+checked/.test(htmlAfterUncheck), 'the checkbox must render unchecked and stay that way on the next render, not snap back to checked from the leftover slot flag');
 });
 
 test('a multi-slot lesson\'s board checkbox still calls unitToggleOccurrenceTaught, targeting only that one occurrence — reusing the existing per-occurrence mechanism exactly, unmodified', () => {
