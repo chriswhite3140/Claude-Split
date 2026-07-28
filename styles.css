@@ -1173,6 +1173,13 @@ body[data-text-size="large"] {
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 170px);
+  /* The base min-height: 300px above (shared with the never-capped Week Board and
+     the collapsed strip) would otherwise win over max-height on any viewport under
+     ~470px tall (e.g. a phone in landscape), forcing the panel taller than its own
+     cap and pushing the page to scroll instead of the panel's own body. min() keeps
+     the familiar 300px floor whenever there's room for it, but never lets the floor
+     exceed the ceiling. */
+  min-height: min(300px, calc(100vh - 170px));
 }
 
 .planner-shell-placeholder {
@@ -2879,7 +2886,11 @@ body[data-text-size="large"] {
 /* ── Unit detail: drawer + sidebar ── */
 .unit-drawer-col,
 .unit-side-col {
-  min-height: 200px;
+  /* Same min()-vs-max-height reasoning as the Weekly Planner panels above — without
+     this, a viewport under ~320px tall would have the 200px floor win over the
+     max-height ceiling on .unit-seq-col/.unit-drawer-col/.unit-side-col and force
+     the column taller than its own cap. */
+  min-height: min(200px, calc(100vh - 120px));
 }
 .unit-side-body {
   padding: 14px;
@@ -3011,6 +3022,22 @@ body[data-text-size="large"] {
   .stats-row { grid-template-columns: repeat(3, 1fr) !important; }
   .unit-detail-grid,
   .unit-detail-grid.has-drawer { grid-template-columns: 1fr; }
+
+  /* Independent per-column scroll (see .unit-seq-col/.unit-drawer-col/.unit-side-col
+     above) is for side-by-side columns — once they stack into one page-length flow
+     at this width, each one keeping its own scrollable, height-capped body would
+     trap a swipe/wheel gesture inside whichever panel is on top, forcing a teacher
+     to scroll all the way through the lesson sequence before a page-level scroll
+     could ever reach the columns below it. Removing max-height alone is enough:
+     with no ceiling, the flex column's height is exactly its content's height (flex:
+     1 has no leftover space to distribute in an unconstrained container), so the
+     body's overflow-y: auto never actually has anything to scroll — the page's own
+     scroll takes over instead, restoring ordinary natural-height stacking. */
+  .unit-seq-col,
+  .unit-drawer-col,
+  .unit-side-col {
+    max-height: none;
+  }
 }
 
 /* Mobile (< 768px) — collapse sidebar to icon strip, full-width main */
@@ -3070,6 +3097,19 @@ body[data-text-size="large"] {
      being more important, not merely more specific. Stack all three panels full-width
      instead, matching the sidebar's own collapse-to-stack behavior at this breakpoint. */
   .planner-shell-layout { grid-template-columns: 1fr !important; }
+
+  /* Independent per-panel scroll (see .planner-unit-rail/.planner-shell-drawer
+     above) is for side-by-side columns — once they stack into one page-length flow
+     at this width (immediately above), each one keeping its own scrollable,
+     height-capped body would trap a swipe/wheel gesture inside whichever panel is
+     on top, forcing a teacher to scroll all the way through the Unit lessons rail
+     before a page-level scroll could ever reach the Week Board or Lesson Drawer
+     below it. Removing max-height alone is enough — see the matching Unit Plans
+     comment above for why. */
+  .planner-unit-rail:not(.is-collapsed),
+  .planner-shell-drawer:not(.is-collapsed) {
+    max-height: none;
+  }
 
   /* A collapsed rail/drawer stacks full-width here rather than sitting in a narrow
      40px column (see the grid-template-columns override just above), so the desktop

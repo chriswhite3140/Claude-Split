@@ -3387,6 +3387,60 @@ test('the full render pipeline does not throw for either layout with the new scr
   assert.doesNotThrow(() => realRenderView(), 'Unit Plans, 3-column (lesson drawer open)');
 });
 
+// ── Review fixes: short-viewport min/max-height conflict, nested scroll at the ──
+// ── stacking breakpoints, and scroll position lost on every re-render ───────────
+test('min-height never exceeds max-height on either layout — a short viewport (e.g. a phone in landscape) must not force a panel taller than its own cap', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const plannerRule = css.match(/\.planner-unit-rail:not\(\.is-collapsed\),\s*\n\.planner-shell-drawer:not\(\.is-collapsed\)\s*\{[^}]*\}/)[0];
+  assert.ok(/min-height:\s*min\(300px,\s*calc\(100vh - 170px\)\)/.test(plannerRule), 'the Weekly Planner panels\' min-height must be clamped with min() against the same max-height budget, not a bare 300px that could exceed it');
+
+  // .unit-drawer-col, .unit-side-col appears twice (the max-height rule shared with
+  // .unit-seq-col, and this dedicated min-height rule) — match every occurrence and
+  // find the one that actually sets min-height, rather than grabbing whichever the
+  // regex engine happens to match first.
+  const unitRules = css.match(/\.unit-drawer-col,\s*\n\.unit-side-col\s*\{[^}]*\}/g) || [];
+  const unitMinHeightRule = unitRules.find(r => /min-height/.test(r));
+  assert.ok(unitMinHeightRule, 'a .unit-drawer-col, .unit-side-col rule setting min-height must exist');
+  assert.ok(/min-height:\s*min\(200px,\s*calc\(100vh - 120px\)\)/.test(unitMinHeightRule), 'Unit Plans\' drawer/side columns\' min-height must likewise be clamped against their own max-height budget');
+});
+
+test('independent per-panel scroll is disabled once each layout stacks into a single column, restoring natural-height page scroll instead of trapping gestures inside one panel', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+
+  const tabletBlock = css.match(/@media \(max-width: 1024px\) \{[\s\S]*?\n\}/)[0];
+  assert.ok(/\.unit-seq-col,\s*\n\s*\.unit-drawer-col,\s*\n\s*\.unit-side-col\s*\{\s*\n\s*max-height:\s*none;/.test(tabletBlock), 'Unit Plans stacks at <1024px — its three columns must drop max-height there so each grows to its natural height and the page scrolls through them, instead of each column keeping its own internal scrollbar');
+
+  const mobileBlock = css.match(/@media \(max-width: 767px\) \{[\s\S]*?\n\}/)[0];
+  assert.ok(/\.planner-unit-rail:not\(\.is-collapsed\),\s*\n\s*\.planner-shell-drawer:not\(\.is-collapsed\)\s*\{\s*\n\s*max-height:\s*none;/.test(mobileBlock), 'the Weekly Planner stacks at <768px — its expanded panels must likewise drop max-height there');
+});
+
+test('capturePanelScrollPositions snapshots the current view/selected-lesson/open-unit identity, which restorePanelScrollPositions uses to tell "same content re-rendered" apart from "different content now showing"', () => {
+  resetState();
+  const st = getState();
+  st.currentView = 'planner';
+  st.plannerUi.selectedLessonId = 'ul_1';
+  st.unitPlansUi = st.unitPlansUi || {};
+  st.unitPlansUi.openUnitId = 'unit_1';
+
+  const mainStub = documentStub.getElementById('main-content');
+  const positions = sandbox.capturePanelScrollPositions(mainStub);
+  assert.strictEqual(positions.view, 'planner');
+  assert.strictEqual(positions.selectedLessonId, 'ul_1');
+  assert.strictEqual(positions.openUnitId, 'unit_1');
+
+  // Restoring must be a no-op (not throw) both when nothing changed and when the
+  // view/lesson/unit identity has since changed out from under it — the real
+  // scrollTop-restoring behaviour itself needs a real DOM to observe (verified live
+  // via Playwright: scrolling a long lesson drawer to 300px, then triggering a
+  // routine re-render via unitSetLessonTeachingStatus(), left it at exactly 300px
+  // afterwards instead of resetting to 0).
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'same identity');
+  st.plannerUi.selectedLessonId = 'ul_2';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'different lesson now selected');
+  st.currentView = 'unit-plans';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'different view entirely');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {
