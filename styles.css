@@ -1581,14 +1581,8 @@ body[data-text-size="large"] {
 /* Unit-linked card: coloured left border + unit chip to distinguish from standalone. */
 .planner-lesson-card.is-unit {
   border-left: 3px solid var(--status-info-border);
-  /* Reserves room for the ✕ remove button in the top-right actions cluster. */
-  padding-right: 32px;
-}
-/* A multi-slot lesson's occurrence card also shows the per-occurrence taught toggle
-   next to ✕ — reserve room for both (24px each + 3px gap + a little breathing room).
-   A single-occurrence lesson has no taught toggle at all, so its card keeps the
-   narrower padding above, unchanged from before this feature existed. */
-.planner-lesson-card.is-unit.has-taught-toggle {
+  /* Reserves room for the taught checkbox + ✕ remove button, both always present in
+     the top-right actions cluster (see plannerUnitOccurrenceCardHtml). */
   padding-right: 58px;
 }
 .planner-unit-chip {
@@ -1636,32 +1630,16 @@ body[data-text-size="large"] {
   border-color: var(--status-danger-border);
   background: var(--status-danger-bg);
 }
-/* Per-occurrence "mark taught" toggle — same size/shape as the ✕ remove button next
-   to it, distinguished by icon (✓) and colour (green once on) rather than layout. */
-.planner-occ-taught-toggle {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text3);
-  border-radius: 4px;
-  width: 24px;
-  height: 24px;
-  line-height: 1;
-  font-size: 12px;
+/* Quick "mark as taught" checkbox on a board occurrence card — sits next to the ✕
+   remove button in the top-right actions cluster so a lesson can be marked taught
+   without opening the drawer at all. Sized to sit comfortably alongside the 24px ✕
+   button while staying a native, familiar checkbox rather than a custom control. */
+.planner-occ-taught-checkbox {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-.planner-occ-taught-toggle:hover {
-  color: var(--status-success-text);
-  border-color: var(--status-success-border);
-  background: var(--status-success-bg);
-}
-.planner-occ-taught-toggle.is-on {
-  color: var(--status-success-text);
-  border-color: var(--status-success-border);
-  background: var(--status-success-bg);
+  accent-color: var(--status-success-border);
 }
 
 /* Left rail: each unit's unscheduled lessons, draggable onto a day. */
@@ -1947,6 +1925,16 @@ body[data-text-size="large"] {
   background: var(--status-warning-bg);
   border-color: var(--status-warning-border);
   color: var(--status-warning-text);
+}
+
+/* Quick "mark as taught" checkbox on a standalone board card — sits inline with the
+   status pill/tags row so a lesson can be marked taught without opening the drawer. */
+.planner-card-taught-checkbox {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--status-success-border);
 }
 
 .planner-incomplete-note {

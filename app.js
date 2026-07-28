@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.86
+ * THIS FILE IS VERSION: 1.13.88
  * Last updated: 2026-07-28
  * ============================================================
  *
@@ -10,6 +10,8 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.88 - Fix a review finding on 1.13.87's Week Board taught checkbox: a single-occurrence unit lesson's isTaught display was made to read only lesson.teachingStatus, but plannerUnscheduleSlot deliberately leaves teachingStatus untouched when a slot is removed (documented, pre-existing behaviour) — so a lesson reduced from multi- to single-slot (e.g. a taught Monday occurrence survives after its untaught Wednesday sibling is removed) kept its surviving slot's own taught: true flag while teachingStatus stayed stale at "partially-taught", and the card would show unchecked/unstyled despite that occurrence still genuinely being taught. Fixed on the read side by reusing the existing unitLessonIsEffectivelyTaught helper for the single-slot case instead of reading teachingStatus alone — it already encodes "teachingStatus is taught OR any slot is individually flagged", so it correctly honors a surviving slot's own flag exactly like the pre-1.13.87 code always did. Fixed on the write side with a new unitSetSingleOccurrenceTaught(lessonId, weekKey, dayKey, taught), the single-occurrence checkbox's new call target: it still calls unitSetLessonTeachingStatus (unchanged) for the status, then reconciles that one slot's own flag to match via the existing unitToggleOccurrenceTaught if it's out of sync — without this, unchecking a lesson in the stale-status scenario above would leave the leftover taught: true slot flag in place, and unitLessonIsEffectivelyTaught would keep reading it as taught on the very next render regardless of the checkbox click. Neither fix touches plannerUnscheduleSlot itself, unitToggleOccurrenceTaught's own logic, or the multi-slot checkbox path, all confirmed unmodified. 2 new/updated regression tests (both confirmed to fail against the pre-fix code, i.e. 1.13.87 as first pushed); all 218 tests pass.
+ * v1.13.87 - Weekly Planner: every Week Board day card (standalone and unit lesson occurrences alike) now has a quick "mark as taught" checkbox, so the common end-of-lesson action no longer requires opening the Lesson Drawer, switching to Edit, and changing the status dropdown. Reuses the existing status-mutation functions exactly rather than adding a second path: a standalone card's checkbox calls plannerSetLessonStatus (now widened to take an optional lessonId, defaulting to the drawer's selectedLessonId so its existing drawer-button call site is unaffected) — inheriting that function's existing "needs at least one linked IC" gate unchanged, confirmed live (checking a no-IC card's checkbox shows the same rejection toast the drawer button already does, and the checkbox visually resets instead of staying stuck checked — a new renderView() on that rejected path, needed because a checkbox's native checked state flips before its onchange handler runs, unlike a button). A unit lesson occurrence card's checkbox does the same: for a lesson scheduled on more than one day it calls the existing per-occurrence unitToggleOccurrenceTaught unmodified, affecting only that one occurrence's own taught flag (not the whole lesson, not other occurrences); for a single-occurrence lesson — which has no per-slot ambiguity to resolve — it instead calls unitSetLessonTeachingStatus (also widened with an optional lessonId) directly, the same function the drawer's "Teaching status" dropdown already used for this exact case, inheriting its current lack of any IC gate unchanged too. This incidentally also fixes a single-occurrence card's own is-taught (green border) styling, which previously read only the per-occurrence slot flag — never actually set for a single-occurrence lesson marked taught via the dropdown — and so stayed unstyled despite the status badge next to it correctly saying "Taught"; it now reads teachingStatus directly for this case, matching what actually drives the badge. The previous multi-slot-only "✓" toggle button on unit occurrence cards is replaced by this always-present checkbox (unit cards' reserved right-side padding is now unconditionally wide enough for checkbox + ✕, rather than only once a second slot existed). Drawer editing (Needs review/Reteach/Partially taught, still drawer-only), the Unit lessons rail cards, and the per-occurrence taught data model itself are all untouched. 10 new regression tests (5 confirmed to fail against the pre-fix code); all 217 tests pass. Verified live in a real browser (Playwright) across all four combinations (standalone with/without IC, single- and multi-occurrence unit lesson) — including that a multi-slot lesson's two occurrence cards can independently show checked/unchecked, exactly as before this change.
  * v1.13.86 - Weekly Planner: Unit lessons rail card titles now wrap onto up to 2 lines instead of truncating to a single-line ellipsis — 1.13.85's scrollbar-width fix only recovered ~2px, nowhere near enough for titles that were already cut down to just a few words (e.g. "4. Mental addi..." and "5. Adding and su..." looked identical without opening each one). .planner-unit-pill-title now uses the standard 2-line -webkit-line-clamp technique (still clips with an ellipsis past 2 lines, for the rare title too long even for that) instead of white-space: nowrap; cards grow to fit two lines where needed rather than staying a fixed single-line height, which is fine since the rail already scrolls independently of the rest of the page (1.13.82). Every rail card's title also now carries a plain title="..." attribute with the full text, giving a native browser tooltip fallback for that rare over-2-lines case — deliberately not the project's existing custom-hover-tooltip helper (truncateWithTooltip/.tt-ellipsis), which renders its own styled popup, since a plain native tooltip is all this needed. Confirmed the affected class (.planner-unit-pill-title) is used in exactly one place in app.js (plannerUnitSidebarLessonHtml), so this is correctly scoped to the Weekly Planner's Unit lessons rail only — Week Board day cards, Unit Plans' own lesson list, the rail's column/scrollbar width from 1.13.85, and drag-to-schedule are all untouched. 5 new regression tests (3 confirmed to fail against the pre-fix code); all 209 tests pass. Verified live in a real browser (Playwright): two genuinely similar titles ("4. Mental addition and subtraction..." vs "5. Adding and subtracting two-...") are now visually distinguishable at a glance, short titles are unaffected, and the card's other fields (subject/IC count, slot-count badge, drag handle) render unchanged.
  * v1.13.85 - Fix a regression from 1.13.82's independent per-panel scroll: giving the Unit lessons rail its own internal scrollbar (.planner-unit-rail-body, overflow-y: auto) meant that scrollbar's own width now ate into the rail's already-narrow ~200-240px column, which previously went entirely to content — so lesson titles/IC counts truncated more aggressively than before that scroll existed, at the same window width. Measured live (Xvfb + a real, non-headless Chromium, since this environment's default headless overlay scrollbars render at 0px and would hide the regression entirely): the OS-default scrollbar cost ~15px of the rail body's width. Fixed both ways at once, per the report: (1) .planner-unit-rail-body now uses a slim, explicitly-sized scrollbar (scrollbar-width: thin plus an 8px ::-webkit-scrollbar, styled with the existing --border2/--text3 tokens) instead of the OS default, shrinking the actual measured cost to 10px and making it a known, fixed number rather than a variable OS default; (2) .planner-shell-layout's rail track (both the CSS default and renderPlanner's per-render inline style, which is the real source of truth) grows from minmax(200px, 240px) to minmax(212px, 252px) — the measured 10px plus a small margin — to compensate. The Week Board (1fr) and Lesson Drawer (minmax(260px, 320px)) tracks, and the collapse/expand logic (collapsed rail is still exactly 40px), are untouched. Verified live against a direct before/after comparison with the pre-1.13.82 baseline, seeded with the same 12 realistic long-titled lessons: the fixed rail's title text now renders at 112px of visible width versus the pre-regression baseline's 110px, meeting and slightly exceeding the "at least as readable as before" bar. 3 new regression tests (all 3 confirmed to fail against the pre-fix code); all 204 tests pass.
  * v1.13.84 - Fix a review finding on 1.13.83's scroll-position-preservation fix: capturePanelScrollPositions/restorePanelScrollPositions compared state.currentView/selectedLessonId/openUnitId against themselves, since every action function in this codebase mutates state BEFORE calling renderView(), never after — so by the time renderView()'s own body ran, those fields already described the render about to happen, not the one being replaced, and the "did the logical content actually change" guard could never detect navigation. Concretely: switching from the Weekly Planner to Unit Plans while the same lesson id happened to be selected in both could restore a stale Weekly Planner scroll offset onto Unit Plans' freshly-opened, unrelated drawer. Fixed by stamping main's own data-prev-view/data-prev-selected-lesson-id/data-prev-open-unit-id attributes at the end of every render — main itself is never replaced by innerHTML swaps, only its children are, so reading those attributes back at the START of the next render (before this render's own state mutations or DOM replacement touch anything) gives a true snapshot of what was actually rendered last time, not what's about to be. The same audit found the identical mutate-then-render pattern also broke the lesson/unit identity checks, not just the view one Macroscope flagged — all three are fixed together. Confirmed live: the original same-lesson-edit scroll preservation still works (300 -> 300 across a routine teaching-status change), and the reported cross-view bug is gone (switching views now correctly resets to 0 instead of carrying over 300). 3 new regression tests exercising the fixed capture/restore contract directly (the pre-fix version's bug wasn't reachable through the old set of tests, since none of them changed view/lesson/unit identity between a capture and a restore); all 201 tests pass.
@@ -128,7 +130,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.86';
+const APP_VERSION = '1.13.88';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1424,6 +1426,12 @@ function plannerLessonCardHtml(lesson) {
         <div class="planner-lesson-card-title" title="${escapeHtml(lesson.title || 'Untitled lesson')}">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         <div class="planner-lesson-card-meta">${escapeHtml(lesson.subject || 'No subject')}</div>
         <div class="planner-lesson-card-tags">
+          <input type="checkbox" class="planner-card-taught-checkbox" ${isTaught ? 'checked' : ''}
+            title="${isTaught ? 'Mark as not taught' : 'Mark as taught'}"
+            aria-label="Mark ${escapeHtml(lesson.title || 'lesson')} as ${isTaught ? 'not taught' : 'taught'}"
+            onclick="event.stopPropagation()"
+            onchange="event.stopPropagation();plannerSetLessonStatus(this.checked ? 'taught' : 'planned', '${plannerJsStr(lesson.id)}')"
+            onkeydown="event.stopPropagation()">
           <span class="planner-status-pill ${isTaught ? 'is-taught' : ''}">${isTaught ? 'Taught' : 'Planned'}</span>
           ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
           ${plannerResourceIndicatorHtml(lesson, lesson.id + '::card')}
@@ -1525,25 +1533,45 @@ function plannerCloseResourcePopover() {
 function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
   const unit = unitForLesson(lesson);
   const unitTitle = unit ? (unit.title || 'Untitled unit') : 'Unit';
-  // .is-taught (the card's own visual state) reflects THIS occurrence's own taught
-  // flag, not the lesson-wide teachingStatus — a lesson can be "Partially taught 1/2"
-  // overall while this specific day either has or hasn't happened yet, and the two
-  // occurrence cards must be able to disagree. The status badge alongside it still
-  // shows the lesson-wide picture (with its own taught/total fraction).
   const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
   const slot = slots.find(s => s && s.weekKey === weekKey && s.dayKey === dayKey);
-  const isTaught = !!(slot && slot.taught === true);
-  // The per-occurrence taught toggle only makes sense (and only appears) once a lesson
-  // has more than one scheduled occurrence — a single-occurrence lesson has no "which
-  // one do I mean" ambiguity to resolve, so it keeps using the drawer's manual
-  // "Teaching status" dropdown exactly as before this feature existed.
-  const showTaughtToggle = slots.length > 1;
+  const isMultiSlot = slots.length > 1;
+  // .is-taught (the card's own visual state) reflects THIS occurrence's own taught
+  // flag for a multi-slot lesson — a lesson can be "Partially taught 1/2" overall
+  // while this specific day either has or hasn't happened yet, and multi-slot
+  // occurrence cards must be able to disagree. A single-occurrence lesson normally has
+  // no per-slot taught flag in use, so it reads teachingStatus (the same thing the
+  // checkbox itself sets for this case) — but it must ALSO still honor the slot's own
+  // flag if one happens to be set (e.g. a lesson reduced from multi- to single-slot via
+  // plannerUnscheduleSlot, which deliberately leaves teachingStatus untouched — see its
+  // own comment — so a still-taught surviving occurrence must not read as unchecked
+  // just because the lesson-wide status is now stale). unitLessonIsEffectivelyTaught
+  // already encodes exactly this "either signal counts" rule, so it's reused here
+  // rather than re-deriving the same logic inline. The status badge alongside it still
+  // shows the lesson-wide picture (with its own taught/total fraction for a multi-slot
+  // lesson).
+  const isTaught = isMultiSlot ? !!(slot && slot.taught === true) : unitLessonIsEffectivelyTaught(lesson);
+  // A quick "mark as taught" checkbox, always present on every board occurrence card.
+  // For a multi-slot lesson it toggles only THIS occurrence's own taught flag
+  // (unitToggleOccurrenceTaught re-derives the lesson-wide status from all of them —
+  // exactly the existing per-occurrence mechanism, untouched). For a single-occurrence
+  // lesson there's no per-slot ambiguity, so it sets the lesson's overall teachingStatus
+  // instead, via unitSetSingleOccurrenceTaught — the same underlying
+  // unitSetLessonTeachingStatus the drawer's "Teaching status" dropdown already uses
+  // for that case, plus reconciling this slot's own flag to match (see that function's
+  // own comment for why that reconciliation matters). Neither path adds any gating
+  // beyond what unitSetLessonTeachingStatus/unitToggleOccurrenceTaught already enforce
+  // today (currently neither has an IC-linked gate, unlike the standalone equivalent —
+  // see plannerSetLessonStatus).
+  const taughtToggleExpr = isMultiSlot
+    ? `unitToggleOccurrenceTaught('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')`
+    : `unitSetSingleOccurrenceTaught('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}',this.checked)`;
   const openExpr = `plannerOpenLessonDrawerFromCard('${plannerJsStr(lesson.id)}')`;
   return `
     <div class="planner-occ-wrap" data-occurrence="${escapeHtml(weekKey)}|${escapeHtml(dayKey)}"
       ondragover="plannerCardDragOver(event, '${plannerJsStr(dayKey)}', '${plannerJsStr(lesson.id)}')"
     >
-      <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''} ${showTaughtToggle ? 'has-taught-toggle' : ''}"
+      <div class="planner-lesson-card is-unit ${isTaught ? 'is-taught' : ''}"
         draggable="true"
         ondragstart="plannerStartOccurrenceDrag(event, '${plannerJsStr(lesson.id)}', '${plannerJsStr(weekKey)}', '${plannerJsStr(dayKey)}')"
         ondragend="plannerEndLessonDrag(event)"
@@ -1556,11 +1584,12 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
           ${plannerResourceIndicatorHtml(lesson, lesson.id + '::' + weekKey + '::' + dayKey)}
         </div>
         <div class="planner-card-actions">
-          ${showTaughtToggle ? `<button class="planner-occ-taught-toggle ${isTaught ? 'is-on' : ''}" type="button"
+          <input type="checkbox" class="planner-occ-taught-checkbox" ${isTaught ? 'checked' : ''}
             title="${isTaught ? 'Mark this occurrence as not taught' : 'Mark this occurrence as taught'}"
             aria-label="${isTaught ? `Mark ${escapeHtml(lesson.title || 'lesson')}'s ${escapeHtml(dayKey)} occurrence as not taught` : `Mark ${escapeHtml(lesson.title || 'lesson')}'s ${escapeHtml(dayKey)} occurrence as taught`}"
-            onclick="event.stopPropagation();unitToggleOccurrenceTaught('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')"
-            onkeydown="event.stopPropagation()">✓</button>` : ''}
+            onclick="event.stopPropagation()"
+            onchange="event.stopPropagation();${taughtToggleExpr}"
+            onkeydown="event.stopPropagation()">
           <button class="planner-occ-remove" type="button" title="Remove from this day"
             aria-label="Remove ${escapeHtml(lesson.title || 'lesson')} from this day"
             onclick="event.stopPropagation();plannerUnscheduleSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(weekKey)}','${plannerJsStr(dayKey)}')"
@@ -2987,14 +3016,23 @@ function plannerToggleLessonIC(icId) {
   renderView();
 }
 
-function plannerSetLessonStatus(status) {
-  const selectedId = state.plannerUi?.selectedLessonId;
+// lessonId is optional and defaults to the drawer's own selectedLessonId (unchanged
+// for existing call sites — the drawer's Mark as taught/planned buttons). The Week
+// Board's taught checkbox (plannerLessonCardHtml) passes its own card's lesson id
+// explicitly instead, so it can target that lesson without first selecting it into
+// the drawer.
+function plannerSetLessonStatus(status, lessonId) {
+  const selectedId = lessonId || state.plannerUi?.selectedLessonId;
   if (!selectedId) return;
   const idx = state.lessonPlans.findIndex(lesson => lesson.id === selectedId);
   if (idx < 0) return;
   const next = status === 'taught' ? 'taught' : 'planned';
   if (next === 'taught' && !(state.lessonPlans[idx].linkedICIds || []).length) {
     toast('Add at least one IC before marking this lesson as taught', 'error');
+    // A checkbox-driven call already flipped its own checked state natively before
+    // this handler ran; without a re-render here it would keep showing "checked"
+    // even though the underlying status was rejected and never actually changed.
+    renderView();
     return;
   }
   state.lessonPlans[idx] = { ...state.lessonPlans[idx], status: next };
@@ -3818,10 +3856,10 @@ function unitLessonDerivedTeachingStatus(lesson) {
 // the same lesson to "Taught" at once, including ones that hadn't happened yet. This
 // only ever touches the one matching slot; the lesson's overall teachingStatus is then
 // re-derived from however many of its occurrences are now marked (see
-// unitLessonDerivedTeachingStatus). Only reachable through UI rendered for a lesson
-// with more than one scheduled occurrence (see plannerUnitOccurrenceCardHtml /
-// unitLessonScheduleHtml) — a single-occurrence lesson keeps using the manual dropdown
-// exactly as before, since there's no per-occurrence ambiguity for it to resolve.
+// unitLessonDerivedTeachingStatus). Only called for a lesson with more than one
+// scheduled occurrence (see plannerUnitOccurrenceCardHtml / unitLessonScheduleHtml) —
+// a single-occurrence lesson has no per-occurrence ambiguity to resolve, so it's set
+// taught/not-taught a different way (see unitSetSingleOccurrenceTaught below).
 function unitToggleOccurrenceTaught(lessonId, weekKey, dayKey) {
   const idx = state.lessonPlans.findIndex(l => l.id === lessonId);
   if (idx < 0) return;
@@ -3837,6 +3875,29 @@ function unitToggleOccurrenceTaught(lessonId, weekKey, dayKey) {
   state.lessonPlans[idx] = nextLesson;
   saveLessonPlansState();
   renderView();
+}
+
+// The Week Board checkbox's write path for a single-occurrence unit lesson's card
+// (plannerUnitOccurrenceCardHtml). Sets teachingStatus via the same function the
+// drawer's "Teaching status" dropdown already uses (unitSetLessonTeachingStatus), then
+// reconciles this one slot's own taught flag to match — without this second step, a
+// lesson that still carries a stale per-occurrence taught flag from before it was
+// reduced to one slot (plannerUnscheduleSlot deliberately leaves teachingStatus
+// untouched when a slot is removed, by design — see its own comment) could keep
+// reading as taught via unitLessonIsEffectivelyTaught even after being unchecked here,
+// since nothing would otherwise ever clear that leftover flag. Reuses
+// unitToggleOccurrenceTaught itself to touch the slot (its own re-derive call is a
+// no-op for a single-slot lesson, so it never fights the teachingStatus already just
+// set above) rather than duplicating slot-mutation logic here.
+function unitSetSingleOccurrenceTaught(lessonId, weekKey, dayKey, taught) {
+  unitSetLessonTeachingStatus(taught ? 'taught' : 'planned', lessonId);
+  const lesson = state.lessonPlans.find(l => l.id === lessonId);
+  if (!lesson) return;
+  const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
+  const slot = slots.find(s => s && s.weekKey === weekKey && s.dayKey === dayKey);
+  if (!!(slot && slot.taught === true) !== taught) {
+    unitToggleOccurrenceTaught(lessonId, weekKey, dayKey);
+  }
 }
 
 // ── Routing: list vs detail ──
@@ -4336,10 +4397,16 @@ function unitToggleICShowAllYears() {
   renderView();
 }
 
-// Set teachingStatus on the lesson currently open in the unit drawer.
-function unitSetLessonTeachingStatus(value) {
+// Set teachingStatus on a unit lesson. lessonId is optional and defaults to the
+// drawer's own selectedLessonId (unchanged for the existing call site — the drawer's
+// "Teaching status" dropdown). The Week Board's taught checkbox on a single-occurrence
+// unit lesson's card (plannerUnitOccurrenceCardHtml) passes its lessonId directly
+// instead — the same function a single-occurrence lesson already relied on via the
+// dropdown, since there's no per-occurrence ambiguity for it to resolve (see
+// unitToggleOccurrenceTaught for the multi-occurrence case, untouched by this).
+function unitSetLessonTeachingStatus(value, lessonId) {
   if (!UNIT_TEACHING_STATUSES.some(s => s.key === value)) return;
-  const id = state.plannerUi && state.plannerUi.selectedLessonId;
+  const id = lessonId || (state.plannerUi && state.plannerUi.selectedLessonId);
   if (!id) return;
   const idx = state.lessonPlans.findIndex(l => l.id === id);
   if (idx < 0) return;
