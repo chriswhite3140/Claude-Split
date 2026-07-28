@@ -11,12 +11,13 @@
  * into doPost per the repo owner, confirmed working live (sync indicator, restore
  * banner, manual backup button). This repo has no direct access to that separate
  * script project, so that status can't be re-confirmed from source alone if it's
- * ever in question again — the live check is the app's own Drive sync indicator
- * (driveSyncIndicatorHtml() in app.js, shown in the Weekly Planner topbar, Unit
- * Plans, and Data & Settings): "Last synced to Drive: <time>" means it's working;
- * "Drive sync failed — retry" after a retry click, or nothing at all, would mean
- * something has broken since (redeployed over, quota, etc.) — don't assume either
- * way from a code comment alone, including this one.
+ * ever in question again. Don't trust an already-displayed "Last synced to Drive:
+ * <time>" (driveSyncIndicatorHtml() in app.js) on its own — it's seeded from a
+ * persisted localStorage timestamp on every page load (see driveSyncInitDirtyState),
+ * so it can keep showing an old success time even after this breaks. The real check
+ * is a FRESH sync: click "Backup to Drive now" (Data & Settings) and confirm it
+ * completes ("Last synced to Drive: just now"), not "Drive sync failed — retry" —
+ * don't assume either way from a code comment alone, including this one.
  *
  * Wiring instructions (kept for reference — e.g. redeploying from a new Apps
  * Script project, or re-wiring after this file changes):
