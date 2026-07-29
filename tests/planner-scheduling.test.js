@@ -3908,6 +3908,48 @@ test('the full render pipeline does not throw when the Daily Log Wizard is launc
   assert.doesNotThrow(() => realRenderView(), 'the main week board itself must still render cleanly with the wizard open behind it');
 });
 
+// ── Review fixes: the drawer's own "Mark as taught" button must stay unaffected, ──
+// ── stale IC-lesson attribution after a deselect/re-add, and a save-in-flight ─────
+// ── must not be corrupted by a different session opening mid-save ────────────────
+test('the Lesson Drawer\'s own "Mark as taught" button (plannerSetLessonStatus with no lessonId) does NOT trigger the wizard — only an explicit lessonId, the Week Board checkbox\'s own call pattern, does', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'sa_1').linkedICIds = ['ic_a'];
+  st.plannerUi.selectedLessonId = 'sa_1';
+  sandbox.plannerSetLessonStatus('taught'); // the drawer button's exact call pattern — no lessonId
+  assert.strictEqual(lessonById('sa_1').status, 'taught', 'sanity: the drawer button itself is completely unaffected');
+  assert.strictEqual(getDlState().isOpen, false, 'the drawer\'s own Mark as taught button must not launch the wizard — it is a separate, more deliberate editing action than the Week Board checkbox, out of phase 1 scope');
+});
+
+test('deselecting an IC in the wizard (dlAddAISuggestedIC) clears its lesson attribution, so a later Week Board merge correctly re-attributes it to whichever lesson actually re-added it, not the stale original', () => {
+  resetState();
+  seedDlFixture();
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_1', linkedICIds: ['ic_a'] }, WEEK_A, 'mon');
+  assert.strictEqual(getDlState().icLessonMap.ic_a, 'ul_1', 'sanity: attributed to the first lesson');
+
+  sandbox.dlAddAISuggestedIC('ic_a'); // teacher manually deselects it in the wizard's own step 2 UI
+  assert.ok(!getDlState().selectedICs.includes('ic_a'), 'sanity: deselected');
+  assert.strictEqual(getDlState().icLessonMap.ic_a, undefined, 'the stale attribution must be cleared along with the deselection');
+
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_2', linkedICIds: ['ic_a'] }, WEEK_A, 'wed'); // a different lesson re-adds the same IC
+  const dl = getDlState();
+  assert.ok(dl.selectedICs.includes('ic_a'), 'sanity: re-selected');
+  assert.strictEqual(dl.icLessonMap.ic_a, 'ul_2', 'must now be attributed to the lesson that actually caused this re-selection, not the original (now-unrelated) ul_1');
+});
+
+test('saveDailyLog snapshots dlState.date/dlState.masteryMap into local variables before any await, rather than reading them live afterward — fixes a review finding where an in-flight save could be silently corrupted by a different session opening mid-save (e.g. checking another lesson\'s Week Board checkbox, which now reassigns dlState via openDailyLogWizard)', () => {
+  const appJsSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.ok(/const sessionDate = dlState\.date;/.test(appJsSrc), 'dlState.date must be captured into a local snapshot up front');
+  assert.ok(/const masteryMapSnapshot = Object\.assign\(\{\}, dlState\.masteryMap\);/.test(appJsSrc), 'dlState.masteryMap must be captured into a local snapshot up front');
+  // These are the exact live-read patterns the bug consisted of — confirming none of
+  // them remain (only the frozen-snapshot equivalents do) guards against the fix
+  // silently regressing back to a live read.
+  assert.ok(!/date:\s*dlState\.date\b/.test(appJsSrc), 'no entry-building code should read dlState.date live anymore');
+  assert.ok(!/date_assessed:\s*dlState\.date\b/.test(appJsSrc), 'the saveProgress call must not read dlState.date live anymore');
+  assert.ok(!/Object\.entries\(dlState\.masteryMap\)/.test(appJsSrc), 'the mastery-entries loop must not read dlState.masteryMap live anymore');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

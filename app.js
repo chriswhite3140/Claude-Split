@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.89
- * Last updated: 2026-07-28
+ * THIS FILE IS VERSION: 1.13.90
+ * Last updated: 2026-07-29
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.90 - Fix three review findings on 1.13.89's Daily Log Wizard bridge. (1) Codex + Macroscope (duplicate finds): the wizard-launch hook added to plannerSetLessonStatus fired for every transition to 'taught', not just the Week Board checkbox — the Lesson Drawer's own "Mark as taught" button also calls plannerSetLessonStatus('taught') with no lessonId (falling back to the drawer's selectedLessonId), so it was also launching the wizard, contrary to the PR's own documented/tested scope. Now gated on an explicit lessonId being passed — the checkbox's own call pattern — leaving the drawer button's behaviour exactly as it was before this feature existed, matching the same scoping already applied to unitSetLessonTeachingStatus. (2) Macroscope: dlLaunchOrMergeForLesson only ever set a missing dlState.icLessonMap entry, so if a teacher manually deselected an auto-added IC in the wizard's own step 2 UI (dlAddAISuggestedIC) and a later, different lesson's board checkbox re-added that same IC, the stale attribution to the first (now-unrelated) lesson survived — the IC would be saved tagged with the wrong lesson. dlAddAISuggestedIC now deletes the icLessonMap entry alongside the deselection, so a later re-add is correctly (re-)attributed fresh. (3) Macroscope: saveDailyLog read dlState.date/dlState.masteryMap live after its own first await (closeDlModal() at the top removes the modal immediately, well before any network round trip finishes) — so a save left in flight while the teacher checks a different lesson's board checkbox (which reassigns dlState via openDailyLogWizard) could resume and silently write the SECOND session's date/mastery data under the FIRST session's identity, corrupting it. Both fields are now frozen into local snapshots (sessionDate, masteryMapSnapshot) up front, alongside the icScanSnapshot/sessionICs/icLessonMapSnapshot the pre-existing code already froze for the exact same reason — every read inside the function now uses the frozen locals, never live dlState. Confirmed live (Playwright): a slow-fetch save for lesson A, interleaved with lesson B's checkbox being checked mid-flight, still writes A's own date/mastery notes untouched, and B's own in-progress session is equally unaffected once A's save resolves afterward. 3 new/updated regression tests (all 3 confirmed to fail against the pre-fix code); all 234 tests pass.
  * v1.13.89 - Phase 1 of closing the "Daily Wizard is isolated from planned lessons" gap (see CLAUDE.md's Known gaps): checking a lesson's Week Board "mark as taught" checkbox (1.13.87/88) now bridges into the Daily Log Wizard as a side effect, without touching the checkbox's own status-mutation logic at all. Checking (not unchecking) a lesson WITH at least one linked IC calls new dlLaunchOrMergeForLesson(): if no wizard session is open, launches one dated to the actual occurrence (new plannerDateForSlot(weekKey, dayKey) — the specific day that was checked, not always today, since a lesson can be marked taught after the fact) and pre-filled with the lesson's linked ICs; if a session is already open (e.g. a second lesson checked before the first was saved/closed — reachable today only programmatically, since the wizard's own full-viewport backdrop genuinely blocks a real second click through to the board behind it, confirmed live), merges the new ICs in instead (deduped) rather than discarding the in-progress session or opening a second modal. Hooked into the three checkbox-reachable call sites (plannerSetLessonStatus, unitToggleOccurrenceTaught only for a genuine multi-slot occurrence, unitSetSingleOccurrenceTaught) — deliberately NOT the raw unitSetLessonTeachingStatus itself, since the drawer's own manual "Teaching status" dropdown has no specific weekKey/dayKey to date a session to and is a more deliberate editing action than "the checkbox", out of phase 1 scope. A lesson with zero linked ICs never launches anything - the checkbox still just marks it taught, there's nothing to log. New dlState.icLessonMap (icId → lessonId, first-attribution-wins if two lessons happen to share an IC) records which lesson contributed each IC; saveDailyLog now tags every taughtLog (CD-level, via new pure dlDeriveCodeLessonIds - a code can be shared by ICs from different lessons, so first IC in selection order wins that code's attribution; a manually-picked code with no contributing IC stays untagged) and taughtICs (IC-level batch, exact - one lessonId per IC, no ambiguity) record with lessonId, on both the live apiCall success path and the localStorage fallback path. Requires the Apps Script backend to accept and persist a new lessonId column on the TaughtLog/TaughtICs sheets to actually reach Sheets (same class of gap as the existing got_it/needs_review NOTE just above it) - until then it's captured correctly in local state regardless. Unchecking never retroactively touches already-saved records - those are historical. Explicitly deferred to phase 2, not built here: per-lesson-group attendance, visual grouping by lesson in the IC Outcomes step, any multi-lesson navigation UI. 12 new regression tests (all 12 confirmed to fail against the pre-fix code); all 231 tests pass. saveDailyLog's own async apiCall/fetch path can't be safely exercised by the Node test harness (its fetch stub never resolves), so the full save flow - launch, merge, and both the mocked-success and real-failure-fallback save paths, confirming taughtLog/taughtICs end up correctly tagged per-lesson rather than a single session-wide value - was verified live in a real browser (Playwright) instead.
  * v1.13.88 - Fix a review finding on 1.13.87's Week Board taught checkbox: a single-occurrence unit lesson's isTaught display was made to read only lesson.teachingStatus, but plannerUnscheduleSlot deliberately leaves teachingStatus untouched when a slot is removed (documented, pre-existing behaviour) — so a lesson reduced from multi- to single-slot (e.g. a taught Monday occurrence survives after its untaught Wednesday sibling is removed) kept its surviving slot's own taught: true flag while teachingStatus stayed stale at "partially-taught", and the card would show unchecked/unstyled despite that occurrence still genuinely being taught. Fixed on the read side by reusing the existing unitLessonIsEffectivelyTaught helper for the single-slot case instead of reading teachingStatus alone — it already encodes "teachingStatus is taught OR any slot is individually flagged", so it correctly honors a surviving slot's own flag exactly like the pre-1.13.87 code always did. Fixed on the write side with a new unitSetSingleOccurrenceTaught(lessonId, weekKey, dayKey, taught), the single-occurrence checkbox's new call target: it still calls unitSetLessonTeachingStatus (unchanged) for the status, then reconciles that one slot's own flag to match via the existing unitToggleOccurrenceTaught if it's out of sync — without this, unchecking a lesson in the stale-status scenario above would leave the leftover taught: true slot flag in place, and unitLessonIsEffectivelyTaught would keep reading it as taught on the very next render regardless of the checkbox click. Neither fix touches plannerUnscheduleSlot itself, unitToggleOccurrenceTaught's own logic, or the multi-slot checkbox path, all confirmed unmodified. 2 new/updated regression tests (both confirmed to fail against the pre-fix code, i.e. 1.13.87 as first pushed); all 218 tests pass.
  * v1.13.87 - Weekly Planner: every Week Board day card (standalone and unit lesson occurrences alike) now has a quick "mark as taught" checkbox, so the common end-of-lesson action no longer requires opening the Lesson Drawer, switching to Edit, and changing the status dropdown. Reuses the existing status-mutation functions exactly rather than adding a second path: a standalone card's checkbox calls plannerSetLessonStatus (now widened to take an optional lessonId, defaulting to the drawer's selectedLessonId so its existing drawer-button call site is unaffected) — inheriting that function's existing "needs at least one linked IC" gate unchanged, confirmed live (checking a no-IC card's checkbox shows the same rejection toast the drawer button already does, and the checkbox visually resets instead of staying stuck checked — a new renderView() on that rejected path, needed because a checkbox's native checked state flips before its onchange handler runs, unlike a button). A unit lesson occurrence card's checkbox does the same: for a lesson scheduled on more than one day it calls the existing per-occurrence unitToggleOccurrenceTaught unmodified, affecting only that one occurrence's own taught flag (not the whole lesson, not other occurrences); for a single-occurrence lesson — which has no per-slot ambiguity to resolve — it instead calls unitSetLessonTeachingStatus (also widened with an optional lessonId) directly, the same function the drawer's "Teaching status" dropdown already used for this exact case, inheriting its current lack of any IC gate unchanged too. This incidentally also fixes a single-occurrence card's own is-taught (green border) styling, which previously read only the per-occurrence slot flag — never actually set for a single-occurrence lesson marked taught via the dropdown — and so stayed unstyled despite the status badge next to it correctly saying "Taught"; it now reads teachingStatus directly for this case, matching what actually drives the badge. The previous multi-slot-only "✓" toggle button on unit occurrence cards is replaced by this always-present checkbox (unit cards' reserved right-side padding is now unconditionally wide enough for checkbox + ✕, rather than only once a second slot existed). Drawer editing (Needs review/Reteach/Partially taught, still drawer-only), the Unit lessons rail cards, and the per-occurrence taught data model itself are all untouched. 10 new regression tests (5 confirmed to fail against the pre-fix code); all 217 tests pass. Verified live in a real browser (Playwright) across all four combinations (standalone with/without IC, single- and multi-occurrence unit lesson) — including that a multi-slot lesson's two occurrence cards can independently show checked/unchecked, exactly as before this change.
@@ -131,7 +132,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.89';
+const APP_VERSION = '1.13.90';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -3050,7 +3051,12 @@ function plannerSetLessonStatus(status, lessonId) {
   }
   state.lessonPlans[idx] = { ...state.lessonPlans[idx], status: next };
   saveLessonPlansState();
-  if (next === 'taught') dlLaunchOrMergeForLesson(state.lessonPlans[idx], state.lessonPlans[idx].weekKey, state.lessonPlans[idx].dayKey);
+  // Only an explicit lessonId means this call came from the Week Board checkbox
+  // itself — the drawer's own "Mark as taught" button (below, no lessonId, relying on
+  // the selectedLessonId fallback above) is a separate, more deliberate editing
+  // action, out of phase 1 scope, and must keep behaving exactly as it did before
+  // this feature existed.
+  if (next === 'taught' && lessonId) dlLaunchOrMergeForLesson(state.lessonPlans[idx], state.lessonPlans[idx].weekKey, state.lessonPlans[idx].dayKey);
   renderView();
 }
 
@@ -10754,8 +10760,17 @@ Return up to 10 ICs that best match the lesson description.`;
 
 function dlAddAISuggestedIC(icId) {
   const idx = dlState.selectedICs.indexOf(icId);
-  if (idx >= 0) dlState.selectedICs.splice(idx, 1);
-  else dlState.selectedICs.push(icId);
+  if (idx >= 0) {
+    dlState.selectedICs.splice(idx, 1);
+    // Clear any lesson attribution too — otherwise a later Week Board merge that
+    // re-adds this same IC would find the old entry already present and skip
+    // re-attributing it (dlLaunchOrMergeForLesson only ever sets a missing entry),
+    // silently crediting whichever lesson contributed it the first time instead of
+    // the lesson that actually caused this re-selection.
+    if (dlState.icLessonMap) delete dlState.icLessonMap[icId];
+  } else {
+    dlState.selectedICs.push(icId);
+  }
 
   // Auto-add/remove the IC's homeDescriptorId from selectedCodes
   dlRecalcSelectedCodes();
@@ -11292,6 +11307,19 @@ async function saveDailyLog() {
   // added by hand in step 2 has no entry here and is correctly untagged (lessonId
   // null). Snapshotted for the same reason as icScanSnapshot/sessionICs above.
   const icLessonMapSnapshot = Object.assign({}, dlState.icLessonMap);
+  // date/masteryMap must ALSO be frozen before any await below, for the same reason
+  // as the three snapshots above: dlState can be reassigned to a brand-new session
+  // object mid-save. closeDlModal() (right below) removes this session's overlay
+  // immediately, well before this save's own network round trips finish — so if the
+  // teacher checks another lesson's Week Board checkbox (or opens "Log Today"
+  // manually) while this save is still in flight, dlLaunchOrMergeForLesson/
+  // openDailyLogWizard reassigns dlState to the NEW session right away. Reading
+  // dlState.date/dlState.masteryMap live after this function's first await would then
+  // silently pick up the new session's data instead of this save's own, corrupting
+  // whichever save resolves later. Every read of these two fields below uses these
+  // frozen locals instead of the live dlState.
+  const sessionDate = dlState.date;
+  const masteryMapSnapshot = Object.assign({}, dlState.masteryMap);
 
   closeDlModal();
   const presentStudents = state.students.filter(s => !dlState.absentIds.has(s.id));
@@ -11303,10 +11331,10 @@ async function saveDailyLog() {
   presentStudents.forEach(s => {
     dlState.selectedCodes.forEach(code => {
       entries.push({
-        date: dlState.date,
+        date: sessionDate,
         student_id: s.id,
         code,
-        notes: dlState.masteryMap[s.id + '|' + code] || '',
+        notes: masteryMapSnapshot[s.id + '|' + code] || '',
         lessonId: codeToLessonId[code] || null
       });
     });
@@ -11348,7 +11376,7 @@ async function saveDailyLog() {
   }
 
   // Also save any mastery ratings through the existing progress flow
-  const masteryEntries = Object.entries(dlState.masteryMap);
+  const masteryEntries = Object.entries(masteryMapSnapshot);
   for (const [key, mastery] of masteryEntries) {
     const [studentId, code] = key.split('|');
     if (!mastery) continue;
@@ -11357,7 +11385,7 @@ async function saveDailyLog() {
         student_id: studentId,
         content_descriptor_code: code,
         mastery_level: mastery,
-        date_assessed: dlState.date,
+        date_assessed: sessionDate,
         teacher_notes: 'Logged via daily session'
       });
     } catch(e) { console.warn('Could not save mastery for', key); }
@@ -11377,7 +11405,7 @@ async function saveDailyLog() {
     presentStudents.forEach(student => {
       sessionICs.forEach(icId => {
         const status = icScanSnapshot[student.id + '|' + icId] || 'taught';
-        icEntries.push({ date: dlState.date, student_id: student.id, ic_id: icId, status, notes: '', lessonId: icLessonMapSnapshot[icId] || null });
+        icEntries.push({ date: sessionDate, student_id: student.id, ic_id: icId, status, notes: '', lessonId: icLessonMapSnapshot[icId] || null });
       });
     });
   }
