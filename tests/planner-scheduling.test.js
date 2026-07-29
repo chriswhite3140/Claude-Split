@@ -91,6 +91,7 @@ const appSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 vm.runInContext(
   appSrc +
   '\n;globalThis.__getState = function(){ return state; };\n' +
+  ';globalThis.__getDlState = function(){ return dlState; };\n' +
   ';globalThis.__runInlineHandler = function(code, evt, thisArg){ return (new Function("event", code)).call(thisArg, evt); };\n',
   sandbox,
   { filename: 'app.js' }
@@ -103,6 +104,7 @@ sandbox.renderView = function () {};
 sandbox.toast = function (msg, type) { toasts.push({ msg, type }); };
 
 const getState = sandbox.__getState;
+const getDlState = sandbox.__getDlState;
 
 // Objects created inside the vm context have a different prototype than this realm,
 // so assert.deepStrictEqual reports them as "not reference-equal". Compare by value.
@@ -3698,6 +3700,254 @@ test('.planner-unit-pill-title is not reused anywhere else in the app — the wr
   const appJsSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//, '');
   const occurrences = (appJsSrc.match(/planner-unit-pill-title/g) || []).length;
   assert.strictEqual(occurrences, 1, 'planner-unit-pill-title must appear exactly once in app.js (outside comments) — inside plannerUnitSidebarLessonHtml only — confirming this class (and therefore the fix) is not shared with any other card renderer');
+});
+
+// ── Phase 1: "mark as taught" auto-launch/merge into the Daily Log Wizard ────────
+console.log('Daily Log Wizard auto-launch/merge from the Week Board taught checkbox');
+
+// resetState() leaves instructionalComponents empty and every fixture lesson's
+// linkedICIds empty — seed a couple of ICs and wire them onto the fixture lessons so
+// these tests actually have something to launch/merge/attribute. dlState is a
+// module-level variable resetState() never touches (it belongs to a completely
+// separate feature, the Daily Log Wizard), so also close/reset any session left open
+// by a previous test — openDailyLogWizard() itself is the one function that fully
+// resets every dlState field, closeDlModal() only flips isOpen off.
+function seedDlFixture() {
+  const st = getState();
+  st.instructionalComponents = [
+    { id: 'ic_a', homeDescriptorId: 'CODE_A', name: 'IC A', linkedDescriptorIds: [] },
+    { id: 'ic_b', homeDescriptorId: 'CODE_B', name: 'IC B', linkedDescriptorIds: [] },
+    { id: 'ic_shared', homeDescriptorId: 'CODE_SHARED', name: 'IC Shared', linkedDescriptorIds: [] },
+  ];
+  st.students = [{ id: 'stu_1', first_name: 'Ada', last_name: 'L', year_level: '3' }];
+  sandbox.openDailyLogWizard();
+  sandbox.closeDlModal();
+}
+
+test('plannerDateForSlot computes the correct calendar date for a weekday offset within the week, and falls back to today for a malformed input', () => {
+  // WEEK_A = '2026-06-29', a Monday (see the fixture's own comment above).
+  assert.strictEqual(sandbox.plannerDateForSlot(WEEK_A, 'mon'), '2026-06-29');
+  assert.strictEqual(sandbox.plannerDateForSlot(WEEK_A, 'wed'), '2026-07-01');
+  assert.strictEqual(sandbox.plannerDateForSlot(WEEK_A, 'fri'), '2026-07-03');
+  const today = sandbox.toIsoDate(new Date());
+  assert.strictEqual(sandbox.plannerDateForSlot(WEEK_A, 'unscheduled'), today, 'a non-weekday dayKey (e.g. the legacy unscheduled value) must fall back to today rather than throwing or returning a wrong date');
+  assert.strictEqual(sandbox.plannerDateForSlot('not-a-date', 'mon'), today, 'a malformed weekKey must also fall back to today');
+});
+
+test('dlLaunchOrMergeForLesson does nothing at all for a lesson with no linked ICs — the checkbox still just marks it taught, there is nothing to log', () => {
+  resetState();
+  seedDlFixture();
+  assert.strictEqual(getDlState().isOpen, false, 'sanity: no session open yet');
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_1', linkedICIds: [] }, WEEK_A, 'mon');
+  assert.strictEqual(getDlState().isOpen, false, 'a lesson with zero linked ICs must never launch the wizard');
+});
+
+test('dlLaunchOrMergeForLesson launches a fresh session when none is open, pre-filled with the lesson\'s ICs and dated to the occurrence\'s own weekKey/dayKey — not today', () => {
+  resetState();
+  seedDlFixture();
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_1', linkedICIds: ['ic_a', 'ic_b'] }, WEEK_A, 'wed');
+  // openDailyLogWizard() reassigns dlState to a brand-new object rather than mutating
+  // the existing one, so it's re-fetched fresh after every action rather than reusing
+  // a reference captured before the action.
+  const dl = getDlState();
+  assert.strictEqual(dl.isOpen, true, 'a session must now be open');
+  assert.strictEqual(dl.date, '2026-07-01', 'must be dated to the occurrence\'s own date (WEEK_A + Wednesday), not today\'s real date');
+  eqJson(dl.selectedICs.slice().sort(), ['ic_a', 'ic_b'], 'both of the lesson\'s ICs must be pre-selected');
+  assert.strictEqual(dl.icLessonMap.ic_a, 'ul_1', 'each IC must be attributed back to the lesson that contributed it');
+  assert.strictEqual(dl.icLessonMap.ic_b, 'ul_1');
+  eqJson(dl.selectedCodes.slice().sort(), ['CODE_A', 'CODE_B'], 'selectedCodes must be recomputed to include both ICs\' home descriptor codes');
+});
+
+test('dlLaunchOrMergeForLesson merges into an already-open session instead of discarding it or opening a second modal, deduping any IC already present', () => {
+  resetState();
+  seedDlFixture();
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_1', linkedICIds: ['ic_a'] }, WEEK_A, 'mon');
+  assert.strictEqual(getDlState().date, '2026-06-29', 'sanity: dated to the first lesson\'s occurrence');
+
+  // A second, different lesson checked while the first session is still open — this
+  // must MERGE (mutate the existing dlState in place), not call openDailyLogWizard()
+  // again, so re-fetching getDlState() here is only a defensive habit, not a
+  // requirement for this specific call.
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_2', linkedICIds: ['ic_a', 'ic_b'] }, WEEK_A, 'fri');
+  const dl = getDlState();
+  assert.strictEqual(dl.isOpen, true, 'still just the one session');
+  assert.strictEqual(dl.date, '2026-06-29', 'the original session\'s date must NOT be overwritten by the second lesson\'s own occurrence date — merging must not silently re-date an in-progress session');
+  eqJson(dl.selectedICs.slice().sort(), ['ic_a', 'ic_b'], 'ic_a (shared by both lessons) must be deduped, not added twice');
+  assert.strictEqual(dl.icLessonMap.ic_a, 'ul_1', 'ic_a must keep its FIRST attribution (ul_1) — the second lesson merging in the same IC must not steal credit for it');
+  assert.strictEqual(dl.icLessonMap.ic_b, 'ul_2', 'ic_b is new in this merge and must be attributed to the lesson that actually contributed it (ul_2)');
+});
+
+test('checking a standalone lesson\'s taught checkbox (plannerSetLessonStatus) triggers the wizard; unchecking it does not', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'sa_1').linkedICIds = ['ic_a'];
+
+  sandbox.plannerSetLessonStatus('taught', 'sa_1');
+  let dl = getDlState();
+  assert.strictEqual(dl.isOpen, true, 'checking (marking taught) must trigger the wizard');
+  assert.strictEqual(dl.icLessonMap.ic_a, 'sa_1');
+
+  sandbox.closeDlModal();
+  sandbox.plannerSetLessonStatus('planned', 'sa_1');
+  assert.strictEqual(getDlState().isOpen, false, 'unchecking must never re-launch the wizard — only the taught transition does');
+});
+
+test('the IC-gate rejection path (plannerSetLessonStatus on a lesson with no ICs) never launches the wizard either', () => {
+  resetState();
+  seedDlFixture();
+  sandbox.plannerSetLessonStatus('taught', 'sa_1'); // sa_1 has no linkedICIds in the base fixture
+  assert.strictEqual(lessonById('sa_1').status, 'planned', 'sanity: the existing IC gate must still reject this exactly as before');
+  assert.strictEqual(getDlState().isOpen, false, 'a rejected status change must not launch the wizard — nothing was actually marked taught');
+});
+
+test('checking a multi-slot unit lesson occurrence\'s checkbox (unitToggleOccurrenceTaught) triggers the wizard dated to THAT occurrence; unchecking does not', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'ul_1').linkedICIds = ['ic_a'];
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'fri');
+
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'fri');
+  const dl = getDlState();
+  assert.strictEqual(dl.isOpen, true);
+  assert.strictEqual(dl.date, '2026-07-03', 'must be dated to the specific occurrence that was checked (Friday), not the lesson\'s other occurrence or today');
+  assert.strictEqual(dl.icLessonMap.ic_a, 'ul_1');
+
+  sandbox.closeDlModal();
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'fri'); // un-mark the same occurrence
+  assert.strictEqual(getDlState().isOpen, false, 'unchecking must not re-launch the wizard');
+});
+
+test('checking a single-occurrence unit lesson\'s checkbox (unitSetSingleOccurrenceTaught) triggers the wizard; unchecking does not', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'ul_1').linkedICIds = ['ic_a'];
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+
+  sandbox.unitSetSingleOccurrenceTaught('ul_1', WEEK_A, 'wed', true);
+  const dl = getDlState();
+  assert.strictEqual(dl.isOpen, true);
+  assert.strictEqual(dl.date, '2026-07-01');
+  assert.strictEqual(dl.icLessonMap.ic_a, 'ul_1');
+
+  sandbox.closeDlModal();
+  sandbox.unitSetSingleOccurrenceTaught('ul_1', WEEK_A, 'wed', false);
+  assert.strictEqual(getDlState().isOpen, false, 'unchecking must not re-launch the wizard');
+});
+
+test('a single-occurrence lesson reduced from multi-slot (the stale-teachingStatus edge case) still only merges its IC once, even though unitSetSingleOccurrenceTaught internally calls unitToggleOccurrenceTaught to reconcile the slot flag', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'ul_1').linkedICIds = ['ic_a'];
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon');
+  sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'wed');
+  sandbox.unitToggleOccurrenceTaught('ul_1', WEEK_A, 'mon'); // mark Monday taught
+  sandbox.closeDlModal(); // that toggle already launched the wizard — close it so the reaffirm below launches fresh
+  sandbox.plannerUnscheduleSlot('ul_1', WEEK_A, 'wed'); // remove the untaught Wednesday slot — now single-slot, teachingStatus stale
+  assert.strictEqual(lessonById('ul_1').scheduledSlots.length, 1, 'sanity: down to one slot');
+  assert.strictEqual(lessonById('ul_1').scheduledSlots[0].taught, true, 'sanity: the surviving slot is already individually flagged taught (the Codex-review edge case)');
+
+  // Re-affirming taught via the single-occurrence checkbox path — the internal
+  // reconciliation branch inside unitSetSingleOccurrenceTaught will find the slot
+  // flag already matches (true === true) and skip calling unitToggleOccurrenceTaught
+  // at all, so there is only ever one trigger here regardless.
+  sandbox.unitSetSingleOccurrenceTaught('ul_1', WEEK_A, 'mon', true);
+  const dl = getDlState();
+  assert.strictEqual(dl.isOpen, true);
+  eqJson(dl.selectedICs, ['ic_a'], 'the IC must be present exactly once, not duplicated by a double trigger');
+});
+
+test('setting teachingStatus via the drawer\'s manual dropdown (unitSetLessonTeachingStatus, no weekKey/dayKey context) does NOT trigger the wizard — only the checkbox paths that carry a specific occurrence do', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'ul_1').linkedICIds = ['ic_a'];
+  st.plannerUi.selectedLessonId = 'ul_1';
+  sandbox.unitSetLessonTeachingStatus('taught');
+  assert.strictEqual(lessonById('ul_1').teachingStatus, 'taught', 'sanity: the dropdown itself is completely unaffected');
+  assert.strictEqual(getDlState().isOpen, false, 'the manual drawer dropdown is a deliberately different, more deliberate editing action than the checkbox and is out of scope for phase 1\'s auto-launch');
+});
+
+test('dlDeriveCodeLessonIds attributes each code to the first IC (in sessionICs order) that traces to a lesson, and leaves an unattributed/manually-added code untagged', () => {
+  resetState();
+  seedDlFixture();
+  // ic_a -> CODE_A (from ul_1), ic_b -> CODE_B (from ul_2), ic_shared -> CODE_SHARED
+  // (from ul_1) plus a manually-picked code with no IC at all.
+  const map = sandbox.dlDeriveCodeLessonIds(['ic_a', 'ic_b', 'ic_shared'], { ic_a: 'ul_1', ic_b: 'ul_2', ic_shared: 'ul_1' });
+  eqJson(map, { CODE_A: 'ul_1', CODE_B: 'ul_2', CODE_SHARED: 'ul_1' });
+});
+
+test('dlDeriveCodeLessonIds resolves a code shared by ICs from two different lessons to whichever IC appears first in sessionICs, and ignores an IC with no lesson attribution at all', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  // A second IC that homes to the SAME code as ic_shared, but (hypothetically) came
+  // from a different lesson.
+  st.instructionalComponents.push({ id: 'ic_shared_b', homeDescriptorId: 'CODE_SHARED', name: 'IC Shared B', linkedDescriptorIds: [] });
+
+  const map = sandbox.dlDeriveCodeLessonIds(['ic_shared', 'ic_shared_b'], { ic_shared: 'ul_1', ic_shared_b: 'ul_2' });
+  assert.strictEqual(map.CODE_SHARED, 'ul_1', 'first IC in the given order wins the attribution for a code shared across lessons');
+
+  const mapNoAttribution = sandbox.dlDeriveCodeLessonIds(['ic_a'], {}); // ic_a picked by hand, never merged via a lesson
+  eqJson(mapNoAttribution, {}, 'an IC with no icLessonMap entry contributes no attribution at all — its code stays untagged');
+});
+
+test('the full render pipeline does not throw when the Daily Log Wizard is launched or merged into from a Week Board checkbox click', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'sa_1').linkedICIds = ['ic_a'];
+  st.lessonPlans.find(l => l.id === 'ul_1').linkedICIds = ['ic_b'];
+  assert.doesNotThrow(() => sandbox.plannerSetLessonStatus('taught', 'sa_1'), 'launching from a standalone card');
+  assert.doesNotThrow(() => sandbox.plannerScheduleUnitLesson('ul_1', WEEK_A, 'mon'), 'scheduling a second lesson');
+  assert.doesNotThrow(() => sandbox.unitSetSingleOccurrenceTaught('ul_1', WEEK_A, 'mon', true), 'merging a second lesson into the still-open session');
+  assert.doesNotThrow(() => realRenderView(), 'the main week board itself must still render cleanly with the wizard open behind it');
+});
+
+// ── Review fixes: the drawer's own "Mark as taught" button must stay unaffected, ──
+// ── stale IC-lesson attribution after a deselect/re-add, and a save-in-flight ─────
+// ── must not be corrupted by a different session opening mid-save ────────────────
+test('the Lesson Drawer\'s own "Mark as taught" button (plannerSetLessonStatus with no lessonId) does NOT trigger the wizard — only an explicit lessonId, the Week Board checkbox\'s own call pattern, does', () => {
+  resetState();
+  seedDlFixture();
+  const st = getState();
+  st.lessonPlans.find(l => l.id === 'sa_1').linkedICIds = ['ic_a'];
+  st.plannerUi.selectedLessonId = 'sa_1';
+  sandbox.plannerSetLessonStatus('taught'); // the drawer button's exact call pattern — no lessonId
+  assert.strictEqual(lessonById('sa_1').status, 'taught', 'sanity: the drawer button itself is completely unaffected');
+  assert.strictEqual(getDlState().isOpen, false, 'the drawer\'s own Mark as taught button must not launch the wizard — it is a separate, more deliberate editing action than the Week Board checkbox, out of phase 1 scope');
+});
+
+test('deselecting an IC in the wizard (dlAddAISuggestedIC) clears its lesson attribution, so a later Week Board merge correctly re-attributes it to whichever lesson actually re-added it, not the stale original', () => {
+  resetState();
+  seedDlFixture();
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_1', linkedICIds: ['ic_a'] }, WEEK_A, 'mon');
+  assert.strictEqual(getDlState().icLessonMap.ic_a, 'ul_1', 'sanity: attributed to the first lesson');
+
+  sandbox.dlAddAISuggestedIC('ic_a'); // teacher manually deselects it in the wizard's own step 2 UI
+  assert.ok(!getDlState().selectedICs.includes('ic_a'), 'sanity: deselected');
+  assert.strictEqual(getDlState().icLessonMap.ic_a, undefined, 'the stale attribution must be cleared along with the deselection');
+
+  sandbox.dlLaunchOrMergeForLesson({ id: 'ul_2', linkedICIds: ['ic_a'] }, WEEK_A, 'wed'); // a different lesson re-adds the same IC
+  const dl = getDlState();
+  assert.ok(dl.selectedICs.includes('ic_a'), 'sanity: re-selected');
+  assert.strictEqual(dl.icLessonMap.ic_a, 'ul_2', 'must now be attributed to the lesson that actually caused this re-selection, not the original (now-unrelated) ul_1');
+});
+
+test('saveDailyLog snapshots dlState.date/dlState.masteryMap into local variables before any await, rather than reading them live afterward — fixes a review finding where an in-flight save could be silently corrupted by a different session opening mid-save (e.g. checking another lesson\'s Week Board checkbox, which now reassigns dlState via openDailyLogWizard)', () => {
+  const appJsSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.ok(/const sessionDate = dlState\.date;/.test(appJsSrc), 'dlState.date must be captured into a local snapshot up front');
+  assert.ok(/const masteryMapSnapshot = Object\.assign\(\{\}, dlState\.masteryMap\);/.test(appJsSrc), 'dlState.masteryMap must be captured into a local snapshot up front');
+  // These are the exact live-read patterns the bug consisted of — confirming none of
+  // them remain (only the frozen-snapshot equivalents do) guards against the fix
+  // silently regressing back to a live read.
+  assert.ok(!/date:\s*dlState\.date\b/.test(appJsSrc), 'no entry-building code should read dlState.date live anymore');
+  assert.ok(!/date_assessed:\s*dlState\.date\b/.test(appJsSrc), 'the saveProgress call must not read dlState.date live anymore');
+  assert.ok(!/Object\.entries\(dlState\.masteryMap\)/.test(appJsSrc), 'the mastery-entries loop must not read dlState.masteryMap live anymore');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────
