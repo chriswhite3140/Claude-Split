@@ -414,6 +414,24 @@ test('unit rail search and subject filter combine with AND', () => {
   assert.ok(html.includes('Equivalent fractions'), 'a lesson matching both search and subject shows');
 });
 
+test('unit rail subject filter matches each lesson\'s OWN subject, not its parent unit\'s — a lesson subject can genuinely diverge since it\'s independently editable and unitUpdateField never propagates to existing lessons', () => {
+  resetState();
+  const st = getState();
+  // ul_2 ("Equivalent fractions") is edited independently to a different subject than
+  // its parent unit_1 (Mathematics) — a supported, real state, not a data-integrity bug.
+  st.lessonPlans.find(l => l.id === 'ul_2').subject = 'English';
+
+  st.plannerUi.railSubjectFilter = 'English';
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Equivalent fractions'), 'the lesson\'s own (English) subject must be honoured, even though its unit is Mathematics');
+  assert.ok(!html.includes('Intro to fractions'), 'the sibling lesson, still genuinely Mathematics, must not show under the English filter');
+
+  st.plannerUi.railSubjectFilter = 'Mathematics';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions'), 'the still-Mathematics sibling lesson shows');
+  assert.ok(!html.includes('Equivalent fractions'), 'the now-English lesson must not show under the Mathematics filter just because its unit is Mathematics');
+});
+
 test('unit rail filtering is UI-only — never mutates state.lessonPlans or state.unitPlans', () => {
   resetState();
   const st = getState();
