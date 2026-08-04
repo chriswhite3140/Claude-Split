@@ -4330,6 +4330,28 @@ test('the confidence tier badge (Strong/Partial/Weak) carries the matching PLANN
   assert.ok(html.includes(`is-weak" title="${sandbox.escapeHtml(GLOSSARY.PLANNER_CONFIDENCE_GLOSSARY.weak)}"`) || html.includes(`is-partial" title="${sandbox.escapeHtml(GLOSSARY.PLANNER_CONFIDENCE_GLOSSARY.partial)}"`), 'the much-lower-scored IC must show a Partial or Weak confidence tooltip, matching its own actual tier — never the Strong one');
 });
 
+test('the Planned status glossary text does not claim a lesson has been scheduled onto a day — teachingStatus and scheduledSlots are independent, so a Planned lesson with 0 slots would otherwise be told "Scheduled to teach" right next to a "0 slots"/"Not scheduled" indicator (review finding)', () => {
+  const planned = GLOSSARY.PLANNER_STATUS_GLOSSARY.planned;
+  assert.ok(!/\bScheduled\b/.test(planned), 'must not assert scheduling has happened just because the status is "Planned"');
+  assert.ok(/independent of scheduling/i.test(planned), 'should make the independence from scheduledSlots explicit, since that\'s exactly the confusing juxtaposition the review flagged');
+});
+
+test('both view-mode drawers\' "Instructional Components" heading carries the IC glossary tooltip even for a POPULATED lesson (not just the empty-state branch) — the read-only view is the default first screen for any existing lesson with content, so it must have an IC hover target regardless of whether ICs are already linked (review finding)', () => {
+  resetState();
+  const st = getState();
+  st.instructionalComponents = [{ id: 'ic_1', name: 'A linked IC', homeDescriptorId: 'CD_1', active: true }];
+
+  const standaloneLesson = lessonById('sa_1');
+  standaloneLesson.linkedICIds = ['ic_1']; // populated — the empty-state branch must NOT be what's covering this
+  const standaloneHtml = sandbox.plannerStandaloneLessonViewHtml(standaloneLesson, [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(standaloneHtml.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)}">Instructional Components<`), 'the standalone lesson\'s view-mode IC heading must carry the tooltip');
+
+  const unitLesson = lessonById('ul_1');
+  unitLesson.linkedICIds = ['ic_1'];
+  const unitHtml = sandbox.unitLessonViewHtml(unitLesson);
+  assert.ok(unitHtml.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)}">Instructional Components<`), 'the unit lesson\'s view-mode IC heading must carry the tooltip');
+});
+
 test('the per-student IC outcome badge (got_it/taught/needs_review — a DIFFERENT concept from the lesson-level teaching status) is deliberately left untouched by the teaching-status glossary, so it never shows a misleading "students need more practice" tooltip for what is actually a student mastery signal', () => {
   // This documents a scope boundary, not a bug: renderICStudentChips' "Needs review"
   // bucket is a per-student-per-IC outcome (from the Daily Wizard's IC scan step),

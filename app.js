@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.95
+ * THIS FILE IS VERSION: 1.13.96
  * Last updated: 2026-08-04
  * ============================================================
  *
@@ -10,6 +10,20 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.96 - Fix 2 review findings on 1.13.95's jargon glossary:
+ *   (1) PLANNER_STATUS_GLOSSARY.planned said "Scheduled to teach — not yet delivered",
+ *       but teachingStatus and scheduledSlots are independent — a freshly created or
+ *       duplicated lesson is "Planned" with 0 scheduled slots, so the tooltip
+ *       contradicted the "0 slots"/"Not scheduled" indicator right next to it. Reworded
+ *       to state the independence explicitly instead of implying scheduling happened.
+ *   (2) Both view-mode drawers' "Instructional Components" heading (the read-only
+ *       default view for any existing lesson with content) had no IC glossary tooltip
+ *       at all once a lesson actually had linked ICs — only the empty-state branch and
+ *       the ephemeral confidence badges carried one, so the single most common case
+ *       (reopening an already-planned lesson) had zero IC hover target. Fixed by
+ *       putting the tooltip on the heading itself, covering populated and empty alike.
+ *   2 new regression tests, both confirmed to fail against the pre-fix code; all 266
+ *   tests pass.
  * v1.13.95 - UX: plain-language hover tooltips for ClassTracker's internal jargon (IC,
  *   CD, the Strong/Partial/Weak confidence tiers, "slot", and the 5 teaching statuses
  *   Planned/Taught/Partially taught/Needs review/Reteach), wherever they render to a
@@ -174,7 +188,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.95';
+const APP_VERSION = '1.13.96';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -351,7 +365,7 @@ const PLANNER_CONFIDENCE_GLOSSARY = {
 // Keyed by UNIT_TEACHING_STATUSES' own .key strings (see below) so callers pass
 // meta.key straight through with no reformatting.
 const PLANNER_STATUS_GLOSSARY = {
-  'planned': 'Scheduled to teach — not yet delivered.',
+  'planned': 'Not yet delivered — independent of scheduling, so a Planned lesson may or may not have been placed on a day yet.',
   'taught': 'Delivered to the class as planned.',
   'partially-taught': 'Delivered to only part of the class, or only part of the lesson’s content. For a lesson scheduled on multiple days, this is also set automatically once some — but not all — of those days are marked taught.',
   'needs-review': 'Taught, but students need more practice and retrieval to consolidate it — not a fresh lesson, just repeated practice.',
@@ -1962,7 +1976,7 @@ function plannerStandaloneLessonViewHtml(lesson, plannerDays) {
       </div>
 
       <div class="form-group">
-        <label class="form-label">Instructional Components</label>
+        <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Instructional Components</label>
         <div class="planner-selected-ics-view">${plannerSelectedICsViewHtml(lesson)}</div>
       </div>
 
@@ -4591,7 +4605,7 @@ function plannerUnitLessonViewFieldsHtml(lesson) {
       </div>
 
       <div class="form-group">
-        <label class="form-label">Instructional Components</label>
+        <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Instructional Components</label>
         <div class="planner-selected-ics-view">${plannerSelectedICsViewHtml(lesson)}</div>
       </div>
   `;
