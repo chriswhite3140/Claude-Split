@@ -155,6 +155,7 @@ function resetState() {
   st.plannerUi.drawerCollapsed = false;
   st.plannerUi.railSearch = '';
   st.plannerUi.railSubjectFilter = '';
+  st.plannerUi.railGroupsCollapsed = {};
 
   sandbox.unitPlansEnsureUiState();
   st.unitPlansUi.listSearch = '';
@@ -458,6 +459,107 @@ test('plannerRailHandleSearchInput/plannerRailHandleSubjectFilter update state a
   sandbox.plannerRailClearFilters();
   assert.strictEqual(st.plannerUi.railSearch, '', 'clear resets the search field');
   assert.strictEqual(st.plannerUi.railSubjectFilter, '', 'clear resets the subject filter');
+});
+
+// ── Unit lessons rail: per-unit collapsible groups ────────────────────────────────
+console.log('Unit lessons rail collapsible groups');
+
+test('unit rail groups default to expanded on first load (unchanged behaviour), and plannerToggleUnitGroupCollapsed collapses only the toggled unit — its heading and lesson count still show, its lessons hide, other groups are untouched', () => {
+  resetState();
+  const st = getState();
+  st.unitPlans.push({ id: 'unit_2', title: 'Persuasive Writing', subject: 'English', yearLevel: '3', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: ['ul_3'], createdAt: '2026-01-02T00:00:00.000Z' });
+  st.lessonPlans.push(sandbox.normalizeLessonPlan({ id: 'ul_3', title: 'Persuasive intro', subject: 'English', unitId: 'unit_2', teachingStatus: 'planned', linkedICIds: [] }));
+
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), false, 'default collapse state is expanded, matching pre-collapse behaviour');
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions') && html.includes('Equivalent fractions') && html.includes('Persuasive intro'), 'sanity: every group starts expanded');
+
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1');
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true);
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'unit_1 lessons are hidden once its group is collapsed');
+  assert.ok(html.includes('Fractions'), 'the heading itself must stay visible when collapsed');
+  assert.ok(/2 lessons/.test(html), 'the lesson count still shows on a collapsed heading');
+  assert.ok(html.includes('Persuasive intro'), 'unit_2, never toggled, remains expanded and untouched');
+
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1');
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), false);
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions') && html.includes('Equivalent fractions'), 'toggling again re-expands unit_1');
+});
+
+test('plannerToggleUnitGroupCollapsed does a targeted refresh of #planner-unit-rail-body, not a full re-render — same convention as the search/subject filter inputs', () => {
+  resetState();
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1');
+  const bodyEl = documentStub.getElementById('planner-unit-rail-body');
+  assert.ok(!bodyEl.innerHTML.includes('Intro to fractions'), 'the targeted refresh writes the now-collapsed rail body html into its own container');
+  assert.ok(bodyEl.innerHTML.includes('Fractions'), 'the collapsed heading still renders into that same container');
+});
+
+test('a collapsed unit group auto-expands while a search or subject filter is active, so a filter can never hide a match behind a collapsed heading — and the manually-collapsed state is preserved underneath, restored once the filter clears', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1'); // manually collapse Fractions
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true, 'sanity: collapsed with no filter active');
+
+  // Search matching one of unit_1's lessons must force it back open.
+  st.plannerUi.railSearch = 'intro';
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions'), 'a collapsed group must auto-expand to reveal a matching search result');
+  assert.ok(html.includes('disabled'), 'the collapse toggle is disabled while a filter forces the group open, so it cannot fight the filter');
+
+  // Clearing the search must restore the manual collapse — not force every group open.
+  st.plannerUi.railSearch = '';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'unit_1 must return to its manually-collapsed state once the filter clears');
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true, 'the stored manual collapse state itself was never overwritten by the filter override');
+
+  // Same guarantee for the subject filter, independent of search.
+  st.plannerUi.railSubjectFilter = 'Mathematics';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions') && html.includes('Equivalent fractions'), 'a subject filter must also force a collapsed matching group open');
+  st.plannerUi.railSubjectFilter = '';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions'), 'and again returns to collapsed once that filter clears too');
+});
+
+test('unit rail group collapse toggling is UI-only — never mutates state.lessonPlans or state.unitPlans', () => {
+  resetState();
+  const st = getState();
+  const beforeLessons = JSON.stringify(st.lessonPlans);
+  const beforeUnits = JSON.stringify(st.unitPlans);
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1');
+  sandbox.plannerUnitSidebarHtml();
+  assert.strictEqual(JSON.stringify(st.lessonPlans), beforeLessons, 'lessonPlans must be untouched by collapsing a group');
+  assert.strictEqual(JSON.stringify(st.unitPlans), beforeUnits, 'unitPlans must be untouched by collapsing a group');
+});
+
+test('plannerToggleUnitGroupCollapsed re-focuses the toggled group\'s heading after the rail body rebuild, so a keyboard user activating it with Enter/Space is not dropped back to the document (review finding)', () => {
+  resetState();
+  // The stub rail body's querySelector always returns null (no real DOM tree) — stand
+  // in for the heading button a real browser would re-focus, same convention already
+  // used to test plannerToggleICSuggestionGroup's identical focus-restore.
+  const container = documentStub.getElementById('planner-unit-rail-body');
+  const fakeHeading = { focused: false, focus() { this.focused = true; } };
+  const realQuerySelector = container.querySelector;
+  container.querySelector = (selector) => selector === '[data-unit-id="unit_1"]' ? fakeHeading : realQuerySelector(selector);
+
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1');
+
+  assert.ok(fakeHeading.focused, 'the toggled unit group\'s heading should be re-focused after the rail body rebuild, same as plannerToggleICSuggestionGroup already does');
+  container.querySelector = realQuerySelector;
+});
+
+test('each unit group heading carries a data-unit-id attribute matching its unit, so plannerToggleUnitGroupCollapsed\'s focus-restore query can find it in a real DOM', () => {
+  resetState();
+  const html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('data-unit-id="unit_1"'), 'the heading button must expose the unit id for the focus-restore selector to target');
+});
+
+test('.planner-unit-group-count uses the scalable --label-size token, not a fixed px value, so it stays readable under the large-text preference (review finding)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.planner-unit-group-count\s*\{[^}]*\}/)[0];
+  assert.ok(/font-size:\s*var\(--label-size\)/.test(rule), 'the lesson count must scale with --label-size like the sibling heading text (.planner-unit-group-head), not a hardcoded px value');
 });
 
 // ── Unit Plans list view: search + subject filter ────────────────────────────────
