@@ -1751,7 +1751,7 @@ body[data-text-size="large"] {
 }
 .planner-unit-group-count {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--label-size);
   color: var(--text3);
 }
 .planner-unit-pill {

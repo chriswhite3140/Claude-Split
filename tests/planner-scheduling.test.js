@@ -534,6 +534,34 @@ test('unit rail group collapse toggling is UI-only — never mutates state.lesso
   assert.strictEqual(JSON.stringify(st.unitPlans), beforeUnits, 'unitPlans must be untouched by collapsing a group');
 });
 
+test('plannerToggleUnitGroupCollapsed re-focuses the toggled group\'s heading after the rail body rebuild, so a keyboard user activating it with Enter/Space is not dropped back to the document (review finding)', () => {
+  resetState();
+  // The stub rail body's querySelector always returns null (no real DOM tree) — stand
+  // in for the heading button a real browser would re-focus, same convention already
+  // used to test plannerToggleICSuggestionGroup's identical focus-restore.
+  const container = documentStub.getElementById('planner-unit-rail-body');
+  const fakeHeading = { focused: false, focus() { this.focused = true; } };
+  const realQuerySelector = container.querySelector;
+  container.querySelector = (selector) => selector === '[data-unit-id="unit_1"]' ? fakeHeading : realQuerySelector(selector);
+
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1');
+
+  assert.ok(fakeHeading.focused, 'the toggled unit group\'s heading should be re-focused after the rail body rebuild, same as plannerToggleICSuggestionGroup already does');
+  container.querySelector = realQuerySelector;
+});
+
+test('each unit group heading carries a data-unit-id attribute matching its unit, so plannerToggleUnitGroupCollapsed\'s focus-restore query can find it in a real DOM', () => {
+  resetState();
+  const html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('data-unit-id="unit_1"'), 'the heading button must expose the unit id for the focus-restore selector to target');
+});
+
+test('.planner-unit-group-count uses the scalable --label-size token, not a fixed px value, so it stays readable under the large-text preference (review finding)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.planner-unit-group-count\s*\{[^}]*\}/)[0];
+  assert.ok(/font-size:\s*var\(--label-size\)/.test(rule), 'the lesson count must scale with --label-size like the sibling heading text (.planner-unit-group-head), not a hardcoded px value');
+});
+
 // ── Unit Plans list view: search + subject filter ────────────────────────────────
 console.log('Unit Plans list-view search/subject filter');
 
