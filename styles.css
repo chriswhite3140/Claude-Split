@@ -1689,6 +1689,22 @@ body[data-text-size="large"] {
   font-size: var(--helper-size);
   background: var(--surface-alt);
 }
+
+/* Search + subject filter row above the rail body — sits between .card-head and
+   .planner-unit-rail-body, so it must stay flex-shrink: 0 like .card-head (its own
+   flex-column parent, .planner-unit-rail:not(.is-collapsed), would otherwise be free
+   to squeeze it once the rail body's max-height cap kicks in). */
+.planner-unit-rail-filters {
+  flex-shrink: 0;
+  padding: 10px 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.planner-unit-rail-filters .form-input {
+  font-size: 12px;
+  padding: 6px 8px;
+}
 .planner-unit-group {
   display: flex;
   flex-direction: column;
@@ -2736,6 +2752,14 @@ body[data-text-size="large"] {
 .unit-field-sm {
   width: auto;
   max-width: 140px;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.unit-list-search-input {
+  width: auto;
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 240px;
   font-size: 12px;
   padding: 6px 8px;
 }

@@ -2,14 +2,16 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.90
- * Last updated: 2026-07-29
+ * THIS FILE IS VERSION: 1.13.92
+ * Last updated: 2026-08-02
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.92 - Fix a review finding on 1.13.91's Unit lessons rail subject filter: plannerRailFilteredGroups filtered a whole group by its parent unit's own subject field, but a unit lesson's subject is independently editable in the drawer (plannerUnitLessonFieldsHtml) and unitUpdateField never propagates a unit subject change to its existing lessons — so the two can genuinely diverge (e.g. an English lesson living inside a Mathematics unit). The rail already displays lesson.subject in each pill's meta line, so filtering by unit.subject instead was inconsistent with what's actually shown, and could hide a lesson under the filter it truthfully belongs to (or show one under a filter it doesn't). Now filters each lesson by its own subject (alongside the existing per-lesson search match), keeping a group visible with only its matching lessons — identical behaviour to before in the common case where every lesson in a unit shares its unit's subject, and only actually changes anything once a lesson's subject has been edited away from its unit's. 1 new regression test (confirmed to fail against the pre-fix, unit-level filter); all 247 tests pass.
+ * v1.13.91 - Search + subject filter for units, in both places they're listed. Unit Plans list view (renderUnitList): new search input (matches unit title, case-insensitive substring) and subject dropdown in the header, near "+ New Unit" — new unitListFilteredUnits()/unitListBodyHtml() split the list rendering so a non-matching unit is hidden entirely (not just highlighted), and a filter combination matching nothing shows a distinct "No units match" message instead of a blank-looking list. Weekly Planner's Unit lessons rail (plannerUnitSidebarHtml): same search + subject controls added to the rail header, near "Drag onto a day to add a slot" — but search matches lesson title, not unit title, since what a teacher hunts for here is usually a specific lesson; new plannerRailFilteredGroups() keeps a unit group visible (showing only its matching lessons) as long as at least one of its lessons matches the search, while the subject filter excludes a whole group at once (a unit's lessons share one subject). Both search inputs use the same targeted-container-refresh pattern already used by the IC/CD search boxes elsewhere in these two views (plannerHandleICSearchInput/unitHandleCDSearch) rather than a full renderView(), so typing doesn't lose focus on every keystroke; both surfaces get a "Clear filters" control. All filtering is UI-only — new state.unitPlansUi.listSearch/listSubjectFilter and state.plannerUi.railSearch/railSubjectFilter fields drive what renders, never touching state.unitPlans/state.lessonPlans themselves. The Week Board itself and the existing collapse/expand panel behaviour are untouched. 12 new regression tests (11 of 12 confirmed to fail against the pre-fix code — the 12th, a UI-only-never-mutates-state guard, trivially held pre-fix too since no filtering existed to mutate anything); all 246 tests pass. Verified live in a real browser (Playwright): search/subject filtering narrows both lists correctly, the no-match empty states render, and the search inputs keep focus while typing.
  * v1.13.90 - Fix three review findings on 1.13.89's Daily Log Wizard bridge. (1) Codex + Macroscope (duplicate finds): the wizard-launch hook added to plannerSetLessonStatus fired for every transition to 'taught', not just the Week Board checkbox — the Lesson Drawer's own "Mark as taught" button also calls plannerSetLessonStatus('taught') with no lessonId (falling back to the drawer's selectedLessonId), so it was also launching the wizard, contrary to the PR's own documented/tested scope. Now gated on an explicit lessonId being passed — the checkbox's own call pattern — leaving the drawer button's behaviour exactly as it was before this feature existed, matching the same scoping already applied to unitSetLessonTeachingStatus. (2) Macroscope: dlLaunchOrMergeForLesson only ever set a missing dlState.icLessonMap entry, so if a teacher manually deselected an auto-added IC in the wizard's own step 2 UI (dlAddAISuggestedIC) and a later, different lesson's board checkbox re-added that same IC, the stale attribution to the first (now-unrelated) lesson survived — the IC would be saved tagged with the wrong lesson. dlAddAISuggestedIC now deletes the icLessonMap entry alongside the deselection, so a later re-add is correctly (re-)attributed fresh. (3) Macroscope: saveDailyLog read dlState.date/dlState.masteryMap live after its own first await (closeDlModal() at the top removes the modal immediately, well before any network round trip finishes) — so a save left in flight while the teacher checks a different lesson's board checkbox (which reassigns dlState via openDailyLogWizard) could resume and silently write the SECOND session's date/mastery data under the FIRST session's identity, corrupting it. Both fields are now frozen into local snapshots (sessionDate, masteryMapSnapshot) up front, alongside the icScanSnapshot/sessionICs/icLessonMapSnapshot the pre-existing code already froze for the exact same reason — every read inside the function now uses the frozen locals, never live dlState. Confirmed live (Playwright): a slow-fetch save for lesson A, interleaved with lesson B's checkbox being checked mid-flight, still writes A's own date/mastery notes untouched, and B's own in-progress session is equally unaffected once A's save resolves afterward. 3 new/updated regression tests (all 3 confirmed to fail against the pre-fix code); all 234 tests pass.
  * v1.13.89 - Phase 1 of closing the "Daily Wizard is isolated from planned lessons" gap (see CLAUDE.md's Known gaps): checking a lesson's Week Board "mark as taught" checkbox (1.13.87/88) now bridges into the Daily Log Wizard as a side effect, without touching the checkbox's own status-mutation logic at all. Checking (not unchecking) a lesson WITH at least one linked IC calls new dlLaunchOrMergeForLesson(): if no wizard session is open, launches one dated to the actual occurrence (new plannerDateForSlot(weekKey, dayKey) — the specific day that was checked, not always today, since a lesson can be marked taught after the fact) and pre-filled with the lesson's linked ICs; if a session is already open (e.g. a second lesson checked before the first was saved/closed — reachable today only programmatically, since the wizard's own full-viewport backdrop genuinely blocks a real second click through to the board behind it, confirmed live), merges the new ICs in instead (deduped) rather than discarding the in-progress session or opening a second modal. Hooked into the three checkbox-reachable call sites (plannerSetLessonStatus, unitToggleOccurrenceTaught only for a genuine multi-slot occurrence, unitSetSingleOccurrenceTaught) — deliberately NOT the raw unitSetLessonTeachingStatus itself, since the drawer's own manual "Teaching status" dropdown has no specific weekKey/dayKey to date a session to and is a more deliberate editing action than "the checkbox", out of phase 1 scope. A lesson with zero linked ICs never launches anything - the checkbox still just marks it taught, there's nothing to log. New dlState.icLessonMap (icId → lessonId, first-attribution-wins if two lessons happen to share an IC) records which lesson contributed each IC; saveDailyLog now tags every taughtLog (CD-level, via new pure dlDeriveCodeLessonIds - a code can be shared by ICs from different lessons, so first IC in selection order wins that code's attribution; a manually-picked code with no contributing IC stays untagged) and taughtICs (IC-level batch, exact - one lessonId per IC, no ambiguity) record with lessonId, on both the live apiCall success path and the localStorage fallback path. Requires the Apps Script backend to accept and persist a new lessonId column on the TaughtLog/TaughtICs sheets to actually reach Sheets (same class of gap as the existing got_it/needs_review NOTE just above it) - until then it's captured correctly in local state regardless. Unchecking never retroactively touches already-saved records - those are historical. Explicitly deferred to phase 2, not built here: per-lesson-group attendance, visual grouping by lesson in the IC Outcomes step, any multi-lesson navigation UI. 12 new regression tests (all 12 confirmed to fail against the pre-fix code); all 231 tests pass. saveDailyLog's own async apiCall/fetch path can't be safely exercised by the Node test harness (its fetch stub never resolves), so the full save flow - launch, merge, and both the mocked-success and real-failure-fallback save paths, confirming taughtLog/taughtICs end up correctly tagged per-lesson rather than a single session-wide value - was verified live in a real browser (Playwright) instead.
  * v1.13.88 - Fix a review finding on 1.13.87's Week Board taught checkbox: a single-occurrence unit lesson's isTaught display was made to read only lesson.teachingStatus, but plannerUnscheduleSlot deliberately leaves teachingStatus untouched when a slot is removed (documented, pre-existing behaviour) — so a lesson reduced from multi- to single-slot (e.g. a taught Monday occurrence survives after its untaught Wednesday sibling is removed) kept its surviving slot's own taught: true flag while teachingStatus stayed stale at "partially-taught", and the card would show unchecked/unstyled despite that occurrence still genuinely being taught. Fixed on the read side by reusing the existing unitLessonIsEffectivelyTaught helper for the single-slot case instead of reading teachingStatus alone — it already encodes "teachingStatus is taught OR any slot is individually flagged", so it correctly honors a surviving slot's own flag exactly like the pre-1.13.87 code always did. Fixed on the write side with a new unitSetSingleOccurrenceTaught(lessonId, weekKey, dayKey, taught), the single-occurrence checkbox's new call target: it still calls unitSetLessonTeachingStatus (unchanged) for the status, then reconciles that one slot's own flag to match via the existing unitToggleOccurrenceTaught if it's out of sync — without this, unchecking a lesson in the stale-status scenario above would leave the leftover taught: true slot flag in place, and unitLessonIsEffectivelyTaught would keep reading it as taught on the very next render regardless of the checkbox click. Neither fix touches plannerUnscheduleSlot itself, unitToggleOccurrenceTaught's own logic, or the multi-slot checkbox path, all confirmed unmodified. 2 new/updated regression tests (both confirmed to fail against the pre-fix code, i.e. 1.13.87 as first pushed); all 218 tests pass.
@@ -132,7 +134,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.90';
+const APP_VERSION = '1.13.92';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1327,7 +1329,8 @@ function renderPlanner(main) {
               <button class="planner-panel-collapse-toggle" type="button" title="Collapse" aria-label="Collapse Unit lessons panel" onclick="plannerToggleRailCollapsed()">‹</button>
             </div>
           </div>
-          <div class="planner-unit-rail-body">${plannerUnitSidebarHtml()}</div>
+          ${plannerRailFiltersHtml()}
+          <div class="planner-unit-rail-body" id="planner-unit-rail-body">${plannerUnitSidebarHtml()}</div>
         `}
       </aside>
       <section class="card planner-shell-board">
@@ -1607,16 +1610,87 @@ function plannerUnitOccurrenceCardHtml(lesson, weekKey, dayKey) {
 // a lesson already has (each card shows its current slot count), so drag-to-schedule
 // works for the 2nd/3rd/... slot too — not just the first. Reuses the standalone drag
 // start/end handlers; plannerDropLessonToDay branches on unitId.
+// Filters unit-lesson groups for the rail's search/subject controls. Both search
+// (lesson title, not unit title — a teacher hunting here is usually after a specific
+// lesson) and subject filter by each LESSON's own subject, not the parent unit's: a
+// unit lesson's subject is independently editable in the drawer and unitUpdateField
+// never propagates a unit subject change to its existing lessons, so the two can
+// genuinely diverge (review finding on the original unit-level subject filter). A
+// group with at least one matching lesson stays, showing only its matching lessons,
+// not every lesson in the unit. UI-only — never touches state.lessonPlans/
+// state.unitPlans.
+function plannerRailFilteredGroups(groups) {
+  const search = (state.plannerUi.railSearch || '').trim().toLowerCase();
+  const subject = state.plannerUi.railSubjectFilter || '';
+  return groups
+    .map(g => ({
+      unit: g.unit,
+      lessons: g.lessons.filter(l => {
+        if (subject && (l.subject || '') !== subject) return false;
+        if (search && !(l.title || '').toLowerCase().includes(search)) return false;
+        return true;
+      }),
+    }))
+    .filter(g => g.lessons.length);
+}
+
+function plannerRailFiltersHtml() {
+  return `
+    <div class="planner-unit-rail-filters">
+      <input class="form-input" type="text" placeholder="Search lessons" aria-label="Search unit lessons by title"
+        value="${escapeHtml(state.plannerUi.railSearch || '')}" oninput="plannerRailHandleSearchInput(this.value)">
+      <div style="display:flex;gap:6px;align-items:center">
+        <select class="form-input" aria-label="Filter unit lessons by subject" style="flex:1" onchange="plannerRailHandleSubjectFilter(this.value)">
+          <option value="">All subjects</option>
+          ${PLANNER_SUBJECTS.map(s => `<option value="${s}" ${state.plannerUi.railSubjectFilter === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+        <button class="btn" type="button" title="Clear filters" onclick="plannerRailClearFilters()">✕</button>
+      </div>
+    </div>
+  `;
+}
+
+// Targeted refresh used by the search input's oninput so typing doesn't lose focus —
+// same pattern as plannerHandleICSearchInput/unitHandleCDSearch: only the rail body
+// is replaced, not the whole view.
+function plannerRailRefreshBody() {
+  const body = document.getElementById('planner-unit-rail-body');
+  if (body) body.innerHTML = plannerUnitSidebarHtml();
+}
+
+function plannerRailHandleSearchInput(value) {
+  plannerEnsureUiState();
+  state.plannerUi.railSearch = value;
+  plannerRailRefreshBody();
+}
+
+function plannerRailHandleSubjectFilter(value) {
+  plannerEnsureUiState();
+  state.plannerUi.railSubjectFilter = value;
+  plannerRailRefreshBody();
+}
+
+function plannerRailClearFilters() {
+  plannerEnsureUiState();
+  state.plannerUi.railSearch = '';
+  state.plannerUi.railSubjectFilter = '';
+  renderView();
+}
+
 function plannerUnitSidebarHtml() {
   const units = state.unitPlans || [];
   if (!units.length) {
     return `<div class="planner-unit-rail-empty">No units yet. Create units in <strong>Unit Plans</strong> to schedule their lessons onto the week.</div>`;
   }
-  const groups = units
+  const allGroups = units
     .map(unit => ({ unit, lessons: unitGetLessons(unit) }))
     .filter(g => g.lessons.length);
-  if (!groups.length) {
+  if (!allGroups.length) {
     return `<div class="planner-unit-rail-empty">No unit lessons yet. Add lessons to a unit in <strong>Unit Plans</strong> to schedule them here.</div>`;
+  }
+  const groups = plannerRailFilteredGroups(allGroups);
+  if (!groups.length) {
+    return `<div class="planner-unit-rail-empty">No unit lessons match your search or filter.</div>`;
   }
   return groups.map(({ unit, lessons }) => `
     <div class="planner-unit-group">
@@ -2258,6 +2332,11 @@ function plannerEnsureUiState() {
   // both panels expanded regardless of how they were left last time.
   if (typeof state.plannerUi.railCollapsed !== 'boolean') state.plannerUi.railCollapsed = false;
   if (typeof state.plannerUi.drawerCollapsed !== 'boolean') state.plannerUi.drawerCollapsed = false;
+  // Unit lessons rail search/subject filter — UI-only, never touches state.lessonPlans/
+  // state.unitPlans, purely controls what plannerUnitSidebarHtml shows (see
+  // plannerRailFilteredGroups). Search matches lesson title, not unit title — see task.
+  if (typeof state.plannerUi.railSearch !== 'string') state.plannerUi.railSearch = '';
+  if (typeof state.plannerUi.railSubjectFilter !== 'string') state.plannerUi.railSubjectFilter = '';
 }
 
 function plannerToggleRailCollapsed() {
@@ -3792,6 +3871,10 @@ function unitPlansEnsureUiState() {
   if (typeof state.unitPlansUi.cdSearch !== 'string') state.unitPlansUi.cdSearch = '';
   if (typeof state.unitPlansUi.cdShowAllYears !== 'boolean') state.unitPlansUi.cdShowAllYears = false;
   if (typeof state.unitPlansUi.draggingLessonId === 'undefined') state.unitPlansUi.draggingLessonId = null;
+  // Unit Plans list-view search/subject filter — UI-only, never touches state.unitPlans
+  // itself, purely controls what renderUnitList shows (see unitListFilteredUnits).
+  if (typeof state.unitPlansUi.listSearch !== 'string') state.unitPlansUi.listSearch = '';
+  if (typeof state.unitPlansUi.listSubjectFilter !== 'string') state.unitPlansUi.listSubjectFilter = '';
   if (!Array.isArray(state.unitPlans)) state.unitPlans = [];
 }
 
@@ -4059,10 +4142,38 @@ function unitUpdateField(unitId, field, value) {
 }
 
 // ── LIST VIEW ──
-function renderUnitList(main) {
-  const units = [...state.unitPlans].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+// Search matches unit title (case-insensitive substring); subject filter is an exact
+// match against unit.subject. Both combine with AND. UI-only — never touches
+// state.unitPlans, purely controls what unitListBodyHtml/renderUnitList show.
+function unitListFilteredUnits(units) {
+  const search = (state.unitPlansUi.listSearch || '').trim().toLowerCase();
+  const subject = state.unitPlansUi.listSubjectFilter || '';
+  return units.filter(unit => {
+    if (subject && unit.subject !== subject) return false;
+    if (search && !(unit.title || '').toLowerCase().includes(search)) return false;
+    return true;
+  });
+}
 
-  const cards = units.map(unit => {
+// The #unit-list-body content: the unit grid, the "no units yet" empty state, or —
+// when a search/subject filter combination matches nothing — a distinct "no units
+// match" message, so a filtered-to-empty list doesn't look like a broken empty list.
+function unitListBodyHtml(units) {
+  if (units.length === 0) {
+    return `<div class="card" style="padding:32px;text-align:center">
+             <div style="font-size:15px;font-weight:600;margin-bottom:6px">No units yet</div>
+             <div style="font-size:13px;color:var(--text3);margin-bottom:16px">Create your first unit to start grouping lessons into a teaching sequence.</div>
+             <button class="btn btn-primary" type="button" onclick="unitCreateNew()">+ New Unit</button>
+           </div>`;
+  }
+  const filtered = unitListFilteredUnits(units);
+  if (filtered.length === 0) {
+    return `<div class="card" style="padding:32px;text-align:center">
+             <div style="font-size:15px;font-weight:600;margin-bottom:6px">No units match</div>
+             <div style="font-size:13px;color:var(--text3)">Try a different search term or subject filter.</div>
+           </div>`;
+  }
+  const cards = filtered.map(unit => {
     const stats = unitLessonStats(unit);
     const pct = stats.total ? Math.round((stats.taught / stats.total) * 100) : 0;
     const metaBits = [unit.subject, unit.yearLevel, unit.term].filter(Boolean).join(' · ');
@@ -4086,6 +4197,43 @@ function renderUnitList(main) {
       </div>
     `;
   }).join('');
+  return `<div class="unit-card-grid">${cards}</div>`;
+}
+
+function unitListSortedUnits() {
+  return [...state.unitPlans].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+// Targeted refresh used by the search input's oninput so typing doesn't lose focus —
+// same pattern as unitHandleCDSearch/plannerHandleICSearchInput: only the results
+// container is replaced, not the whole view.
+function unitListRefreshBody() {
+  const body = document.getElementById('unit-list-body');
+  if (body) body.innerHTML = unitListBodyHtml(unitListSortedUnits());
+}
+
+function unitListHandleSearchInput(value) {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.listSearch = value;
+  unitListRefreshBody();
+}
+
+function unitListHandleSubjectFilter(value) {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.listSubjectFilter = value;
+  unitListRefreshBody();
+}
+
+function unitListClearFilters() {
+  unitPlansEnsureUiState();
+  state.unitPlansUi.listSearch = '';
+  state.unitPlansUi.listSubjectFilter = '';
+  renderView();
+}
+
+function renderUnitList(main) {
+  unitPlansEnsureUiState();
+  const units = unitListSortedUnits();
 
   main.innerHTML = `
     <div class="topbar" style="padding:14px 24px">
@@ -4094,18 +4242,21 @@ function renderUnitList(main) {
         <div style="font-size:12px;color:var(--text3);margin-top:2px">Group lessons into teaching units</div>
         <div class="drive-sync-indicator">${driveSyncIndicatorHtml()}</div>
       </div>
-      <div class="topbar-actions">
+      <div class="topbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${units.length ? `
+        <input class="form-input unit-list-search-input" type="text" placeholder="Search units by title" aria-label="Search units by title"
+          value="${escapeHtml(state.unitPlansUi.listSearch || '')}" oninput="unitListHandleSearchInput(this.value)">
+        <select class="form-input unit-field-sm" aria-label="Filter units by subject" onchange="unitListHandleSubjectFilter(this.value)">
+          <option value="">All subjects</option>
+          ${PLANNER_SUBJECTS.map(s => `<option value="${s}" ${state.unitPlansUi.listSubjectFilter === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+        <button class="btn" type="button" onclick="unitListClearFilters()">Clear filters</button>
+        ` : ''}
         <button class="btn btn-primary" type="button" onclick="unitCreateNew()">+ New Unit</button>
       </div>
     </div>
-    <div class="content">
-      ${units.length === 0
-        ? `<div class="card" style="padding:32px;text-align:center">
-             <div style="font-size:15px;font-weight:600;margin-bottom:6px">No units yet</div>
-             <div style="font-size:13px;color:var(--text3);margin-bottom:16px">Create your first unit to start grouping lessons into a teaching sequence.</div>
-             <button class="btn btn-primary" type="button" onclick="unitCreateNew()">+ New Unit</button>
-           </div>`
-        : `<div class="unit-card-grid">${cards}</div>`}
+    <div class="content" id="unit-list-body">
+      ${unitListBodyHtml(units)}
     </div>
   `;
 }

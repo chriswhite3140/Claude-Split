@@ -153,6 +153,12 @@ function resetState() {
   st.plannerUi.openResourcePopoverCardKey = null;
   st.plannerUi.railCollapsed = false;
   st.plannerUi.drawerCollapsed = false;
+  st.plannerUi.railSearch = '';
+  st.plannerUi.railSubjectFilter = '';
+
+  sandbox.unitPlansEnsureUiState();
+  st.unitPlansUi.listSearch = '';
+  st.unitPlansUi.listSubjectFilter = '';
 }
 
 function lessonById(id) { return getState().lessonPlans.find(l => l.id === id); }
@@ -341,6 +347,185 @@ test('rail empty state shows only when no unit has any lessons', () => {
   st.unitPlans = [];
   html = sandbox.plannerUnitSidebarHtml();
   assert.ok(/no units yet/i.test(html), 'empty state should show when there are no units');
+});
+
+// ── Unit lessons rail: search + subject filter ───────────────────────────────────
+console.log('Unit lessons rail search/subject filter');
+
+test('unit rail search matches lesson title, hiding only the non-matching lesson(s) within an otherwise-matching unit group', () => {
+  resetState();
+  const st = getState();
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions') && html.includes('Equivalent fractions'), 'sanity: both lessons show with no filter');
+
+  st.plannerUi.railSearch = 'intro';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions'), 'the matching lesson still shows');
+  assert.ok(!html.includes('Equivalent fractions'), 'the non-matching lesson in the SAME unit group is hidden, not the whole group');
+  assert.ok(html.includes('Fractions'), 'the unit group header still shows since at least one of its lessons matched');
+});
+
+test('unit rail search is case-insensitive on lesson title', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.railSearch = 'INTRO'; // uppercase, should still match "Intro to fractions" (lowercase "intro")
+  const html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions'), 'search must be case-insensitive');
+  assert.ok(!html.includes('Equivalent fractions'), 'sanity: the other lesson still does not match');
+});
+
+test('unit rail search matches lesson title only, not unit title — a term found only in the unit title matches no lessons', () => {
+  resetState();
+  const st = getState();
+  // Rename the unit to a term that appears in neither lesson's title (both lesson
+  // titles already happen to contain "fractions", so the unit's default fixture
+  // title can't isolate this case on its own).
+  st.unitPlans.find(u => u.id === 'unit_1').title = 'Numeracy Block One';
+  st.plannerUi.railSearch = 'numeracy';
+  const html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'a term matching only the unit title (not any lesson title) must show nothing — search is lesson-title-only per the task');
+  assert.ok(/no unit lessons match/i.test(html), 'the no-match empty state should show instead');
+});
+
+test('unit rail subject filter hides an entire unit group even if one of its lessons would otherwise match the search', () => {
+  resetState();
+  const st = getState();
+  st.unitPlans.push({ id: 'unit_2', title: 'Persuasive Writing', subject: 'English', yearLevel: '3', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: ['ul_3'], createdAt: '2026-01-02T00:00:00.000Z' });
+  st.lessonPlans.push(sandbox.normalizeLessonPlan({ id: 'ul_3', title: 'Persuasive intro', subject: 'English', unitId: 'unit_2', teachingStatus: 'planned', linkedICIds: [] }));
+
+  st.plannerUi.railSubjectFilter = 'Mathematics';
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions'), 'Mathematics unit lessons still show');
+  assert.ok(!html.includes('Persuasive intro'), 'the English unit group is excluded entirely by the subject filter');
+
+  st.plannerUi.railSubjectFilter = 'English';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'the Mathematics unit group is now excluded entirely');
+  assert.ok(html.includes('Persuasive intro'), 'the English unit lesson shows');
+});
+
+test('unit rail search and subject filter combine with AND', () => {
+  resetState();
+  const st = getState();
+  st.plannerUi.railSubjectFilter = 'Mathematics';
+  st.plannerUi.railSearch = 'equivalent';
+  const html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions'), 'a lesson matching the subject but not the search stays hidden');
+  assert.ok(html.includes('Equivalent fractions'), 'a lesson matching both search and subject shows');
+});
+
+test('unit rail subject filter matches each lesson\'s OWN subject, not its parent unit\'s — a lesson subject can genuinely diverge since it\'s independently editable and unitUpdateField never propagates to existing lessons', () => {
+  resetState();
+  const st = getState();
+  // ul_2 ("Equivalent fractions") is edited independently to a different subject than
+  // its parent unit_1 (Mathematics) — a supported, real state, not a data-integrity bug.
+  st.lessonPlans.find(l => l.id === 'ul_2').subject = 'English';
+
+  st.plannerUi.railSubjectFilter = 'English';
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Equivalent fractions'), 'the lesson\'s own (English) subject must be honoured, even though its unit is Mathematics');
+  assert.ok(!html.includes('Intro to fractions'), 'the sibling lesson, still genuinely Mathematics, must not show under the English filter');
+
+  st.plannerUi.railSubjectFilter = 'Mathematics';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(html.includes('Intro to fractions'), 'the still-Mathematics sibling lesson shows');
+  assert.ok(!html.includes('Equivalent fractions'), 'the now-English lesson must not show under the Mathematics filter just because its unit is Mathematics');
+});
+
+test('unit rail filtering is UI-only — never mutates state.lessonPlans or state.unitPlans', () => {
+  resetState();
+  const st = getState();
+  const beforeLessons = JSON.stringify(st.lessonPlans);
+  const beforeUnits = JSON.stringify(st.unitPlans);
+  st.plannerUi.railSearch = 'intro';
+  st.plannerUi.railSubjectFilter = 'Mathematics';
+  sandbox.plannerUnitSidebarHtml();
+  assert.strictEqual(JSON.stringify(st.lessonPlans), beforeLessons, 'lessonPlans must be untouched by filtering');
+  assert.strictEqual(JSON.stringify(st.unitPlans), beforeUnits, 'unitPlans must be untouched by filtering');
+});
+
+test('plannerRailHandleSearchInput/plannerRailHandleSubjectFilter update state and refresh only the #planner-unit-rail-body container (not a full re-render), and plannerRailClearFilters resets both fields', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerRailHandleSearchInput('intro');
+  assert.strictEqual(st.plannerUi.railSearch, 'intro');
+  const bodyEl = documentStub.getElementById('planner-unit-rail-body');
+  assert.ok(bodyEl.innerHTML.includes('Intro to fractions') && !bodyEl.innerHTML.includes('Equivalent fractions'), 'the targeted refresh writes the filtered rail body html into its own container');
+
+  sandbox.plannerRailHandleSubjectFilter('English');
+  assert.strictEqual(st.plannerUi.railSubjectFilter, 'English');
+
+  sandbox.plannerRailClearFilters();
+  assert.strictEqual(st.plannerUi.railSearch, '', 'clear resets the search field');
+  assert.strictEqual(st.plannerUi.railSubjectFilter, '', 'clear resets the subject filter');
+});
+
+// ── Unit Plans list view: search + subject filter ────────────────────────────────
+console.log('Unit Plans list-view search/subject filter');
+
+test('unitListFilteredUnits matches unit title case-insensitively and drops non-matching units entirely', () => {
+  resetState();
+  const st = getState();
+  st.unitPlans.push({ id: 'unit_2', title: 'Persuasive Writing', subject: 'English', yearLevel: '3', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: [], createdAt: '2026-01-02T00:00:00.000Z' });
+
+  st.unitPlansUi.listSearch = 'fract';
+  let filtered = sandbox.unitListFilteredUnits(st.unitPlans);
+  eqJson(filtered.map(u => u.id), ['unit_1']);
+
+  st.unitPlansUi.listSearch = 'FRACTIONS'; // case-insensitive
+  filtered = sandbox.unitListFilteredUnits(st.unitPlans);
+  eqJson(filtered.map(u => u.id), ['unit_1']);
+});
+
+test('unitListFilteredUnits subject filter is an exact match and combines with search via AND', () => {
+  resetState();
+  const st = getState();
+  // Same search term ("fractions") matches BOTH units by title; the subject filter narrows to one.
+  st.unitPlans.push({ id: 'unit_2', title: 'Fractions of speech', subject: 'English', yearLevel: '3', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: [], createdAt: '2026-01-02T00:00:00.000Z' });
+
+  st.unitPlansUi.listSearch = 'fractions';
+  st.unitPlansUi.listSubjectFilter = 'English';
+  const filtered = sandbox.unitListFilteredUnits(st.unitPlans);
+  eqJson(filtered.map(u => u.id), ['unit_2']);
+});
+
+test('unitListBodyHtml shows a distinct "no units match" empty state when a filter matches nothing, and never mutates state.unitPlans', () => {
+  resetState();
+  const st = getState();
+  st.unitPlansUi.listSearch = 'this unit does not exist anywhere';
+  const before = JSON.stringify(st.unitPlans);
+  const html = sandbox.unitListBodyHtml(st.unitPlans);
+  assert.ok(/no units match/i.test(html), 'a distinct no-match message should show, not a blank/broken-looking list');
+  assert.ok(!html.includes('unit-card-grid'), 'the card grid itself must not render when nothing matches');
+  assert.strictEqual(JSON.stringify(st.unitPlans), before, 'filtering must never mutate state.unitPlans');
+});
+
+test('unitListBodyHtml still shows the original "No units yet" empty state when there truly are no units (distinct from the filtered-to-empty message)', () => {
+  resetState();
+  const st = getState();
+  st.unitPlans = [];
+  const html = sandbox.unitListBodyHtml(st.unitPlans);
+  assert.ok(/no units yet/i.test(html));
+  assert.ok(!/no units match/i.test(html));
+});
+
+test('unitListHandleSearchInput/unitListHandleSubjectFilter update state and refresh only #unit-list-body, and unitListClearFilters resets both fields', () => {
+  resetState();
+  const st = getState();
+  st.unitPlans.push({ id: 'unit_2', title: 'Persuasive Writing', subject: 'English', yearLevel: '3', term: '', linkedCDIds: [], assessmentNotes: '', lessonIds: [], createdAt: '2026-01-02T00:00:00.000Z' });
+
+  sandbox.unitListHandleSearchInput('fract');
+  assert.strictEqual(st.unitPlansUi.listSearch, 'fract');
+  const bodyEl = documentStub.getElementById('unit-list-body');
+  assert.ok(bodyEl.innerHTML.includes('unit-card-grid'), 'the refreshed body should render the filtered grid');
+  assert.ok(!bodyEl.innerHTML.includes('Persuasive Writing'), 'the non-matching unit is filtered out of the refreshed body');
+
+  sandbox.unitListHandleSubjectFilter('English');
+  assert.strictEqual(st.unitPlansUi.listSubjectFilter, 'English');
+
+  sandbox.unitListClearFilters();
+  assert.strictEqual(st.unitPlansUi.listSearch, '', 'clear resets the search field');
+  assert.strictEqual(st.unitPlansUi.listSubjectFilter, '', 'clear resets the subject filter');
 });
 
 test('malformed scheduledSlots entries do not crash render or normalize', () => {
