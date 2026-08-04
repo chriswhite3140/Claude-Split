@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.94
+ * THIS FILE IS VERSION: 1.13.96
  * Last updated: 2026-08-04
  * ============================================================
  *
@@ -10,6 +10,48 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.96 - Fix 2 review findings on 1.13.95's jargon glossary:
+ *   (1) PLANNER_STATUS_GLOSSARY.planned said "Scheduled to teach — not yet delivered",
+ *       but teachingStatus and scheduledSlots are independent — a freshly created or
+ *       duplicated lesson is "Planned" with 0 scheduled slots, so the tooltip
+ *       contradicted the "0 slots"/"Not scheduled" indicator right next to it. Reworded
+ *       to state the independence explicitly instead of implying scheduling happened.
+ *   (2) Both view-mode drawers' "Instructional Components" heading (the read-only
+ *       default view for any existing lesson with content) had no IC glossary tooltip
+ *       at all once a lesson actually had linked ICs — only the empty-state branch and
+ *       the ephemeral confidence badges carried one, so the single most common case
+ *       (reopening an already-planned lesson) had zero IC hover target. Fixed by
+ *       putting the tooltip on the heading itself, covering populated and empty alike.
+ *   2 new regression tests, both confirmed to fail against the pre-fix code; all 266
+ *   tests pass.
+ * v1.13.95 - UX: plain-language hover tooltips for ClassTracker's internal jargon (IC,
+ *   CD, the Strong/Partial/Weak confidence tiers, "slot", and the 5 teaching statuses
+ *   Planned/Taught/Partially taught/Needs review/Reteach), wherever they render to a
+ *   teacher — not just the Weekly Planner rail. New PLANNER_GLOSSARY/
+ *   PLANNER_CONFIDENCE_GLOSSARY/PLANNER_STATUS_GLOSSARY tables + a shared
+ *   glossaryTitle(table, key) lookup, so each term's wording lives in exactly one
+ *   place. IC and slot definitions are grounded in docs/IC-FRAMEWORK-SPEC.md and the
+ *   actual scheduling/scoring logic; "Needs review" (students need more practice and
+ *   retrieval, not a fresh lesson) vs "Reteach" (the concept needs to be taught again,
+ *   usually more briefly) reflect explicit product direction, since nothing in the
+ *   code itself encoded that distinction. Applied via title="..." attributes only —
+ *   purely additive, no visible copy, layout, or interaction changes — across the
+ *   Weekly Planner rail and drawer, Unit Plans' lesson list and drawer, the shared
+ *   unitTeachingStatusBadgeHtml/unitLessonStatusBadgeHtml status-badge renderer (so it
+ *   propagates to every screen that calls it), the Teaching status dropdown's own
+ *   options, Curriculum Codes' descriptor detail popover, Coverage Gaps (IC
+ *   expand/collapse controls, per-descriptor IC rows), Bulk Assess's "% ICs" column
+ *   badge and 80%-mastery-gate banner, and the Daily Log Wizard's IC panels/summaries.
+ *   Deliberately left untouched: the per-student IC outcome badges (got_it/taught/
+ *   needs_review from the Daily Wizard's IC scan step) — despite sharing the words
+ *   "needs review", that's a different concept (a student's own mastery signal, not a
+ *   lesson's teaching status) and would be actively misleading if tagged with the
+ *   lesson-level definition. 13 new regression tests; the whole suite fails to even
+ *   load against the pre-fix code (ReferenceError on the new glossary constants),
+ *   confirming the tests exercise real, necessary code. All 264 tests pass. Verified
+ *   live in a real browser (Playwright): every tooltip inspected — rail IC/slot
+ *   badges, drawer status badge, IC label, all 5 status-dropdown options — carries its
+ *   correct glossary text, with no layout regressions.
  * v1.13.94 - Fix 2 review findings on 1.13.93's collapsible Unit lessons rail groups:
  *   (1) plannerToggleUnitGroupCollapsed's rail-body rebuild dropped keyboard focus back
  *       to the document on every expand/collapse, since it destroys and replaces the
@@ -146,7 +188,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.94';
+const APP_VERSION = '1.13.96';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -300,6 +342,43 @@ const YLM = {
 // yields ['1','2','3','4','5','6','F'], putting Foundation last instead of first.
 const YEAR_LEVEL_ORDER = ['F', '1', '2', '3', '4', '5', '6'];
 const PLANNER_SUBJECTS = ['English','Mathematics','Science','HASS','The Arts','Technologies','Health & PE','Languages'];
+
+// Plain-language explanations for ClassTracker's internal jargon (IC/CD/confidence
+// tiers/slot/teaching status), rendered as native hover tooltips wherever the term
+// shows up to a teacher — see glossaryTitle() below for how these get attached. One
+// shared source per concept so the wording only ever needs to change in one place,
+// not at every render site. IC and slot are grounded in docs/IC-FRAMEWORK-SPEC.md and
+// the actual scheduling/scoring logic respectively (plannerConfidenceTier,
+// plannerScheduleUnitLesson); "Needs review" vs "Reteach" reflect explicit product
+// direction (students need more practice vs the concept needs re-teaching), since
+// nothing in the code itself encodes that distinction.
+const PLANNER_GLOSSARY = {
+  ic: 'IC = Instructional Component — a single, specific, observable skill (e.g. ‘Student can rename a 3-digit number two ways’). Lessons link 1–3 ICs; student mastery is tracked per IC, not per lesson.',
+  cd: 'CD = Curriculum Descriptor — an official Australian Curriculum v9 content descriptor (e.g. AC9M3N01). ICs are the specific, teachable skills that sit underneath one CD.',
+  slot: 'A day this lesson is scheduled to be taught on. A lesson can have more than one slot if it’s taught across several days.',
+};
+const PLANNER_CONFIDENCE_GLOSSARY = {
+  strong: 'Strong match — this skill’s wording closely matches what you typed as the lesson’s intention.',
+  partial: 'Partial match — some overlap with what you typed, but check it’s the right skill before picking it.',
+  weak: 'Weak match — a loose guess based on limited overlap with what you typed. Check carefully before picking it.',
+};
+// Keyed by UNIT_TEACHING_STATUSES' own .key strings (see below) so callers pass
+// meta.key straight through with no reformatting.
+const PLANNER_STATUS_GLOSSARY = {
+  'planned': 'Not yet delivered — independent of scheduling, so a Planned lesson may or may not have been placed on a day yet.',
+  'taught': 'Delivered to the class as planned.',
+  'partially-taught': 'Delivered to only part of the class, or only part of the lesson’s content. For a lesson scheduled on multiple days, this is also set automatically once some — but not all — of those days are marked taught.',
+  'needs-review': 'Taught, but students need more practice and retrieval to consolidate it — not a fresh lesson, just repeated practice.',
+  'reteach': 'The concept needs to be taught again — usually as a shorter lesson than the original.',
+};
+// Looks up a glossary entry as an HTML-safe title attribute value, e.g.
+// glossaryTitle(PLANNER_GLOSSARY, 'ic') or glossaryTitle(PLANNER_STATUS_GLOSSARY, meta.key).
+// Returns '' for an unknown key rather than throwing, so a render site is never broken
+// by a typo’d or since-renamed key — it just silently loses that one tooltip.
+function glossaryTitle(table, key) {
+  return escapeHtml((table && table[key]) || '');
+}
+
 function subjectCol(subj)   { return (SUBJECT_COLOURS[subj] || {col:'var(--blue)'}).col; }
 function subjectBg(subj)    { return (SUBJECT_COLOURS[subj] || {bg:'var(--surface-alt)'}).bg; }
 function subjectShort(subj) {
@@ -1449,8 +1528,8 @@ function plannerLessonCardHtml(lesson) {
             onclick="event.stopPropagation()"
             onchange="event.stopPropagation();plannerSetLessonStatus(this.checked ? 'taught' : 'planned', '${plannerJsStr(lesson.id)}')"
             onkeydown="event.stopPropagation()">
-          <span class="planner-status-pill ${isTaught ? 'is-taught' : ''}">${isTaught ? 'Taught' : 'Planned'}</span>
-          ${incomplete ? `<span class="planner-status-pill is-incomplete">Needs IC</span>` : ''}
+          <span class="planner-status-pill ${isTaught ? 'is-taught' : ''}" title="${isTaught ? glossaryTitle(PLANNER_STATUS_GLOSSARY, 'taught') : glossaryTitle(PLANNER_STATUS_GLOSSARY, 'planned')}">${isTaught ? 'Taught' : 'Planned'}</span>
+          ${incomplete ? `<span class="planner-status-pill is-incomplete" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Needs IC</span>` : ''}
           ${plannerResourceIndicatorHtml(lesson, lesson.id + '::card')}
         </div>
       </div>
@@ -1775,10 +1854,10 @@ function plannerUnitSidebarLessonHtml(lesson) {
       <span class="planner-unit-drag" aria-hidden="true">⠿</span>
       <div class="planner-unit-pill-main">
         <div class="planner-unit-pill-title" title="${escapeHtml(lesson.title || 'Untitled lesson')}">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
-        <div class="planner-unit-pill-meta">${escapeHtml(lesson.subject || 'No subject')} · ${icCount} IC${icCount === 1 ? '' : 's'}</div>
+        <div class="planner-unit-pill-meta">${escapeHtml(lesson.subject || 'No subject')} · <span title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">${icCount} IC${icCount === 1 ? '' : 's'}</span></div>
       </div>
       ${plannerResourceIndicatorHtml(lesson, lesson.id + '::sidebar')}
-      <span class="planner-unit-slot-count ${slotCount ? 'is-scheduled' : ''}" title="Scheduled on ${slotCount} day${slotCount === 1 ? '' : 's'}">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
+      <span class="planner-unit-slot-count ${slotCount ? 'is-scheduled' : ''}" title="${glossaryTitle(PLANNER_GLOSSARY, 'slot')} (Scheduled on ${slotCount} day${slotCount === 1 ? '' : 's'})">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
     </div>
   `;
 }
@@ -1845,7 +1924,7 @@ function plannerStandaloneLessonEditHtml(lesson, plannerDays) {
       </div>
 
       <div class="form-group">
-        <label class="form-label">Instructional Components (1–3) · ${icCount}/3 selected</label>
+        <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Instructional Components (1–3) · ${icCount}/3 selected</label>
         ${icCount === 0 ? `<div class="planner-incomplete-note">This lesson is incomplete — add at least one IC before it can be marked taught.</div>` : ''}
         <div class="planner-selected-ics">${plannerSelectedICsHtml(lesson)}</div>
         <div class="planner-ic-controls">
@@ -1897,7 +1976,7 @@ function plannerStandaloneLessonViewHtml(lesson, plannerDays) {
       </div>
 
       <div class="form-group">
-        <label class="form-label">Instructional Components</label>
+        <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Instructional Components</label>
         <div class="planner-selected-ics-view">${plannerSelectedICsViewHtml(lesson)}</div>
       </div>
 
@@ -1923,7 +2002,7 @@ function plannerUnitLessonEditHtml(lesson) {
       <div class="planner-unit-context">
         <div class="planner-unit-context-title">Unit: ${escapeHtml(unit.title || 'Untitled unit')}</div>
         <div class="form-group">
-          <label class="form-label">Linked curriculum descriptors</label>
+          <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'cd')}">Linked curriculum descriptors</label>
           <div id="unit-cd-panel">${unitCDPanelHtml(unit)}</div>
         </div>
         <div class="form-group" style="margin-bottom:0">
@@ -1961,7 +2040,7 @@ function unitLessonViewHtml(lesson) {
 
 function plannerSelectedICsHtml(lesson) {
   const ids = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : [];
-  if (!ids.length) return `<div style="font-size:12px;color:var(--text3)">No ICs linked yet.</div>`;
+  if (!ids.length) return `<div style="font-size:12px;color:var(--text3)" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">No ICs linked yet.</div>`;
   return ids.map(id => {
     const ic = state.instructionalComponents.find(x => x.id === id);
     const label = ic ? (ic.name || ic.id) : id;
@@ -1982,7 +2061,7 @@ function plannerSelectedICsHtml(lesson) {
 // normalises against only the ICs actually rendered there.
 function plannerSelectedICsViewHtml(lesson) {
   const ids = Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : [];
-  if (!ids.length) return `<div style="font-size:12px;color:var(--text3)">No ICs linked yet.</div>`;
+  if (!ids.length) return `<div style="font-size:12px;color:var(--text3)" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">No ICs linked yet.</div>`;
   const icObjs = ids.map(id => state.instructionalComponents.find(x => x.id === id)).filter(Boolean);
   // suggestionScores is session-global, not per lesson — only trust it when
   // suggestionLessonId confirms it was actually computed for THIS lesson (see the
@@ -1998,7 +2077,7 @@ function plannerSelectedICsViewHtml(lesson) {
       <div class="planner-view-ic-row">
         <span class="planner-ic-option-label">${escapeHtml(label)}</span>
         ${code ? `<span class="planner-ic-chip">${escapeHtml(code)}</span>` : ''}
-        ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
+        ${conf ? `<span class="planner-ic-confidence is-${conf.key}" title="${glossaryTitle(PLANNER_CONFIDENCE_GLOSSARY, conf.key)}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
       </div>`;
   }).join('');
 }
@@ -2185,7 +2264,7 @@ function plannerICResultsHtml(lesson) {
           ${stageTag}
           ${allocTag}
           ${taughtTag}
-          ${conf ? `<span class="planner-ic-confidence is-${conf.key}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
+          ${conf ? `<span class="planner-ic-confidence is-${conf.key}" title="${glossaryTitle(PLANNER_CONFIDENCE_GLOSSARY, conf.key)}"><span class="planner-ic-conf-dot"></span>${conf.label}</span>` : ''}
         </div>
         ${detail}
       </div>
@@ -2258,7 +2337,7 @@ function plannerICResultsHtml(lesson) {
     const open = plannerIsICSuggestionGroupOpen(key, defaultOpen[key]);
     return `
       <div class="planner-ic-suggestion-group ${open ? 'is-open' : ''}">
-        <button type="button" class="planner-ic-suggestion-group-heading" data-group-key="${escapeHtml(key)}" aria-expanded="${open ? 'true' : 'false'}" onclick="plannerToggleICSuggestionGroup('${key}', ${defaultOpen[key]})">
+        <button type="button" class="planner-ic-suggestion-group-heading" data-group-key="${escapeHtml(key)}" aria-expanded="${open ? 'true' : 'false'}" title="${glossaryTitle(PLANNER_GLOSSARY, 'cd')}" onclick="plannerToggleICSuggestionGroup('${key}', ${defaultOpen[key]})">
           <span class="planner-ic-suggestion-group-toggle" aria-hidden="true">${open ? '▾' : '▸'}</span>
           <span class="planner-ic-suggestion-group-label">${escapeHtml(label)} (${items.length})</span>
         </button>
@@ -3982,7 +4061,7 @@ function unitTeachingStatusMeta(status) {
 
 function unitTeachingStatusBadgeHtml(status) {
   const meta = unitTeachingStatusMeta(status);
-  return `<span class="unit-status-badge is-${meta.key}">${meta.label}</span>`;
+  return `<span class="unit-status-badge is-${meta.key}" title="${glossaryTitle(PLANNER_STATUS_GLOSSARY, meta.key)}">${meta.label}</span>`;
 }
 
 // Status badge for a unit lesson specifically (as opposed to unitTeachingStatusBadgeHtml,
@@ -3994,9 +4073,9 @@ function unitTeachingStatusBadgeHtml(status) {
 function unitLessonStatusBadgeHtml(lesson) {
   const meta = unitTeachingStatusMeta(lesson.teachingStatus);
   const slots = Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : [];
-  if (slots.length <= 1) return `<span class="unit-status-badge is-${meta.key}">${meta.label}</span>`;
+  if (slots.length <= 1) return `<span class="unit-status-badge is-${meta.key}" title="${glossaryTitle(PLANNER_STATUS_GLOSSARY, meta.key)}">${meta.label}</span>`;
   const taughtCount = slots.filter(s => s && s.taught === true).length;
-  return `<span class="unit-status-badge is-${meta.key}">${meta.label} ${taughtCount}/${slots.length}</span>`;
+  return `<span class="unit-status-badge is-${meta.key}" title="${glossaryTitle(PLANNER_STATUS_GLOSSARY, meta.key)}">${meta.label} ${taughtCount}/${slots.length}</span>`;
 }
 
 // Recomputes a unit lesson's overall teachingStatus from its per-occurrence taught
@@ -4396,7 +4475,7 @@ function renderUnitDetail(main, unit) {
           <div class="card-head"><div class="card-title">Unit details</div></div>
           <div class="unit-side-body">
             <div class="form-group">
-              <label class="form-label">Linked curriculum descriptors</label>
+              <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'cd')}">Linked curriculum descriptors</label>
               <div id="unit-cd-panel">${unitCDPanelHtml(unit)}</div>
             </div>
             <div class="form-group" style="margin-bottom:0">
@@ -4430,9 +4509,9 @@ function unitLessonRowHtml(unit, lesson) {
         <div class="unit-lesson-title">${escapeHtml(lesson.title || 'Untitled lesson')}</div>
         ${intentionShort ? `<div class="unit-lesson-intention">${escapeHtml(intentionShort)}</div>` : ''}
         <div class="unit-lesson-tags">
-          <span class="unit-lesson-chip">${icCount} IC${icCount === 1 ? '' : 's'}</span>
+          <span class="unit-lesson-chip" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">${icCount} IC${icCount === 1 ? '' : 's'}</span>
           ${unitLessonStatusBadgeHtml(lesson)}
-          <span class="unit-lesson-chip">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
+          <span class="unit-lesson-chip" title="${glossaryTitle(PLANNER_GLOSSARY, 'slot')} (Scheduled on ${slotCount} day${slotCount === 1 ? '' : 's'})">${slotCount} slot${slotCount === 1 ? '' : 's'}</span>
         </div>
       </div>
       <div class="unit-lesson-actions">
@@ -4475,7 +4554,7 @@ function plannerUnitLessonFieldsHtml(lesson) {
       <div class="form-group">
         <label class="form-label">Teaching status</label>
         <select class="form-input" onchange="unitSetLessonTeachingStatus(this.value)">
-          ${UNIT_TEACHING_STATUSES.map(s => `<option value="${s.key}" ${lesson.teachingStatus === s.key ? 'selected' : ''}>${s.label}</option>`).join('')}
+          ${UNIT_TEACHING_STATUSES.map(s => `<option value="${s.key}" title="${glossaryTitle(PLANNER_STATUS_GLOSSARY, s.key)}" ${lesson.teachingStatus === s.key ? 'selected' : ''}>${s.label}</option>`).join('')}
         </select>
       </div>
 
@@ -4487,7 +4566,7 @@ function plannerUnitLessonFieldsHtml(lesson) {
       </div>
 
       <div class="form-group">
-        <label class="form-label">Instructional Components (1–3) · ${icCount}/3 selected</label>
+        <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Instructional Components (1–3) · ${icCount}/3 selected</label>
         ${icCount === 0 ? `<div class="planner-incomplete-note">This lesson has no ICs linked yet — a lesson should target at least one IC.</div>` : ''}
         <div class="planner-selected-ics">${plannerSelectedICsHtml(lesson)}</div>
         <div class="planner-ic-controls">
@@ -4526,7 +4605,7 @@ function plannerUnitLessonViewFieldsHtml(lesson) {
       </div>
 
       <div class="form-group">
-        <label class="form-label">Instructional Components</label>
+        <label class="form-label" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Instructional Components</label>
         <div class="planner-selected-ics-view">${plannerSelectedICsViewHtml(lesson)}</div>
       </div>
   `;
@@ -4570,7 +4649,7 @@ function unitLessonScheduleHtml(lesson) {
             title="${s.taught === true ? 'Mark as not taught' : 'Mark as taught'}"
             aria-label="${s.taught === true ? 'Mark this occurrence as not taught' : 'Mark this occurrence as taught'}"
             onclick="unitToggleOccurrenceTaught('${plannerJsStr(lesson.id)}','${plannerJsStr(s.weekKey)}','${plannerJsStr(s.dayKey)}')">✓</button>` : ''}
-          <button class="planner-slot-remove" type="button" title="Remove this slot"
+          <button class="planner-slot-remove" type="button" title="Remove this slot — ${glossaryTitle(PLANNER_GLOSSARY, 'slot')}"
             aria-label="Remove this scheduled slot"
             onclick="unitUnscheduleLessonSlot('${plannerJsStr(lesson.id)}','${plannerJsStr(s.weekKey)}','${plannerJsStr(s.dayKey)}')">×</button>
         </span>`).join('')
@@ -6304,7 +6383,7 @@ function openCodeDetail(code, studentId) {
       <div style="padding:16px 20px;border-top:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
           <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3)">Instructional Components</span>
-          <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;background:var(--surface-alt);color:var(--text3)">${ics.length} ICs</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;background:var(--surface-alt);color:var(--text3)" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">${ics.length} ICs</span>
           <span style="font-family:'DM Mono',monospace;font-size:9px;padding:1px 6px;border-radius:3px;background:${descriptorType === 'skill' ? 'var(--teal-dim)' : 'var(--blue-dim)'};color:${descriptorType === 'skill' ? 'var(--teal)' : 'var(--blue)'}">${descriptorType}</span>
           ${stubsForDescriptor > 0 ? `<span style="font-family:'DM Mono',monospace;font-size:8px;padding:1px 6px;border-radius:8px;background:var(--rust-dim);color:var(--rust);border:1px solid var(--rust)">${stubsForDescriptor} draft${stubsForDescriptor !== 1 ? 's' : ''}</span>` : ''}
         </div>
@@ -7000,7 +7079,7 @@ function renderBulkAssess(main) {
     if (!linkedStatus) return '';
     const labels = { got_it: 'IC ✓', taught: 'IC •', needs_review: 'IC ↻' };
     const titles = { got_it: 'got it', taught: 'taught', needs_review: 'needs review' };
-    return `<span class="ic-rollup-badge ic-rollup-${linkedStatus}" title="Evidence from linked IC: ${titles[linkedStatus]}">${labels[linkedStatus] || 'IC'}</span>`;
+    return `<span class="ic-rollup-badge ic-rollup-${linkedStatus}" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')} Evidence from linked IC: ${titles[linkedStatus]}">${labels[linkedStatus] || 'IC'}</span>`;
   }
 
   function buildByCode() {
@@ -8491,7 +8570,7 @@ function renderCoverage(main) {
           onmouseleave="hideCoverageTooltip()">
           <td style="padding:7px 10px;border-bottom:1px solid var(--border);position:sticky;left:0;background:${getStripedRowSurface(ci)}">
             <div style="display:flex;align-items:flex-start;gap:6px">
-              <span data-cv-action="toggleDescIC" data-cv-value="${c.Code}" title="${descOpen?'Hide':'Show'} ICs"
+              <span data-cv-action="toggleDescIC" data-cv-value="${c.Code}" title="${descOpen?'Hide':'Show'} ICs — ${glossaryTitle(PLANNER_GLOSSARY, 'ic')}"
                 style="cursor:pointer;color:var(--text3);font-size:9px;line-height:1.7;user-select:none;flex-shrink:0">${descOpen?'▼':'▶'}</span>
               <div style="flex:1;min-width:0">
                 <div style="font-family:'DM Mono',monospace;font-size:10px;color:${col}">${c.Code}</div>
@@ -8511,7 +8590,7 @@ function renderCoverage(main) {
           const dICs = getICsForDescriptor(c.Code);
           if (!dICs.length) {
             icRows = `<tr style="background:${getStripedRowSurface(ci)}">
-              <td colspan="${students.length + 2}" style="padding:4px 10px 4px 30px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);font-style:italic">No ICs for this descriptor</td>
+              <td colspan="${students.length + 2}" style="padding:4px 10px 4px 30px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);font-style:italic" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">No ICs for this descriptor</td>
             </tr>`;
           } else {
             icRows = dICs.map(ic => {
@@ -8600,7 +8679,7 @@ function renderCoverage(main) {
         <div style="width:1px;height:18px;background:var(--border2)"></div>
         <!-- Global IC drill-down toggle — distinct action-button styling, not a filter -->
         <button data-cv-action="expandAllICs" data-cv-value="toggle"
-          title="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'}" aria-label="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'}"
+          title="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'} — ${glossaryTitle(PLANNER_GLOSSARY, 'ic')}" aria-label="${state.coverageExpandAll ? 'Collapse all ICs' : 'Expand all ICs'}"
           style="padding:5px 12px;border-radius:4px;cursor:pointer;font-family:'DM Mono',monospace;font-size:10px;white-space:nowrap;${state.coverageExpandAll
             ? `background:${col};border:1px solid ${col};color:#fff`
             : 'background:none;border:1px solid var(--blue);color:var(--blue)'}">${state.coverageExpandAll ? '▼ Collapse all ICs' : '▶ Expand all ICs'}</button>
@@ -10304,6 +10383,7 @@ function buildDlCodeListHtml(codes) {
           <div style="font-size:11px;color:var(--text-muted);line-height:1.4;margin-top:2px">${c.Descriptor||c.Aspect||'—'}</div>
         </div>
         <button onclick="event.stopPropagation();dlExpandDescriptor('${c.Code}')"
+          title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}"
           style="padding:2px 7px;background:${isExpanded?'var(--blue-dim)':'none'};border:1px solid ${isExpanded?'var(--blue)':'var(--border2)'};border-radius:3px;color:${isExpanded?'var(--blue)':'var(--text3)'};font-size:10px;cursor:pointer;flex-shrink:0;margin-top:2px;font-family:'DM Mono',monospace;white-space:nowrap">
           ICs ${isExpanded ? '▲' : '▼'}
         </button>
@@ -10356,7 +10436,7 @@ function buildDlICChipsHtml(code, q) {
 function buildDlICPanel(code) {
   return `
     <div id="dl-ic-panel-${code}" style="padding:8px 12px 10px;background:var(--surface-alt);border-top:1px solid var(--border)">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:7px">ICs for ${code}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:7px" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">ICs for ${code}</div>
       <div style="position:relative;margin-bottom:8px">
         <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:12px">⌕</span>
         <input placeholder="Search ICs…" value="${escapeHtml(dlStep2ICSearch)}"
@@ -10967,7 +11047,7 @@ Return up to 10 ICs that best match the lesson description.`;
       <span style="font-size:11px;color:var(--text3);font-style:italic;flex:1">${reasoning}</span>
     </div>
     ${groupedHtml}
-    <div style="font-size:10px;color:var(--text3);margin-top:6px">Click any IC to add it to your session — selected ICs unlock the IC Outcomes step</div>
+    <div style="font-size:10px;color:var(--text3);margin-top:6px" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">Click any IC to add it to your session — selected ICs unlock the IC Outcomes step</div>
     <div style="text-align:center;padding-top:8px;margin-top:4px;border-top:1px solid var(--border)">
       <button onclick="openStubICModal()"
         style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:'Instrument Sans',sans-serif;text-decoration:underline;padding:3px 0;opacity:0.8">
@@ -11152,7 +11232,7 @@ function buildDlStep3() {
     .map(id => state.instructionalComponents.find(ic => ic.id === id))
     .filter(Boolean);
 
-  if (!ics.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title">No ICs selected</div></div>`;
+  if (!ics.length) return `<div class="empty-state" style="padding:40px"><div class="empty-icon">◈</div><div class="empty-title" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">No ICs selected</div></div>`;
 
   const subjectOfIC = (ic) => {
     const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
@@ -11254,7 +11334,7 @@ function buildDlStep3() {
       </table>
     </div>
     <div style="font-size:10px;color:var(--text3);margin-top:8px;display:flex;gap:16px">
-      <span>${presentStudents.length} students · ${visibleICs.length} ICs shown</span>
+      <span title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">${presentStudents.length} students · ${visibleICs.length} ICs shown</span>
       ${nGotIt ? `<span style="color:var(--green)">● ${nGotIt} got it</span>` : ''}
       ${nNeedsReview ? `<span style="color:var(--rust)">● ${nNeedsReview} needs review</span>` : ''}
     </div>`;
@@ -11327,7 +11407,7 @@ function buildDlStep4() {
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
           <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:${col}">${code}</span>
           ${cd?.Subject ? `<span style="font-size:8px;background:${col}22;color:${col};padding:1px 5px;border-radius:3px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:0.05em">${cd.Subject.slice(0,4)}</span>` : ''}
-          <span style="font-size:8px;background:var(--green-dim);color:var(--green);padding:1px 5px;border-radius:3px;font-family:'DM Mono',monospace">${entry ? Math.round(entry.taughtCount/entry.total*100) : 0}% ICs</span>
+          <span style="font-size:8px;background:var(--green-dim);color:var(--green);padding:1px 5px;border-radius:3px;font-family:'DM Mono',monospace" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')} — % of this code's ICs marked taught.">${entry ? Math.round(entry.taughtCount/entry.total*100) : 0}% ICs</span>
         </div>
         <div style="font-size:10px;color:var(--text-muted);line-height:1.4;flex:1;font-weight:400;font-family:'Instrument Sans',sans-serif">${descriptor}</div>
         <div style="display:flex;flex-direction:column;gap:3px;margin-top:8px">
@@ -11392,7 +11472,7 @@ function buildDlStep4() {
   }).join('');
 
   return `
-    <div style="font-size:12px;color:var(--text3);padding:10px 12px;background:var(--green-dim);border:1px solid var(--green);border-radius:6px;margin-bottom:12px">
+    <div style="font-size:12px;color:var(--text3);padding:10px 12px;background:var(--green-dim);border:1px solid var(--green);border-radius:6px;margin-bottom:12px" title="${glossaryTitle(PLANNER_GLOSSARY, 'ic')}">
       These students have been taught 80% or more of the ICs for the following descriptors. You can record a mastery judgment now or skip.
     </div>
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
