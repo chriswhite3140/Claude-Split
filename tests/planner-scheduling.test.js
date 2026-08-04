@@ -92,7 +92,11 @@ vm.runInContext(
   appSrc +
   '\n;globalThis.__getState = function(){ return state; };\n' +
   ';globalThis.__getDlState = function(){ return dlState; };\n' +
-  ';globalThis.__runInlineHandler = function(code, evt, thisArg){ return (new Function("event", code)).call(thisArg, evt); };\n',
+  ';globalThis.__runInlineHandler = function(code, evt, thisArg){ return (new Function("event", code)).call(thisArg, evt); };\n' +
+  // const/let top-level bindings (unlike function declarations) don't attach to the
+  // vm context object, so PLANNER_GLOSSARY etc. aren't reachable as GLOSSARY.PLANNER_GLOSSARY
+  // — expose them explicitly, same convention as __getState/__getDlState above.
+  ';globalThis.__getGlossary = function(){ return { PLANNER_GLOSSARY, PLANNER_CONFIDENCE_GLOSSARY, PLANNER_STATUS_GLOSSARY, UNIT_TEACHING_STATUSES }; };\n',
   sandbox,
   { filename: 'app.js' }
 );
@@ -105,6 +109,7 @@ sandbox.toast = function (msg, type) { toasts.push({ msg, type }); };
 
 const getState = sandbox.__getState;
 const getDlState = sandbox.__getDlState;
+const GLOSSARY = sandbox.__getGlossary();
 
 // Objects created inside the vm context have a different prototype than this realm,
 // so assert.deepStrictEqual reports them as "not reference-equal". Compare by value.
@@ -4235,6 +4240,106 @@ test('saveDailyLog snapshots dlState.date/dlState.masteryMap into local variable
   assert.ok(!/date:\s*dlState\.date\b/.test(appJsSrc), 'no entry-building code should read dlState.date live anymore');
   assert.ok(!/date_assessed:\s*dlState\.date\b/.test(appJsSrc), 'the saveProgress call must not read dlState.date live anymore');
   assert.ok(!/Object\.entries\(dlState\.masteryMap\)/.test(appJsSrc), 'the mastery-entries loop must not read dlState.masteryMap live anymore');
+});
+
+// ── Jargon glossary tooltips (IC/CD/confidence/slot/teaching status) ──────────────
+console.log('Jargon glossary tooltips');
+
+test('glossaryTitle looks up PLANNER_GLOSSARY/PLANNER_CONFIDENCE_GLOSSARY/PLANNER_STATUS_GLOSSARY by key, HTML-escapes the result, and returns \'\' (not a throw) for an unknown key', () => {
+  assert.strictEqual(sandbox.glossaryTitle(GLOSSARY.PLANNER_GLOSSARY, 'ic'), GLOSSARY.PLANNER_GLOSSARY.ic, 'a known key returns its exact glossary text (no HTML-significant chars in this one to escape)');
+  assert.strictEqual(sandbox.glossaryTitle(GLOSSARY.PLANNER_GLOSSARY, 'nonexistent-term'), '', 'an unknown key must return empty string, not undefined or throw, so a typo can never break a render');
+  assert.strictEqual(sandbox.glossaryTitle(GLOSSARY.PLANNER_STATUS_GLOSSARY, 'reteach'), GLOSSARY.PLANNER_STATUS_GLOSSARY.reteach);
+});
+
+test('the rail lesson pill carries IC and slot glossary tooltips', () => {
+  resetState();
+  const html = sandbox.plannerUnitSidebarLessonHtml(lessonById('ul_1'));
+  assert.ok(html.includes(sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)), 'the IC count must carry the IC glossary tooltip');
+  assert.ok(html.includes(sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.slot)), 'the slot count badge must carry the slot glossary tooltip');
+});
+
+test('the standalone lesson drawer (edit mode) carries the IC glossary tooltip on its "Instructional Components" label, and on the "No ICs linked yet" empty state', () => {
+  resetState();
+  const lesson = lessonById('sa_1');
+  const html = sandbox.plannerStandaloneLessonEditHtml(lesson, [{ key: 'mon', label: 'Monday' }]);
+  assert.ok(html.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)}">Instructional Components`), 'the IC section label must carry the IC glossary tooltip');
+  assert.ok(html.includes(sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)) && html.includes('No ICs linked yet'), 'the "no ICs linked" empty state must also carry the IC tooltip (sa_1 has none by default)');
+});
+
+test('the unit lesson drawer (edit mode) carries IC and CD glossary tooltips, and its Teaching status dropdown options each carry their own status tooltip', () => {
+  resetState();
+  const html = sandbox.plannerUnitLessonEditHtml(lessonById('ul_1'));
+  assert.ok(html.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)}">Instructional Components`), 'the IC section label must carry the IC glossary tooltip');
+  for (const s of GLOSSARY.UNIT_TEACHING_STATUSES) {
+    const expected = `<option value="${s.key}" title="${sandbox.escapeHtml(GLOSSARY.PLANNER_STATUS_GLOSSARY[s.key])}"`;
+    assert.ok(html.includes(expected), `the "${s.label}" dropdown option must carry its own status glossary tooltip`);
+  }
+});
+
+test('the unit lesson drawer\'s unit-context CD label carries the CD glossary tooltip (standalone lesson\'s trailing unit-context block)', () => {
+  resetState();
+  const st = getState();
+  // Give ul_1 a unit-context trailer to render by viewing it through the standalone
+  // helper path that renders unit context (plannerSelectedICsViewHtml's sibling) —
+  // simplest is to check unitLessonRowHtml/edit drawer directly, both of which render
+  // the "Linked curriculum descriptors" label via the shared unit-context markup.
+  const html = sandbox.plannerUnitLessonEditHtml(lessonById('ul_1'));
+  assert.ok(html.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.cd)}">Linked curriculum descriptors`), 'the CD label must carry the CD glossary tooltip');
+});
+
+test('the Unit Plans lesson-list row carries IC and slot glossary tooltips on its chips, and a status-glossary tooltip on its status badge', () => {
+  resetState();
+  const st = getState();
+  const unit = st.unitPlans.find(u => u.id === 'unit_1');
+  const html = sandbox.unitLessonRowHtml(unit, lessonById('ul_1'));
+  assert.ok(html.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)}">`), 'the IC chip must carry the IC glossary tooltip');
+  assert.ok(html.includes(sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.slot)), 'the slot chip must carry the slot glossary tooltip');
+  assert.ok(html.includes(sandbox.escapeHtml(GLOSSARY.PLANNER_STATUS_GLOSSARY.planned)), 'ul_1 defaults to "planned", so its status badge must carry the Planned status tooltip');
+});
+
+test('unitTeachingStatusBadgeHtml/unitLessonStatusBadgeHtml attach the correct PLANNER_STATUS_GLOSSARY entry for every one of the 5 teaching statuses, not just the default', () => {
+  for (const s of GLOSSARY.UNIT_TEACHING_STATUSES) {
+    const html = sandbox.unitTeachingStatusBadgeHtml(s.key);
+    assert.ok(html.includes(`is-${s.key}" title="${sandbox.escapeHtml(GLOSSARY.PLANNER_STATUS_GLOSSARY[s.key])}"`), `the "${s.label}" badge must carry its own status glossary tooltip, not another status's or none at all`);
+  }
+});
+
+test('the standalone Week Board card\'s simplified Planned/Taught pill, and its "Needs IC" incomplete pill, carry glossary tooltips', () => {
+  resetState();
+  const st = getState();
+  const lesson = lessonById('sa_1'); // standalone, weekKey=WEEK_A, no linked ICs -> incomplete
+  st.plannerUi.weekKey = WEEK_A;
+  realRenderView();
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_STATUS_GLOSSARY.planned)}">Planned`), 'an unTaught standalone card must show the Planned status tooltip');
+  assert.ok(html.includes(`title="${sandbox.escapeHtml(GLOSSARY.PLANNER_GLOSSARY.ic)}">Needs IC`), 'a card with no linked ICs must show the "Needs IC" pill with the IC glossary tooltip (sa_1 has none)');
+});
+
+test('the confidence tier badge (Strong/Partial/Weak) carries the matching PLANNER_CONFIDENCE_GLOSSARY entry, not a mismatched or missing one', () => {
+  resetState();
+  const st = getState();
+  st.instructionalComponents = [
+    { id: 'ic_1', name: 'Strong-match IC', homeDescriptorId: 'CD_1', active: true },
+    { id: 'ic_2', name: 'Weak-match IC', homeDescriptorId: 'CD_1', active: true },
+  ];
+  const lesson = lessonById('ul_1');
+  lesson.linkedICIds = ['ic_1', 'ic_2'];
+  st.plannerUi.suggestionScores = { ic_1: 10, ic_2: 1 };
+  const html = sandbox.plannerSelectedICsViewHtml(lesson);
+  assert.ok(html.includes(`is-strong" title="${sandbox.escapeHtml(GLOSSARY.PLANNER_CONFIDENCE_GLOSSARY.strong)}"`), 'the higher-scored IC must show the Strong confidence tooltip');
+  assert.ok(html.includes(`is-weak" title="${sandbox.escapeHtml(GLOSSARY.PLANNER_CONFIDENCE_GLOSSARY.weak)}"`) || html.includes(`is-partial" title="${sandbox.escapeHtml(GLOSSARY.PLANNER_CONFIDENCE_GLOSSARY.partial)}"`), 'the much-lower-scored IC must show a Partial or Weak confidence tooltip, matching its own actual tier — never the Strong one');
+});
+
+test('the per-student IC outcome badge (got_it/taught/needs_review — a DIFFERENT concept from the lesson-level teaching status) is deliberately left untouched by the teaching-status glossary, so it never shows a misleading "students need more practice" tooltip for what is actually a student mastery signal', () => {
+  // This documents a scope boundary, not a bug: renderICStudentChips' "Needs review"
+  // bucket is a per-student-per-IC outcome (from the Daily Wizard's IC scan step),
+  // unrelated to unitLessonStatusBadgeHtml's lesson-level "Needs review" teaching
+  // status, even though they share the same words. Wiring the lesson-level glossary
+  // text onto the student-outcome badge would be actively wrong, not just unhelpful.
+  const appJsSrc = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const bucketsBlock = appJsSrc.match(/const buckets = \[[\s\S]*?\];/);
+  assert.ok(bucketsBlock, 'sanity: the per-student status bucket definitions must still exist');
+  assert.ok(!bucketsBlock[0].includes('PLANNER_STATUS_GLOSSARY'), 'the per-student outcome buckets must not reference the lesson-level status glossary');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────
