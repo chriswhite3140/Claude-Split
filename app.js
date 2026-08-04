@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.96
+ * THIS FILE IS VERSION: 1.13.97
  * Last updated: 2026-08-04
  * ============================================================
  *
@@ -10,6 +10,23 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.97 - UX (styles.css only, no app.js changes): stronger discoverability for two
+ *   Unit lessons rail controls that previously only signalled "interactive" on hover.
+ *   (1) The per-unit collapse caret (.planner-unit-group-toggle) was bare text with
+ *   just a colour shift on hover — now a small bordered/tinted icon-button at rest,
+ *   same "background/border one step stronger than blend-in" language as the rail's
+ *   own .planner-panel-collapse-toggle, strengthening further on heading hover and
+ *   dimming when the heading is disabled (filter-forced-open state). (2) The rail
+ *   lesson pill (.planner-unit-pill) was missing the grab->grabbing active-state
+ *   cursor swap that .planner-lesson-card (Week Board cards) already has on drag
+ *   start, and its drag-handle icon stayed a flat muted colour even when the rest of
+ *   the card tinted on hover — both fixed to reinforce which part of the card is the
+ *   actual grab point. Deliberately minimal: no new persistent labels/icons added, no
+ *   markup or interaction-logic changes, purely CSS. 5 new regression tests (4
+ *   confirmed to fail against the pre-fix CSS); all 271 tests pass. Verified live in a
+ *   real browser (Playwright, computed-style + screenshot, light and dark) — caret box
+ *   present at rest, strengthens on hover, drag handle colour genuinely shifts from
+ *   rgb(115,128,155) to rgb(37,99,235) on card hover.
  * v1.13.96 - Fix 2 review findings on 1.13.95's jargon glossary:
  *   (1) PLANNER_STATUS_GLOSSARY.planned said "Scheduled to teach — not yet delivered",
  *       but teachingStatus and scheduledSlots are independent — a freshly created or
@@ -188,7 +205,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.96';
+const APP_VERSION = '1.13.97';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
