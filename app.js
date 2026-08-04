@@ -2,14 +2,15 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.92
- * Last updated: 2026-08-02
+ * THIS FILE IS VERSION: 1.13.93
+ * Last updated: 2026-08-04
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.13.93 - Weekly Planner: collapsible unit groups in the Unit lessons rail. Each unit heading is now a folder/accordion toggle (plannerToggleUnitGroupCollapsed) — collapsed shows just the heading and lesson count, expanded shows lessons as before; defaults to expanded so nothing surprises anyone on first load. Collapse state is per-unit (state.plannerUi.railGroupsCollapsed, session-only, keyed by unit id, same convention as railCollapsed/drawerCollapsed). Cooperates with the rail's search/subject filter (plannerRailFilteredGroups, untouched): a collapsed group auto-expands (plannerUnitGroupIsCollapsed) whenever a filter is active, since every group reaching that point already contains only matching lessons and must never be hidden behind a heading — the toggle itself is disabled while a filter forces a group open, so the two can't fight. The underlying manual collapse state is never overwritten by that override, so clearing the filter restores exactly what was manually set, not force-everything-open. Toggling does a targeted #planner-unit-rail-body refresh (plannerRailRefreshBody), not a full renderView(), consistent with the search input. 4 new regression tests, all confirmed to fail against the pre-fix code; full suite 251/251 passing. Verified live in a real browser (Playwright): collapse/expand, per-unit independence, search-forces-open with the toggle disabled, and restore-on-clear all behave as designed.
  * v1.13.92 - Fix a review finding on 1.13.91's Unit lessons rail subject filter: plannerRailFilteredGroups filtered a whole group by its parent unit's own subject field, but a unit lesson's subject is independently editable in the drawer (plannerUnitLessonFieldsHtml) and unitUpdateField never propagates a unit subject change to its existing lessons — so the two can genuinely diverge (e.g. an English lesson living inside a Mathematics unit). The rail already displays lesson.subject in each pill's meta line, so filtering by unit.subject instead was inconsistent with what's actually shown, and could hide a lesson under the filter it truthfully belongs to (or show one under a filter it doesn't). Now filters each lesson by its own subject (alongside the existing per-lesson search match), keeping a group visible with only its matching lessons — identical behaviour to before in the common case where every lesson in a unit shares its unit's subject, and only actually changes anything once a lesson's subject has been edited away from its unit's. 1 new regression test (confirmed to fail against the pre-fix, unit-level filter); all 247 tests pass.
  * v1.13.91 - Search + subject filter for units, in both places they're listed. Unit Plans list view (renderUnitList): new search input (matches unit title, case-insensitive substring) and subject dropdown in the header, near "+ New Unit" — new unitListFilteredUnits()/unitListBodyHtml() split the list rendering so a non-matching unit is hidden entirely (not just highlighted), and a filter combination matching nothing shows a distinct "No units match" message instead of a blank-looking list. Weekly Planner's Unit lessons rail (plannerUnitSidebarHtml): same search + subject controls added to the rail header, near "Drag onto a day to add a slot" — but search matches lesson title, not unit title, since what a teacher hunts for here is usually a specific lesson; new plannerRailFilteredGroups() keeps a unit group visible (showing only its matching lessons) as long as at least one of its lessons matches the search, while the subject filter excludes a whole group at once (a unit's lessons share one subject). Both search inputs use the same targeted-container-refresh pattern already used by the IC/CD search boxes elsewhere in these two views (plannerHandleICSearchInput/unitHandleCDSearch) rather than a full renderView(), so typing doesn't lose focus on every keystroke; both surfaces get a "Clear filters" control. All filtering is UI-only — new state.unitPlansUi.listSearch/listSubjectFilter and state.plannerUi.railSearch/railSubjectFilter fields drive what renders, never touching state.unitPlans/state.lessonPlans themselves. The Week Board itself and the existing collapse/expand panel behaviour are untouched. 12 new regression tests (11 of 12 confirmed to fail against the pre-fix code — the 12th, a UI-only-never-mutates-state guard, trivially held pre-fix too since no filtering existed to mutate anything); all 246 tests pass. Verified live in a real browser (Playwright): search/subject filtering narrows both lists correctly, the no-match empty states render, and the search inputs keep focus while typing.
  * v1.13.90 - Fix three review findings on 1.13.89's Daily Log Wizard bridge. (1) Codex + Macroscope (duplicate finds): the wizard-launch hook added to plannerSetLessonStatus fired for every transition to 'taught', not just the Week Board checkbox — the Lesson Drawer's own "Mark as taught" button also calls plannerSetLessonStatus('taught') with no lessonId (falling back to the drawer's selectedLessonId), so it was also launching the wizard, contrary to the PR's own documented/tested scope. Now gated on an explicit lessonId being passed — the checkbox's own call pattern — leaving the drawer button's behaviour exactly as it was before this feature existed, matching the same scoping already applied to unitSetLessonTeachingStatus. (2) Macroscope: dlLaunchOrMergeForLesson only ever set a missing dlState.icLessonMap entry, so if a teacher manually deselected an auto-added IC in the wizard's own step 2 UI (dlAddAISuggestedIC) and a later, different lesson's board checkbox re-added that same IC, the stale attribution to the first (now-unrelated) lesson survived — the IC would be saved tagged with the wrong lesson. dlAddAISuggestedIC now deletes the icLessonMap entry alongside the deselection, so a later re-add is correctly (re-)attributed fresh. (3) Macroscope: saveDailyLog read dlState.date/dlState.masteryMap live after its own first await (closeDlModal() at the top removes the modal immediately, well before any network round trip finishes) — so a save left in flight while the teacher checks a different lesson's board checkbox (which reassigns dlState via openDailyLogWizard) could resume and silently write the SECOND session's date/mastery data under the FIRST session's identity, corrupting it. Both fields are now frozen into local snapshots (sessionDate, masteryMapSnapshot) up front, alongside the icScanSnapshot/sessionICs/icLessonMapSnapshot the pre-existing code already froze for the exact same reason — every read inside the function now uses the frozen locals, never live dlState. Confirmed live (Playwright): a slow-fetch save for lesson A, interleaved with lesson B's checkbox being checked mid-flight, still writes A's own date/mastery notes untouched, and B's own in-progress session is equally unaffected once A's save resolves afterward. 3 new/updated regression tests (all 3 confirmed to fail against the pre-fix code); all 234 tests pass.
@@ -134,7 +135,7 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.92';
+const APP_VERSION = '1.13.93';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1677,6 +1678,37 @@ function plannerRailClearFilters() {
   renderView();
 }
 
+// True while the rail's search box or subject dropdown is actively narrowing what
+// shows — used to decide whether a unit group's manual collapse state should be
+// overridden at render time (see plannerUnitGroupIsCollapsed).
+function plannerRailFilterActive() {
+  return !!((state.plannerUi.railSearch || '').trim() || state.plannerUi.railSubjectFilter);
+}
+
+// Per-unit collapse state for the rail's accordion groups. Manually toggled state
+// (state.plannerUi.railGroupsCollapsed, keyed by unit id) defaults to expanded
+// (false/absent) so first load never opens with everything closed. While a filter is
+// active this always returns false regardless of the stored value: plannerRailFilteredGroups
+// has already dropped every group with no matching lesson, so every group reaching
+// this point IS a match and must never be hidden behind a collapsed heading. The
+// stored value itself is left untouched by this override, so once the filter clears,
+// plannerUnitSidebarHtml goes back to whatever the teacher had manually set —
+// collapse state and filter state cooperate instead of one clobbering the other.
+function plannerUnitGroupIsCollapsed(unitId) {
+  if (plannerRailFilterActive()) return false;
+  return !!(state.plannerUi.railGroupsCollapsed && state.plannerUi.railGroupsCollapsed[unitId]);
+}
+
+// Targeted refresh (see plannerRailRefreshBody) — toggling one group's collapse state
+// shouldn't trigger a full page re-render any more than typing in the search box does.
+// The toggle control itself is disabled while a filter is active (see
+// plannerUnitSidebarHtml), so this never fires against a filter-forced-open group.
+function plannerToggleUnitGroupCollapsed(unitId) {
+  plannerEnsureUiState();
+  state.plannerUi.railGroupsCollapsed[unitId] = !plannerUnitGroupIsCollapsed(unitId);
+  plannerRailRefreshBody();
+}
+
 function plannerUnitSidebarHtml() {
   const units = state.unitPlans || [];
   if (!units.length) {
@@ -1692,12 +1724,25 @@ function plannerUnitSidebarHtml() {
   if (!groups.length) {
     return `<div class="planner-unit-rail-empty">No unit lessons match your search or filter.</div>`;
   }
-  return groups.map(({ unit, lessons }) => `
+  const filterActive = plannerRailFilterActive();
+  return groups.map(({ unit, lessons }) => {
+    const title = unit.title || 'Untitled unit';
+    const collapsed = plannerUnitGroupIsCollapsed(unit.id);
+    const count = `${lessons.length} lesson${lessons.length === 1 ? '' : 's'}`;
+    const toggleAttrs = filterActive
+      ? `disabled title="Expanded to show matching lessons"`
+      : `onclick="plannerToggleUnitGroupCollapsed('${plannerJsStr(unit.id)}')" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(title)}"`;
+    return `
     <div class="planner-unit-group">
-      <div class="planner-unit-group-head" title="${escapeHtml(unit.title || 'Untitled unit')}">${escapeHtml(unit.title || 'Untitled unit')}</div>
-      ${lessons.map(l => plannerUnitSidebarLessonHtml(l)).join('')}
+      <button type="button" class="planner-unit-group-head" aria-expanded="${collapsed ? 'false' : 'true'}" ${toggleAttrs}>
+        <span class="planner-unit-group-toggle" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>
+        <span class="planner-unit-group-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+        <span class="planner-unit-group-count">${count}</span>
+      </button>
+      ${collapsed ? '' : lessons.map(l => plannerUnitSidebarLessonHtml(l)).join('')}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function plannerUnitSidebarLessonHtml(lesson) {
@@ -2337,6 +2382,11 @@ function plannerEnsureUiState() {
   // plannerRailFilteredGroups). Search matches lesson title, not unit title — see task.
   if (typeof state.plannerUi.railSearch !== 'string') state.plannerUi.railSearch = '';
   if (typeof state.plannerUi.railSubjectFilter !== 'string') state.plannerUi.railSubjectFilter = '';
+  // Per-unit collapse state for the rail's accordion group headers (see
+  // plannerUnitGroupIsCollapsed/plannerToggleUnitGroupCollapsed) — keyed by unit id,
+  // session-only like railCollapsed/drawerCollapsed above, so a fresh load always
+  // starts every group expanded regardless of how it was left last time.
+  if (!state.plannerUi.railGroupsCollapsed || typeof state.plannerUi.railGroupsCollapsed !== 'object') state.plannerUi.railGroupsCollapsed = {};
 }
 
 function plannerToggleRailCollapsed() {

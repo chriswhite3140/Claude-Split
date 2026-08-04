@@ -1710,15 +1710,49 @@ body[data-text-size="large"] {
   flex-direction: column;
   gap: 6px;
 }
+/* Accordion header for a unit group in the rail — see plannerToggleUnitGroupCollapsed.
+   Disabled (no cursor, no hover colour) while a search/subject filter is active, since
+   a filtered-in group is force-expanded then and the toggle would just fight the
+   filter (see plannerUnitGroupIsCollapsed). */
 .planner-unit-group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 2px;
   font-family: 'DM Mono', monospace;
   font-size: var(--label-size);
   color: var(--text3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  cursor: pointer;
+  text-align: left;
+}
+.planner-unit-group-head:hover:not(:disabled) {
+  color: var(--text);
+}
+.planner-unit-group-head:disabled {
+  cursor: default;
+}
+.planner-unit-group-toggle {
+  flex-shrink: 0;
+  font-size: 10px;
+  width: 10px;
+  text-align: center;
+}
+.planner-unit-group-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.planner-unit-group-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text3);
 }
 .planner-unit-pill {
   display: flex;
