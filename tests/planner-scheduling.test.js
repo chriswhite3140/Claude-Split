@@ -4405,6 +4405,13 @@ test('both affordance fixes are scoped to the rail — the Week Board day cards\
 // ── TEST MODE (safe sandboxed exploration against real data) ───────────────────────
 console.log('Test Mode: safe sandboxed exploration');
 
+// The sample/synthetic data fixture — loaded before app.js in every test-mode
+// sandbox below, exactly mirroring index.html's own <script> order (the fixture
+// script, then app.js). Harmless to load even when a given sandbox isn't in sample
+// mode — it just sets one inert global (window.CT_SAMPLE_TEST_MODE_DATA) that
+// SAMPLE_DATA_ACTIVE-gated code in app.js never reads unless sampleData=1.
+const sampleDataFixtureSrc = fs.readFileSync(path.join(__dirname, '..', 'data', 'sample-test-mode-data.js'), 'utf8');
+
 // TEST_MODE_ACTIVE is (by design, for safety — see app.js's own comment on it) a
 // `const` baked in from location.search at the moment app.js is evaluated, not a
 // live-toggleable flag — exercising it faithfully requires a SEPARATE vm evaluation of
@@ -4477,7 +4484,13 @@ function makeTestModeSandbox(opts = {}) {
     localStorage: realLocalStorageStub,
     navigator: { userAgent: 'node-test' },
     setTimeout, clearTimeout, setInterval, clearInterval,
-    fetch: (url, options) => { fetchCalls.push({ url, options }); return new Promise(() => {}); },
+    // opts.fetchImpl lets a test supply a real (resolving) fetch mock — the default
+    // never-resolving stub is fine for every other test here, which only cares whether
+    // fetch was CALLED, never about what a response would do next.
+    fetch: (url, options) => {
+      fetchCalls.push({ url, options });
+      return opts.fetchImpl ? opts.fetchImpl(url, options) : new Promise(() => {});
+    },
     alert() {}, confirm() { return true; }, prompt() { return null; },
     CSS: { escape: (s) => String(s) },
     Date, Math, JSON, URLSearchParams,
@@ -4504,6 +4517,11 @@ function makeTestModeSandbox(opts = {}) {
   }
 
   vm.createContext(tmSandbox);
+  // Loaded before app.js in every sandbox this factory creates, exactly mirroring
+  // index.html's own <script> order — see sampleDataFixtureSrc's own comment. This
+  // itself can't throw (a plain IIFE assigning one global), so it's run unconditionally,
+  // outside the forceShimFailure try/catch below.
+  vm.runInContext(sampleDataFixtureSrc, tmSandbox, { filename: 'data/sample-test-mode-data.js (test-mode sandbox)' });
   // When the shim install fails (forceShimFailure), app.js's own top-level code throws
   // deliberately (see its own comment on why) — an uncaught throw during top-level
   // script evaluation propagates straight out of vm.runInContext itself, so this must
@@ -4516,15 +4534,20 @@ function makeTestModeSandbox(opts = {}) {
     vm.runInContext(
       appSrc +
       '\n;globalThis.__tmGetTestModeActive = function(){ return typeof TEST_MODE_ACTIVE !== "undefined" ? TEST_MODE_ACTIVE : undefined; };\n' +
+      ';globalThis.__tmGetSampleDataActive = function(){ return typeof SAMPLE_DATA_ACTIVE !== "undefined" ? SAMPLE_DATA_ACTIVE : undefined; };\n' +
       ';globalThis.__tmApiCall = function(action, data, opts){ return apiCall(action, data, opts); };\n' +
       // apiCall() is `async function`, so every call returns a Promise even down the
       // synchronous test-mode mock branch — this exposer reaches the pure, synchronous
       // helper apiCall() itself delegates to, so tests can inspect the mock's exact shape
       // without fighting Promise-resolution timing in a test harness that doesn't await.
       ';globalThis.__tmMockResult = function(action, data){ return testModeMockApiResult(action, data); };\n' +
+      ';globalThis.__tmSampleMockResult = function(action, data){ return sampleDataMockApiResult(action, data); };\n' +
       ';globalThis.__tmSaveStubIC = function(){ return typeof saveStubIC === "function" ? saveStubIC : undefined; };\n' +
       ';globalThis.__tmPromoteStubIC = function(){ return typeof promoteStubIC === "function" ? promoteStubIC : undefined; };\n' +
       ';globalThis.__tmDeleteStubIC = function(){ return typeof deleteStubIC === "function" ? deleteStubIC : undefined; };\n' +
+      ';globalThis.__tmLoadStubICsFromSheets = function(){ return typeof loadStubICsFromSheets === "function" ? loadStubICsFromSheets : undefined; };\n' +
+      ';globalThis.__tmFetchICsCSVFromGitHub = function(){ return typeof fetchICsCSVFromGitHub === "function" ? fetchICsCSVFromGitHub : undefined; };\n' +
+      ';globalThis.__tmSeedSampleDataExtras = function(){ return typeof seedSampleDataExtras === "function" ? seedSampleDataExtras : undefined; };\n' +
       ';globalThis.__tmGetState = function(){ return typeof state !== "undefined" ? state : undefined; };\n',
       tmSandbox,
       { filename: 'app.js (test-mode sandbox)' }
@@ -4699,6 +4722,207 @@ test('if the browser refuses to let the localStorage shim install, test mode ref
   // audit session would necessarily see.
   assert.ok(/Test Mode could not be safely started/.test(documentElement.innerHTML), 'a visible, blocking error message must be shown before the throw — the failure must never be silent or console-only');
   assert.ok(/Refusing to load the app/i.test(documentElement.innerHTML), 'the error message must make clear the app is refusing to load, not just glitching');
+});
+
+// ── TEST MODE: sample/synthetic data (?testMode=1&sampleData=1) ────────────────────
+console.log('Test Mode: sample/synthetic data');
+
+test('SAMPLE_DATA_ACTIVE is true only for the exact combination testMode=1&sampleData=1 — sampleData alone (without testMode=1) does nothing, since every protection it relies on lives inside the TEST_MODE_ACTIVE block', () => {
+  assert.strictEqual(makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' }).sandbox.__tmGetSampleDataActive(), true, 'the documented activation combination must work');
+  assert.strictEqual(makeTestModeSandbox({ locationSearch: '?sampleData=1&testMode=1' }).sandbox.__tmGetSampleDataActive(), true, 'param order must not matter');
+  assert.strictEqual(makeTestModeSandbox({ locationSearch: '?testMode=1' }).sandbox.__tmGetSampleDataActive(), false, 'testMode alone (regular Test Mode) must not activate sample data');
+  assert.strictEqual(makeTestModeSandbox({ locationSearch: '?sampleData=1' }).sandbox.__tmGetSampleDataActive(), false, 'sampleData alone, without testMode=1, must do nothing at all');
+  assert.strictEqual(makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=true' }).sandbox.__tmGetSampleDataActive(), false, '"true" is not "1" — must stay off, no fuzzy truthiness');
+  assert.strictEqual(makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=0' }).sandbox.__tmGetSampleDataActive(), false, '"0" must stay off');
+  assert.strictEqual(makeTestModeSandbox({ locationSearch: '' }).sandbox.__tmGetSampleDataActive(), false, 'no query string at all must stay off');
+
+  const { sandbox: tm } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  assert.strictEqual(tm.__tmGetTestModeActive(), true, 'sample data mode is still, underneath, ordinary Test Mode — TEST_MODE_ACTIVE must also be true, so it inherits every existing Test Mode protection unchanged');
+});
+
+test('the sample-data banner clearly says "sample data" and that nothing will be saved, and deliberately does NOT use regular Test Mode\'s "sandboxed copy of real data" wording — so a sample session can never be mistaken for a real-data one', () => {
+  const { bodyChildren } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const banner = bodyChildren.find(el => el && el.id === 'ct-test-mode-banner');
+  assert.ok(banner, 'a banner must still be appended in sample data mode');
+  assert.ok(/TEST MODE/.test(banner.textContent), 'must still say TEST MODE');
+  assert.ok(/sample data/i.test(banner.textContent), 'must explicitly say "sample data"');
+  assert.ok(/will be saved/i.test(banner.textContent), 'must still say plainly that nothing will be saved');
+  assert.ok(!/sandboxed copy of real data/i.test(banner.textContent), 'must NOT use the regular Test Mode wording that implies real data is involved');
+});
+
+test('regular Test Mode\'s banner wording is completely unchanged by adding sample data mode — proving the two entry paths are additive, not a shared/altered banner', () => {
+  const { bodyChildren } = makeTestModeSandbox({ locationSearch: '?testMode=1' });
+  const banner = bodyChildren.find(el => el && el.id === 'ct-test-mode-banner');
+  assert.ok(/sandboxed copy of real data/i.test(banner.textContent), 'the original real-data banner text must be exactly as before');
+  assert.ok(!/sample data/i.test(banner.textContent), 'regular Test Mode must never say "sample data"');
+});
+
+test('in sample data mode, apiCall() mocks every currently-whitelisted safe read except claudeSuggest from the fixture, never hitting the real backend — this is what makes sample mode safe even for reads, unlike regular Test Mode which still lets reads through', () => {
+  const { sandbox: tm, fetchCalls } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const fixtureReads = ['getAll', 'getStudents', 'getProgress', 'getTaughtLog', 'getStandardsJudgments', 'getProgressionPlacements', 'getTaughtICs', 'driveBackupLoad'];
+  for (const action of fixtureReads) {
+    const before = fetchCalls.length;
+    tm.__tmApiCall(action, {}, { quiet: true });
+    assert.strictEqual(fetchCalls.length, before, `apiCall('${action}') must not call fetch in sample data mode`);
+  }
+  const beforeWrite = fetchCalls.length;
+  tm.__tmApiCall('addStudent', {}, {});
+  assert.strictEqual(fetchCalls.length, beforeWrite, 'a write action must still be mocked (via the existing testModeMockApiResult path), not call fetch either');
+
+  const beforeAI = fetchCalls.length;
+  tm.__tmApiCall('claudeSuggest', {}, { quiet: true });
+  assert.strictEqual(fetchCalls.length, beforeAI + 1, 'claudeSuggest must stay live even in sample data mode — it only queries the AI, no app data');
+});
+
+test('regular Test Mode (no sampleData) is completely unaffected by adding the sample-data interception — the same safe reads still hit the real backend exactly as before', () => {
+  const { sandbox: tm, fetchCalls } = makeTestModeSandbox({ locationSearch: '?testMode=1' });
+  const before = fetchCalls.length;
+  tm.__tmApiCall('getAll', {}, { quiet: true });
+  assert.strictEqual(fetchCalls.length, before + 1, 'getAll must still hit the real backend in regular Test Mode — only sample data mode mocks it');
+});
+
+test('sampleDataMockApiResult(\'getAll\') returns the raw row-array shape loadAll() expects (header row + one row per fixture record) for every table, matching the fixture\'s exact counts and field order', () => {
+  const { sandbox: tm } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const fixture = tm.CT_SAMPLE_TEST_MODE_DATA;
+  const result = tm.__tmSampleMockResult('getAll', null);
+  assert.strictEqual(result.students.length, fixture.students.length + 1, 'students must be header + one row per fixture student');
+  assert.strictEqual(result.progress.length, fixture.progress.length + 1);
+  assert.strictEqual(result.taughtLog.length, fixture.taughtLog.length + 1);
+  assert.strictEqual(result.taughtICs.length, fixture.taughtICs.length + 1);
+  assert.strictEqual(result.standardsJudgments.length, fixture.standardsJudgments.length + 1);
+  assert.strictEqual(result.progressionPlacements.length, fixture.progressionPlacements.length + 1);
+  // Spot-check row shape against what loadAll() actually reads (r[0]=id, r[1]=first_name, ...).
+  const firstStudentRow = result.students[1];
+  assert.strictEqual(firstStudentRow[0], fixture.students[0].id);
+  assert.strictEqual(firstStudentRow[1], fixture.students[0].first_name);
+  assert.strictEqual(firstStudentRow[3], fixture.students[0].year_level);
+});
+
+test('sampleDataMockApiResult returns the same row arrays directly (not wrapped) for the individual getStudents/getProgress/etc actions — the init() fallback path used if getAll were ever unavailable — and driveBackupLoad reports no backup data so no restore banner ever appears', () => {
+  const { sandbox: tm } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const studentsRows = tm.__tmSampleMockResult('getStudents', null);
+  assert.ok(Array.isArray(studentsRows) && studentsRows.length > 1, 'getStudents must return a row array directly, not wrapped in an object');
+  const driveResult = tm.__tmSampleMockResult('driveBackupLoad', null);
+  assert.strictEqual(driveResult.data, null, 'driveBackupLoad must report no backup data in sample mode, so driveBackupCheckOnLoad never shows a restore banner');
+});
+
+test('loadStubICsFromSheets is skipped entirely in sample data mode (its own draft stub IC comes from the fixture instead) but still hits the real backend in regular Test Mode, unchanged', () => {
+  const sample = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const beforeSample = sample.fetchCalls.length;
+  sample.sandbox.__tmLoadStubICsFromSheets()();
+  assert.strictEqual(sample.fetchCalls.length, beforeSample, 'loadStubICsFromSheets must not call fetch in sample data mode');
+
+  const regular = makeTestModeSandbox({ locationSearch: '?testMode=1' });
+  const beforeRegular = regular.fetchCalls.length;
+  regular.sandbox.__tmLoadStubICsFromSheets()();
+  assert.strictEqual(regular.fetchCalls.length, beforeRegular + 1, 'loadStubICsFromSheets must still call fetch in regular Test Mode — this guard is additive, not a behaviour change to the existing safe-read path');
+});
+
+test('fetchICsCSVFromGitHub no-ops in sample data mode (skips the real ics_*.csv fetches, whose ids are unstable for most subjects) but still fetches normally in regular Test Mode and outside Test Mode entirely', () => {
+  const sample = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const beforeSample = sample.fetchCalls.length;
+  sample.sandbox.__tmFetchICsCSVFromGitHub()('ics_year2_maths_number');
+  assert.strictEqual(sample.fetchCalls.length, beforeSample, 'must not call fetch in sample data mode');
+
+  const regular = makeTestModeSandbox({ locationSearch: '?testMode=1' });
+  const beforeRegular = regular.fetchCalls.length;
+  regular.sandbox.__tmFetchICsCSVFromGitHub()('ics_year2_maths_number');
+  assert.strictEqual(regular.fetchCalls.length, beforeRegular + 1, 'must still call fetch in regular Test Mode');
+
+  const normal = makeTestModeSandbox({ locationSearch: '' });
+  const beforeNormal = normal.fetchCalls.length;
+  normal.sandbox.__tmFetchICsCSVFromGitHub()('ics_year2_maths_number');
+  assert.strictEqual(normal.fetchCalls.length, beforeNormal + 1, 'must still call fetch outside Test Mode entirely — this is a sample-mode-only guard, not a general behaviour change');
+});
+
+test('seedSampleDataExtras() populates state.instructionalComponents from the fixture (including its one draft/stub IC) and appends the fixture\'s extra achievement standard onto whatever was already loaded, only in sample data mode', () => {
+  const { sandbox: tm } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const state = tm.__tmGetState();
+  state.standards = [{ 'Achievement Standard ID': 'Y4-AS-01', 'Subject': 'Maths' }]; // simulate the real auto-loaded Maths-only standards CSV
+  assert.strictEqual(state.instructionalComponents.length, 0, 'sanity: nothing seeded yet');
+  tm.__tmSeedSampleDataExtras()();
+  const fixture = tm.CT_SAMPLE_TEST_MODE_DATA;
+  assert.strictEqual(state.instructionalComponents.length, fixture.instructionalComponents.length, 'must add exactly the fixture\'s ICs, no more no less');
+  assert.strictEqual(tm.getUnresolvedStubCount(), 1, 'the fixture\'s one draft/stub IC must be counted by the existing, unmodified stub-review banner logic');
+  assert.strictEqual(state.standards.length, 2, 'must append the fixture\'s one extra standard onto whatever was already auto-loaded, not replace it');
+  assert.ok(state.standards.some(s => s['Achievement Standard ID'] === 'Year4-AS-8934'), 'the appended English standard must be present');
+  assert.ok(state.standards.some(s => s['Achievement Standard ID'] === 'Y4-AS-01'), 'the pre-existing (real, auto-loaded) Maths standard must still be there — appended to, not replaced');
+});
+
+test('seedSampleDataExtras() is a no-op outside sample data mode, in both regular Test Mode and normal mode', () => {
+  const regular = makeTestModeSandbox({ locationSearch: '?testMode=1' });
+  const rState = regular.sandbox.__tmGetState();
+  regular.sandbox.__tmSeedSampleDataExtras()();
+  assert.strictEqual(rState.instructionalComponents.length, 0, 'must not seed anything in regular Test Mode');
+
+  const normal = makeTestModeSandbox({ locationSearch: '' });
+  const nState = normal.sandbox.__tmGetState();
+  normal.sandbox.__tmSeedSampleDataExtras()();
+  assert.strictEqual(nState.instructionalComponents.length, 0, 'must not seed anything outside Test Mode entirely');
+});
+
+test('the sample dataset fixture itself satisfies every structural requirement from the task brief: multiple year levels, an Arts unit with zero linked CDs (the known-broken CD-linking path, kept live as a regression check), a unit lesson with zero linked ICs, all five teaching statuses, a genuinely mixed multi-occurrence lesson, a lesson with resource links, and exactly one draft/stub IC', () => {
+  const { sandbox: tm } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const fixture = tm.CT_SAMPLE_TEST_MODE_DATA;
+
+  const yearLevels = new Set(fixture.students.map(s => s.year_level));
+  assert.ok(yearLevels.size >= 2, 'students must span multiple year levels');
+
+  const artsUnit = fixture.units.find(u => u.subject === 'The Arts');
+  assert.ok(artsUnit, 'must include a unit in a subject currently known to be broken for CD linking (The Arts/Technologies/Health & PE)');
+  assert.strictEqual(artsUnit.linkedCDIds.length, 0, 'the Arts unit must have zero linked CDs, so the broken CD-linking path stays live as a regression check once it\'s fixed');
+
+  const noICLesson = fixture.lessons.find(l => l.linkedICIds.length === 0 && l.unitId);
+  assert.ok(noICLesson, 'at least one unit lesson must have zero linked ICs, to show the "needs IC" warning state');
+
+  const statuses = new Set(fixture.lessons.map(l => l.teachingStatus));
+  for (const s of ['planned', 'taught', 'partially-taught', 'needs-review', 'reteach']) {
+    assert.ok(statuses.has(s), `the fixture must include a lesson with teaching status "${s}"`);
+  }
+
+  const multiOccurrence = fixture.lessons.find(l => l.scheduledSlots.length > 1);
+  assert.ok(multiOccurrence, 'must include at least one multi-occurrence lesson');
+  assert.ok(
+    multiOccurrence.scheduledSlots.some(s => s.taught === true) && multiOccurrence.scheduledSlots.some(s => s.taught !== true),
+    'the multi-occurrence lesson must have a genuine mix of taught/not-yet-taught occurrences, to exercise the "Taught 1/2" per-occurrence fraction rather than an all-or-nothing case'
+  );
+
+  const withResourceLinks = fixture.lessons.find(l => l.resourceLinks.length > 0);
+  assert.ok(withResourceLinks, 'must include at least one lesson with resource links populated');
+
+  const draftStubs = fixture.instructionalComponents.filter(ic => ic.ownerTier === 'teacher_stub' && ic.icReadinessStatus === 'draft');
+  assert.strictEqual(draftStubs.length, 1, 'must include exactly one draft/stub IC, to exercise the "1 draft IC needs review" banner without ambiguity');
+});
+
+test('the fixture\'s mastery-ready gate boundary cases behave exactly as designed when run through the real, unmodified getReadyForMasteryBanner() — Priya Nair (4/5=80%) and Ryan Sullivan (5/5=100%) are surfaced as ready with no Progress record yet, Marcus Webb (2/5=40%) is not, and Ava Mitchell (4/5=80% but already judged) is correctly excluded', () => {
+  const { sandbox: tm } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const state = tm.__tmGetState();
+  const fixture = tm.CT_SAMPLE_TEST_MODE_DATA;
+  state.students = fixture.students;
+  state.progress = fixture.progress;
+  state.taughtICs = fixture.taughtICs;
+  tm.__tmSeedSampleDataExtras()(); // the real seeding step — populates state.instructionalComponents from the fixture
+
+  const results = tm.getReadyForMasteryBanner();
+  const isReady = (firstName, code) => results.some(r => r.student.first_name === firstName && r.descriptorId === code);
+
+  assert.ok(isReady('Priya', 'AC9M3N02'), 'Priya Nair sits at exactly 80% coverage with no Progress record — must be surfaced as ready (the exact-boundary case)');
+  assert.ok(isReady('Ryan', 'AC9E4LY06'), 'Ryan Sullivan sits at 100% coverage with no Progress record — must be surfaced as ready (a second, cleaner gate example)');
+  assert.ok(!isReady('Marcus', 'AC9M3N02'), 'Marcus Webb sits at 40% coverage — clearly below the gate — must not be surfaced');
+  assert.ok(!isReady('Ava', 'AC9E4LY06'), 'Ava Mitchell sits at 80% coverage but already has a Progress record — the gate must correctly exclude already-judged students');
+});
+
+test('the fixture has a genuine coverage gap (AC9S3U02 — soils, rocks and minerals) with real system-default ICs that nobody has been taught, distinct from AC9M3N02/AC9E4LY06 which do have taughtLog coverage', () => {
+  const { sandbox: tm } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const state = tm.__tmGetState();
+  const fixture = tm.CT_SAMPLE_TEST_MODE_DATA;
+  state.taughtLog = fixture.taughtLog;
+  tm.__tmSeedSampleDataExtras()();
+
+  const gapIC = state.instructionalComponents.find(ic => ic.homeDescriptorId === 'AC9S3U02');
+  assert.ok(gapIC && gapIC.ownerTier === 'system_default', 'AC9S3U02 must have real system-default ICs (a gap with no ICs at all is a different, less interesting case)');
+  assert.ok(!fixture.taughtLog.some(t => t.code === 'AC9S3U02'), 'AC9S3U02 must have no taughtLog entries for anyone — this is what Coverage Gaps\' "codes never taught" check reads (wasCodeTaughtToStudent)');
+  assert.ok(fixture.taughtLog.some(t => t.code === 'AC9M3N02'), 'sanity: AC9M3N02 does have taughtLog coverage, so it is NOT the fixture\'s coverage gap');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────

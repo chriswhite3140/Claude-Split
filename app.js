@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.14.1
+ * THIS FILE IS VERSION: 1.15.0
  * Last updated: 2026-08-05
  * ============================================================
  *
@@ -10,6 +10,39 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.15.0 - Test Mode: sample/synthetic data option — a second entry path,
+ *   ?testMode=1&sampleData=1, that seeds a fixed, hand-authored fictional dataset
+ *   (data/sample-test-mode-data.js: 18 students across Year 3/4, 4 units at different
+ *   stages including one deliberately in The Arts with zero linked CDs to keep that
+ *   known-broken CD-linking bug visible as a live regression check, 10 lessons covering
+ *   all 5 teaching statuses incl. a multi-occurrence "Taught 1/2" lesson and one with
+ *   resource links, a mastery spread incl. students sitting exactly at and clearly below
+ *   the 80% coverage gate, a genuine coverage gap, standards judgments, progression
+ *   placements, and one draft/stub IC) instead of a snapshot of real current data — so
+ *   someone can explore the app fully populated without ever touching real student data,
+ *   even read-only. Purely additive to regular Test Mode (still ?testMode=1 alone): same
+ *   banner requirement but sample-specific wording ("TEST MODE — sample data..."), and
+ *   reuses every existing write-safety mechanism (localStorage shim, apiCall() write
+ *   mocking, the stub-IC raw-fetch guards) completely unchanged. Sample mode additionally
+ *   mocks the Sheets/Drive reads regular Test Mode still lets through live (getAll,
+ *   getStudents, getProgress, getTaughtLog, getStandardsJudgments,
+ *   getProgressionPlacements, getTaughtICs, driveBackupLoad — all served from the fixture
+ *   instead), skips loadStubICsFromSheets and the ~40 individual ics_*.csv fetches
+ *   entirely (their ids are unstable for most subjects, confirmed by auditing the bundled
+ *   files — meaningless to reference from a fixture meant to be stable/reviewable), and
+ *   seeds its own 13 active + 1 draft-stub IC and one extra achievement standard via a
+ *   new, independently-testable seedSampleDataExtras() step in fetchAllCSVs(). Real
+ *   content-descriptor/standards/progression CSVs and the live claudeSuggest AI query are
+ *   untouched — sample mode only replaces what a snapshot of real data would otherwise
+ *   provide. 14 new regression tests (all confirmed to fail against the pre-fix code —
+ *   verified by re-running the new tests against the prior commit's app.js), including an
+ *   integration test running the real, unmodified getReadyForMasteryBanner() against the
+ *   seeded fixture to confirm its boundary-case students behave exactly as designed; all
+ *   297 tests pass. Verified live in a real browser (Playwright): banner wording, zero
+ *   real localStorage writes (CDP-verified against the actual store) and zero
+ *   Sheets/Drive network calls, and the fixture rendering correctly across the Dashboard,
+ *   Weekly Planner, Unit Plans (including the Arts CD-search bug), Coverage Gaps, Bulk
+ *   Assess, Standards Judgments, and Curriculum Codes views.
  * v1.14.1 - Fix 3 review findings on 1.14.0's Test Mode. Two make the localStorage shim
  *   a less than perfectly faithful drop-in replacement for real localStorage:
  *   (1) shadowStore was a plain {}, so shadowStore['__proto__'] = v hit
@@ -322,6 +355,18 @@ const TEST_MODE_ACTIVE = (function () {
     return false;
   }
 })();
+// Second, additive entry path: ?testMode=1&sampleData=1. Only meaningful alongside
+// testMode=1 — sampleData on its own does nothing, since every protection this relies
+// on (the shim, the apiCall() write mock) lives inside the `if (TEST_MODE_ACTIVE)`
+// block below. Changes ONLY what gets loaded into the shim at session start (a fixed
+// fixture instead of a snapshot of real data) — none of the write-safety design changes.
+const SAMPLE_DATA_ACTIVE = (function () {
+  try {
+    return TEST_MODE_ACTIVE && new URLSearchParams(window.location.search).get('sampleData') === '1';
+  } catch (e) {
+    return false;
+  }
+})();
 if (TEST_MODE_ACTIVE) {
   (function installTestModeLocalStorageShim() {
     try {
@@ -330,9 +375,23 @@ if (TEST_MODE_ACTIVE) {
       // accessor instead of creating an own property, silently failing to persist that
       // one key. A null-prototype object has no such accessor to collide with.
       const shadowStore = Object.create(null);
-      for (let i = 0; i < window.localStorage.length; i++) {
-        const k = window.localStorage.key(i);
-        shadowStore[k] = window.localStorage.getItem(k);
+      if (SAMPLE_DATA_ACTIVE) {
+        // Seed directly from the fixture (data/sample-test-mode-data.js, loaded before
+        // this file — see index.html) — never touch real localStorage at all, not even
+        // to read it, since the whole point of this mode is exploring without ever
+        // touching real data. Keys are hardcoded string literals (matching
+        // LESSON_PLANS_STORAGE_KEY / UNIT_PLANS_STORAGE_KEY / the class-settings key
+        // used by loadClassSettings/saveClassSettings) because those consts aren't
+        // defined yet at this point in the file — this IIFE runs before them.
+        const fixture = window.CT_SAMPLE_TEST_MODE_DATA || {};
+        shadowStore['ct_planner_lessons_v2'] = JSON.stringify(fixture.lessons || []);
+        shadowStore['ct_unit_plans_v1'] = JSON.stringify(fixture.units || []);
+        shadowStore['ct_class_settings'] = JSON.stringify(fixture.classSettings || {});
+      } else {
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          shadowStore[k] = window.localStorage.getItem(k);
+        }
       }
       const shim = {
         getItem: function (k) { return Object.prototype.hasOwnProperty.call(shadowStore, k) ? shadowStore[k] : null; },
@@ -371,7 +430,9 @@ if (TEST_MODE_ACTIVE) {
     const banner = document.createElement('div');
     banner.id = 'ct-test-mode-banner';
     banner.setAttribute('role', 'alert');
-    banner.textContent = '⚠ TEST MODE — exploring a sandboxed copy of real data. Nothing you do in this session will be saved.';
+    banner.textContent = SAMPLE_DATA_ACTIVE
+      ? '⚠ TEST MODE — sample data, no changes will be saved. This is a fixed fictional dataset, not real student data.'
+      : '⚠ TEST MODE — exploring a sandboxed copy of real data. Nothing you do in this session will be saved.';
     banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
       'background:var(--status-danger-bg);color:var(--status-danger-text);' +
       'border-bottom:1px solid var(--status-danger-border);' +
@@ -383,7 +444,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.14.1';
+const APP_VERSION = '1.15.0';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -774,12 +835,57 @@ function testModeMockApiResult(action, data) {
   }
 }
 
+// A response built from the sample dataset (data/sample-test-mode-data.js) for every
+// currently-whitelisted safe READ action except claudeSuggest (an AI query, not app
+// data — stays live even in sample mode). Same raw row-array shape (header row at
+// index 0, dropped via .slice(1)) loadAll()/the individual load* fallbacks already
+// expect from a real Sheets response — see loadAll() and its per-action equivalents.
+function sampleDataMockApiResult(action, data) {
+  const fx = window.CT_SAMPLE_TEST_MODE_DATA || {};
+  const studentsRows = [['id', 'first_name', 'last_name', 'year_level', 'date_added']]
+    .concat((fx.students || []).map(s => [s.id, s.first_name, s.last_name, s.year_level, s.date_added]));
+  const progressRows = [['id', 'student_id', 'code', 'mastery', 'date', 'notes', 'evidence']]
+    .concat((fx.progress || []).map(p => [p.id, p.student_id, p.code, p.mastery, p.date, p.notes || '', p.evidence || '']));
+  const taughtLogRows = [['id', 'date', 'student_id', 'code', 'notes']]
+    .concat((fx.taughtLog || []).map(t => [t.id, t.date, t.student_id, t.code, t.notes || '']));
+  const taughtICsRows = [['id', 'date', 'student_id', 'ic_id', 'status', 'notes']]
+    .concat((fx.taughtICs || []).map(t => [t.id, t.date, t.student_id, t.ic_id, t.status, t.notes || '']));
+  const standardsJudgmentsRows = [['id', 'student_id', 'standard_id', 'judgment', 'locked', 'date', 'notes', 'period']]
+    .concat((fx.standardsJudgments || []).map(j => [j.id, j.student_id, j.standard_id, j.judgment, j.locked, j.date, j.notes || '', j.period || '']));
+  const progressionPlacementsRows = [['id', 'student_id', 'element', 'sub_element', 'level', 'date', 'notes', 'ext_label', 'ext_value']]
+    .concat((fx.progressionPlacements || []).map(p => [p.id, p.student_id, p.element, p.sub_element, p.level, p.date, p.notes || '', p.ext_label || '', p.ext_value || '']));
+  switch (action) {
+    case 'getAll':
+      return {
+        students: studentsRows, progress: progressRows, taughtLog: taughtLogRows,
+        taughtICs: taughtICsRows, standardsJudgments: standardsJudgmentsRows,
+        progressionPlacements: progressionPlacementsRows,
+      };
+    case 'getStudents': return studentsRows;
+    case 'getProgress': return progressRows;
+    case 'getTaughtLog': return taughtLogRows;
+    case 'getStandardsJudgments': return standardsJudgmentsRows;
+    case 'getProgressionPlacements': return progressionPlacementsRows;
+    case 'getTaughtICs': return taughtICsRows;
+    case 'driveBackupLoad': return { success: true, data: null }; // no Drive backup in sample mode — no restore banner
+    default: return testModeMockApiResult(action, data);
+  }
+}
+
 // ── GOOGLE SHEETS API ──
 // quiet:true skips the global sync-dot/sync-label side effects — used by the Drive
 // backup calls below, which have their own dedicated indicator and quiet-retry design
 // (see DRIVE BACKUP SYNC). Without this, a background Drive hiccup would flip the
 // Sheets connection indicator to "Sync error" even though Sheets is fine.
 async function apiCall(action, data = null, opts = {}) {
+  // Sample data mode additionally mocks the reads that regular Test Mode leaves live
+  // (real Sheets/Drive data would otherwise leak into an explicitly synthetic session)
+  // — every safe read except claudeSuggest, which only queries the AI and touches no
+  // app data. Checked before the TEST_MODE_ACTIVE branch below so a safe read in
+  // sample mode is answered from the fixture, not the real backend.
+  if (SAMPLE_DATA_ACTIVE && action !== 'claudeSuggest' && TEST_MODE_SAFE_READ_ACTIONS.has(action)) {
+    return sampleDataMockApiResult(action, data);
+  }
   if (TEST_MODE_ACTIVE && !TEST_MODE_SAFE_READ_ACTIONS.has(action)) {
     return testModeMockApiResult(action, data);
   }
@@ -894,6 +1000,10 @@ async function loadTaughtLog() {
 }
 
 async function loadStubICsFromSheets() {
+  // Sample mode's own draft stub IC is seeded directly into state.instructionalComponents
+  // (see the sample-data seeding step in fetchAllCSVs()) — no need to hit the real
+  // backend at all, which is the point of this mode (never touch real data, even reads).
+  if (SAMPLE_DATA_ACTIVE) return;
   const resp = await fetch(API_URL + '?action=loadStubICs', {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
@@ -8116,6 +8226,12 @@ async function fetchCSVFromGitHub(key) {
 }
 
 async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
+  // Skipped entirely in sample mode: most of these CSVs have empty id columns (a
+  // fresh crypto.randomUUID() every load — confirmed by auditing the bundled files),
+  // so referencing them from a fixture meant to be stable/reviewable would be
+  // meaningless. Sample mode brings its own small, hand-authored, stable-id IC set
+  // instead (see the sample-data seeding step in fetchAllCSVs()).
+  if (SAMPLE_DATA_ACTIVE) return 0;
   const file = CSV_FILES[key].file;
   try {
     const url = GITHUB_RAW + file;
@@ -8227,6 +8343,27 @@ async function fetchAllCSVs() {
                 count8 + count9 + count10 + count11 + count12 +
                 results.reduce((a, b) => a + b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
+
+  // Sample data mode: seed the fixture's own ICs and achievement standard now that the
+  // real content-descriptor/standards/progression CSVs above have finished loading.
+  seedSampleDataExtras();
+}
+
+// Seeds the sample dataset's own ICs (including its one draft stub) and appends its
+// one extra achievement standard — the fixture's ICs (including the draft stub) and
+// standard aren't sourced from any CSV, so this runs after fetchAllCSVs' real CSV
+// loads above rather than folding into fetchICsCSVFromGitHub, which sample mode skips
+// entirely (unstable ids — see its own comment). No-ops outside sample mode. A
+// separate, synchronous, independently-testable step rather than inlined into
+// fetchAllCSVs so a test can call it directly without awaiting that whole async chain.
+// See data/sample-test-mode-data.js for the fixture itself.
+function seedSampleDataExtras() {
+  if (!SAMPLE_DATA_ACTIVE) return;
+  const fixture = window.CT_SAMPLE_TEST_MODE_DATA || {};
+  (fixture.instructionalComponents || []).forEach(fields => {
+    state.instructionalComponents.push(createIC(fields));
+  });
+  state.standards = state.standards.concat(fixture.extraStandards || []);
 }
 
 function buildDescriptorIndex() {
