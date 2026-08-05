@@ -4426,12 +4426,16 @@ function makeTestModeSandbox(opts = {}) {
   const fetchCalls = [];
 
   function tmMakeStubEl() {
+    const attrs = {};
     return {
       style: {}, className: '', id: '', innerHTML: '', textContent: '', value: '',
       dataset: {}, scrollTop: 0, firstChild: null, offsetHeight: 32,
       classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
       appendChild() {}, removeChild() {}, remove() {}, insertBefore() {},
-      setAttribute() {}, getAttribute() { return null; }, removeAttribute() {},
+      // Actually tracked (unlike the shared harness's version above, which none of the
+      // other 271 tests need attribute round-tripping for) — the banner test below
+      // needs to read back role="alert" set via setAttribute.
+      setAttribute(k, v) { attrs[k] = String(v); }, getAttribute(k) { return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null; }, removeAttribute(k) { delete attrs[k]; },
       addEventListener() {}, removeEventListener() {}, focus() {},
       querySelector() { return null; }, querySelectorAll() { return []; },
       closest() { return null; }, getBoundingClientRect() { return {}; },
@@ -4531,6 +4535,18 @@ function makeTestModeSandbox(opts = {}) {
 
   return { sandbox: tmSandbox, fetchCalls, backing, bodyChildren, evalError, documentElement: tmDocumentStub.documentElement };
 }
+
+test('the test-mode banner is appended to document.body with the right alert text, and uses the app\'s existing --status-danger-* semantic tokens rather than hardcoded colours (review finding — matches .planner-banner\'s own existing convention in styles.css)', () => {
+  const { bodyChildren } = makeTestModeSandbox();
+  const banner = bodyChildren.find(el => el && el.id === 'ct-test-mode-banner');
+  assert.ok(banner, 'a banner element must be appended to document.body');
+  assert.strictEqual(banner.getAttribute('role'), 'alert', 'must be exposed to assistive tech as an alert');
+  assert.ok(/TEST MODE/.test(banner.textContent) && /will be saved/i.test(banner.textContent), 'must say plainly that nothing will be saved');
+  assert.ok(/var\(--status-danger-bg\)/.test(banner.style.cssText), 'background must use the semantic danger token');
+  assert.ok(/var\(--status-danger-text\)/.test(banner.style.cssText), 'text colour must use the semantic danger token');
+  assert.ok(!/#[0-9a-fA-F]{3,6}/.test(banner.style.cssText), 'must not contain any hardcoded hex colour');
+  assert.ok(!/rgba?\(/.test(banner.style.cssText), 'must not contain any hardcoded rgb/rgba colour');
+});
 
 test('TEST_MODE_ACTIVE is true only for the exact string "?testMode=1" — the entry condition is airtight against near-miss values, so a normal session can never accidentally end up in test mode', () => {
   assert.strictEqual(makeTestModeSandbox({ locationSearch: '?testMode=1' }).sandbox.__tmGetTestModeActive(), true, 'the documented activation value must work');
@@ -4644,6 +4660,24 @@ test('outside test mode, localStorage is completely untouched by any of this —
   assert.strictEqual(tm.__tmGetTestModeActive(), false, 'sanity: not in test mode');
   vm.runInContext("localStorage.setItem('normal_write', 'x')", tm);
   assert.strictEqual(backing.normal_write, 'x', 'outside test mode, a write must land directly in the real store — no shim in the way');
+});
+
+test('the localStorage shim correctly round-trips a "__proto__" key — a plain {} shadow store would silently swallow this write instead of creating an own property, since obj["__proto__"] = v hits Object.prototype\'s accessor rather than storing data (review finding)', () => {
+  const { sandbox: tm } = makeTestModeSandbox();
+  vm.runInContext("localStorage.setItem('__proto__', 'a real value')", tm);
+  const readBack = vm.runInContext("localStorage.getItem('__proto__')", tm);
+  assert.strictEqual(readBack, 'a real value', 'a key literally named "__proto__" must persist and read back exactly like any other key');
+  const length = vm.runInContext('localStorage.length', tm);
+  assert.strictEqual(length, 1, '__proto__ must actually count as a stored key, not silently vanish');
+});
+
+test('the localStorage shim\'s key(i) returns "" (not null) for a stored key that is itself the empty string, matching the real Storage.key(i) contract — null must mean "index out of bounds", nothing else (review finding)', () => {
+  const { sandbox: tm } = makeTestModeSandbox();
+  vm.runInContext("localStorage.setItem('', 'value for the empty-string key')", tm);
+  const key0 = vm.runInContext('localStorage.key(0)', tm);
+  assert.strictEqual(key0, '', 'key(i) for an empty-string key must return "", not null — null is reserved for "no key at this index"');
+  const outOfBounds = vm.runInContext('localStorage.key(1)', tm);
+  assert.strictEqual(outOfBounds, null, 'key(i) for a genuinely out-of-bounds index must still return null');
 });
 
 test('if the browser refuses to let the localStorage shim install, test mode refuses to run at all rather than silently falling back to unprotected real writes — the fail-closed path, exercised end to end', () => {

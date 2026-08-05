@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.14.0
+ * THIS FILE IS VERSION: 1.14.1
  * Last updated: 2026-08-05
  * ============================================================
  *
@@ -10,6 +10,25 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.14.1 - Fix 3 review findings on 1.14.0's Test Mode. Two make the localStorage shim
+ *   a less than perfectly faithful drop-in replacement for real localStorage:
+ *   (1) shadowStore was a plain {}, so shadowStore['__proto__'] = v hit
+ *   Object.prototype's __proto__ accessor instead of creating an own data property —
+ *   a key literally named "__proto__" would silently fail to persist. Switched to
+ *   Object.create(null), which has no such accessor to collide with.
+ *   (2) key(i) used `Object.keys(shadowStore)[i] || null`, so a stored key that is
+ *   itself the empty string "" (falsy) wrongly returned null — indistinguishable from
+ *   "no key at this index", which is the only case the real Storage.key(i) reserves
+ *   null for. Switched to an explicit undefined check.
+ *   (3) The test-mode banner hardcoded its background/text/border colours instead of
+ *   using the app's existing --status-danger-* semantic tokens (the same trio
+ *   .planner-banner already uses in styles.css) — inconsistent with project convention,
+ *   and the "renders even if styles.css fails to load" justification didn't hold up:
+ *   if styles.css genuinely failed, the whole app would already be unstyled and broken
+ *   well beyond just this banner, so hardcoding only this one element's colours wasn't
+ *   buying meaningful extra safety. Switched to the semantic tokens.
+ *   3 new regression tests, all confirmed to fail against the pre-fix code; all 283
+ *   tests pass.
  * v1.14.0 - Test Mode: safe sandboxed interactive exploration of the real app against
  *   real, current data, with zero risk of permanently altering it — for usability
  *   audits, and potentially future onboarding/demo use. Entry via URL param only
@@ -306,7 +325,11 @@ const TEST_MODE_ACTIVE = (function () {
 if (TEST_MODE_ACTIVE) {
   (function installTestModeLocalStorageShim() {
     try {
-      const shadowStore = {};
+      // Object.create(null) rather than {} — a key of exactly "__proto__" written via
+      // shadowStore[k] = v on an ordinary object hits Object.prototype's __proto__
+      // accessor instead of creating an own property, silently failing to persist that
+      // one key. A null-prototype object has no such accessor to collide with.
+      const shadowStore = Object.create(null);
       for (let i = 0; i < window.localStorage.length; i++) {
         const k = window.localStorage.key(i);
         shadowStore[k] = window.localStorage.getItem(k);
@@ -316,7 +339,10 @@ if (TEST_MODE_ACTIVE) {
         setItem: function (k, v) { shadowStore[k] = String(v); },
         removeItem: function (k) { delete shadowStore[k]; },
         clear: function () { Object.keys(shadowStore).forEach(function (k) { delete shadowStore[k]; }); },
-        key: function (i) { return Object.keys(shadowStore)[i] || null; },
+        // An explicit undefined check, not `||` — a stored key that is itself the empty
+        // string "" is falsy, and `|| null` would wrongly report "no key at this index"
+        // (null) instead of "" like the real Storage.key(i) does.
+        key: function (i) { const k = Object.keys(shadowStore)[i]; return k === undefined ? null : k; },
         get length() { return Object.keys(shadowStore).length; },
       };
       Object.defineProperty(window, 'localStorage', { value: shim, writable: false, configurable: true });
@@ -334,18 +360,22 @@ if (TEST_MODE_ACTIVE) {
   // Injected as a raw DOM node directly on document.body (a sibling of every app
   // container, never inside one) so no view re-render can ever remove it — confirmed
   // no code in this file replaces document.body.innerHTML wholesale, only specific
-  // sub-containers. Inline styles only, so it renders correctly even if styles.css
-  // fails to load. document.body already exists here: this script tag is the last
+  // sub-containers. document.body already exists here: this script tag is the last
   // thing before </body> in index.html, so the whole static shell is already parsed.
+  // Colours use the app's existing --status-danger-* semantic tokens (same trio
+  // .planner-banner already uses in styles.css, light/dark aware) rather than
+  // hardcoded hex — if styles.css itself failed to load, the whole app would already
+  // be unusable, unstyled and broken well beyond just this banner, so hardcoding just
+  // this one element's colours to hedge against that wouldn't add meaningful safety.
   (function injectTestModeBanner() {
     const banner = document.createElement('div');
     banner.id = 'ct-test-mode-banner';
     banner.setAttribute('role', 'alert');
     banner.textContent = '⚠ TEST MODE — exploring a sandboxed copy of real data. Nothing you do in this session will be saved.';
     banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
-      'background:#c0392b;color:#fff;text-align:center;font-family:sans-serif;' +
-      'font-weight:700;font-size:14px;line-height:1.4;padding:10px 12px;' +
-      'box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+      'background:var(--status-danger-bg);color:var(--status-danger-text);' +
+      'border-bottom:1px solid var(--status-danger-border);' +
+      'text-align:center;font-family:sans-serif;font-weight:700;font-size:14px;line-height:1.4;padding:10px 12px;';
     document.body.appendChild(banner);
     // Push all real page content down by the banner's own height so it never overlaps
     // the app's own topbar/nav.
@@ -353,7 +383,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.14.1';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
