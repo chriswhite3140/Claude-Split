@@ -4364,6 +4364,44 @@ test('the per-student IC outcome badge (got_it/taught/needs_review — a DIFFERE
   assert.ok(!bucketsBlock[0].includes('PLANNER_STATUS_GLOSSARY'), 'the per-student outcome buckets must not reference the lesson-level status glossary');
 });
 
+// ── Unit lessons rail: caret + drag discoverability ────────────────────────────────
+console.log('Rail caret/drag affordance');
+
+test('.planner-unit-group-toggle (the collapse caret) reads as a small icon-button at rest, not just on hover — same "background/border one step stronger than blend-in" language as .planner-panel-collapse-toggle', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  const rule = css.match(/\.planner-unit-group-toggle\s*\{[^}]*\}/)[0];
+  assert.ok(/border:\s*1px solid var\(--border2\)/.test(rule), 'must have a visible border at rest, not just on hover');
+  assert.ok(/background:\s*var\(--surface-alt\)/.test(rule), 'must have a background tint at rest, not just on hover');
+  assert.ok(/border-radius/.test(rule), 'must be a rounded box, matching the icon-button convention elsewhere in the rail');
+});
+
+test('the caret box strengthens further on hover of its heading (not just the row text darkening), and dims when the heading is disabled (filter-forced-open state)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.ok(/\.planner-unit-group-head:hover:not\(:disabled\)\s+\.planner-unit-group-toggle\s*\{[^}]*background:\s*var\(--status-info-bg\)/.test(css), 'hovering the heading must also strengthen the caret box itself, not just the text colour');
+  assert.ok(/\.planner-unit-group-head:disabled\s+\.planner-unit-group-toggle\s*\{[^}]*opacity/.test(css), 'the caret box must visibly dim when its heading is disabled, so it does not look interactive while a filter is forcing the group open');
+});
+
+test('.planner-unit-pill gets the same grab->grabbing active-state cursor swap on drag start that .planner-lesson-card already has — this rail card was missing it', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.ok(/\.planner-unit-pill:active\s*\{[^}]*cursor:\s*grabbing/.test(css), 'the rail pill must switch to a grabbing cursor once a drag actually starts, matching the Week Board card convention');
+});
+
+test('the drag-handle icon (.planner-unit-drag) darkens along with the rest of the card on hover, reinforcing which part of the card is the actual grab point', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.ok(/\.planner-unit-pill:hover\s+\.planner-unit-drag\s*\{[^}]*color:\s*var\(--status-info-text\)/.test(css), 'the drag handle must darken on card hover, not stay a flat muted colour throughout');
+});
+
+test('both affordance fixes are scoped to the rail — the Week Board day cards\' own drag/collapse behaviour and CSS classes are untouched', () => {
+  resetState();
+  const beforeLessons = JSON.stringify(getState().lessonPlans);
+  const beforeUnits = JSON.stringify(getState().unitPlans);
+  realRenderView(); // must not throw with the new caret/pill markup+CSS in place
+  assert.strictEqual(JSON.stringify(getState().lessonPlans), beforeLessons, 'a pure CSS/markup affordance change must never touch lesson data');
+  assert.strictEqual(JSON.stringify(getState().unitPlans), beforeUnits, 'a pure CSS/markup affordance change must never touch unit data');
+  const html = documentStub.getElementById('main-content').innerHTML;
+  assert.ok(html.includes('planner-lesson-card'), 'the Week Board day cards must still render, confirming the rail-scoped CSS changes did not break the shared render pipeline');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

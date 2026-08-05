@@ -1736,11 +1736,32 @@ body[data-text-size="large"] {
 .planner-unit-group-head:disabled {
   cursor: default;
 }
+/* Small bordered icon-button around the caret glyph — same "background/border one step
+   stronger than blend-in, reads as interactive at rest, not just on hover" language as
+   .planner-panel-collapse-toggle (the rail's own collapse button), scaled down to fit
+   inline in a compact row instead of a standalone header control. Previously the caret
+   was bare text with only a colour shift on hover, giving no at-rest signal that the
+   heading was clickable. */
 .planner-unit-group-toggle {
   flex-shrink: 0;
-  font-size: 10px;
-  width: 10px;
-  text-align: center;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border2);
+  background: var(--surface-alt);
+  border-radius: 4px;
+  font-size: 9px;
+  color: var(--text3);
+}
+.planner-unit-group-head:hover:not(:disabled) .planner-unit-group-toggle {
+  border-color: var(--status-info-border);
+  color: var(--status-info-text);
+  background: var(--status-info-bg);
+}
+.planner-unit-group-head:disabled .planner-unit-group-toggle {
+  opacity: 0.5;
 }
 .planner-unit-group-title {
   flex: 1;
@@ -1769,11 +1790,21 @@ body[data-text-size="large"] {
   border-color: var(--status-info-border);
   background: var(--status-info-bg);
 }
+/* Matches .planner-lesson-card:active's existing grab->grabbing cursor swap on actual
+   drag start — this card was missing that same active-state cue. */
+.planner-unit-pill:active {
+  cursor: grabbing;
+}
 .planner-unit-drag {
   color: var(--text3);
   font-size: 14px;
   line-height: 1;
   flex-shrink: 0;
+}
+/* Darkens along with the rest of the card on hover (.planner-unit-pill:hover above),
+   reinforcing which part of the card is the actual grab point. */
+.planner-unit-pill:hover .planner-unit-drag {
+  color: var(--status-info-text);
 }
 .planner-unit-pill-main {
   flex: 1;
