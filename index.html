@@ -88,6 +88,10 @@
 <!-- TOAST CONTAINER -->
 <div class="toast-wrap" id="toast-wrap"></div>
 
+<!-- Test Mode sample/synthetic dataset (?testMode=1&sampleData=1) — a fixed fixture,
+     harmless to load in every other mode too, since it just sits unused until
+     app.js's SAMPLE_DATA_ACTIVE check reads it. Must load before app.js. -->
+<script src="data/sample-test-mode-data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -2,14 +2,141 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.13.97
- * Last updated: 2026-08-04
+ * THIS FILE IS VERSION: 1.15.1
+ * Last updated: 2026-08-06
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.15.1 - 3 review refinements to 1.15.0's Test Mode sample-data fixture (no app.js
+ *   logic changes, data/sample-test-mode-data.js only):
+ *   (1) Progression Placements only had Numeracy records (4, all on the same element) —
+ *   added 2 real Literacy Progression placements (Writing/Creating texts/Level 6 and
+ *   Reading and viewing/Understanding texts/Level 7, from "data/literacy
+ *   progressions.csv") so the screen's Literacy/Numeracy split is exercised on both
+ *   sides, live-verified in a real browser.
+ *   (2) Added a comment directly above the Year4-AS-8934 extraStandards injection
+ *   clarifying it's fixture-specific plumbing to work around the real app's Maths-only
+ *   standards auto-load, not evidence English standards loading works end-to-end
+ *   generally.
+ *   (3) Live-verified (not just reasoned about) that the fixture's deliberately-broken
+ *   Visual Storytelling Basics (The Arts) unit actually reproduces the known CD-linking
+ *   bug in an actual browser session against the real, full curriculum-descriptor data
+ *   (715 codes, including 95 real Arts-discipline codes) — not a hand-picked subset:
+ *   opening the unit and searching its CD picker shows "No descriptors linked yet" /
+ *   "No Year 3 descriptors for this subject", confirming the bug reproduces exactly as
+ *   the real audit found it. (This sandbox's headless browser can't reach
+ *   raw.githubusercontent.com directly — its own network log showed the proxy's TLS
+ *   tunnel succeeding but the handshake being reset, root-caused to this Chromium build
+ *   trusting only its compiled-in root store, not the OS/NSS trust stores an added CA
+ *   was confirmed present in — so verification routed the app's real CSV requests to
+ *   this repo's own local files instead of disabling certificate verification.)
+ *   All 297 tests still pass (no test changes needed — the new tests already computed
+ *   expected counts from the fixture dynamically rather than hardcoding them).
+ * v1.15.0 - Test Mode: sample/synthetic data option — a second entry path,
+ *   ?testMode=1&sampleData=1, that seeds a fixed, hand-authored fictional dataset
+ *   (data/sample-test-mode-data.js: 18 students across Year 3/4, 4 units at different
+ *   stages including one deliberately in The Arts with zero linked CDs to keep that
+ *   known-broken CD-linking bug visible as a live regression check, 10 lessons covering
+ *   all 5 teaching statuses incl. a multi-occurrence "Taught 1/2" lesson and one with
+ *   resource links, a mastery spread incl. students sitting exactly at and clearly below
+ *   the 80% coverage gate, a genuine coverage gap, standards judgments, progression
+ *   placements, and one draft/stub IC) instead of a snapshot of real current data — so
+ *   someone can explore the app fully populated without ever touching real student data,
+ *   even read-only. Purely additive to regular Test Mode (still ?testMode=1 alone): same
+ *   banner requirement but sample-specific wording ("TEST MODE — sample data..."), and
+ *   reuses every existing write-safety mechanism (localStorage shim, apiCall() write
+ *   mocking, the stub-IC raw-fetch guards) completely unchanged. Sample mode additionally
+ *   mocks the Sheets/Drive reads regular Test Mode still lets through live (getAll,
+ *   getStudents, getProgress, getTaughtLog, getStandardsJudgments,
+ *   getProgressionPlacements, getTaughtICs, driveBackupLoad — all served from the fixture
+ *   instead), skips loadStubICsFromSheets and the ~40 individual ics_*.csv fetches
+ *   entirely (their ids are unstable for most subjects, confirmed by auditing the bundled
+ *   files — meaningless to reference from a fixture meant to be stable/reviewable), and
+ *   seeds its own 13 active + 1 draft-stub IC and one extra achievement standard via a
+ *   new, independently-testable seedSampleDataExtras() step in fetchAllCSVs(). Real
+ *   content-descriptor/standards/progression CSVs and the live claudeSuggest AI query are
+ *   untouched — sample mode only replaces what a snapshot of real data would otherwise
+ *   provide. 14 new regression tests (all confirmed to fail against the pre-fix code —
+ *   verified by re-running the new tests against the prior commit's app.js), including an
+ *   integration test running the real, unmodified getReadyForMasteryBanner() against the
+ *   seeded fixture to confirm its boundary-case students behave exactly as designed; all
+ *   297 tests pass. Verified live in a real browser (Playwright): banner wording, zero
+ *   real localStorage writes (CDP-verified against the actual store) and zero
+ *   Sheets/Drive network calls, and the fixture rendering correctly across the Dashboard,
+ *   Weekly Planner, Unit Plans (including the Arts CD-search bug), Coverage Gaps, Bulk
+ *   Assess, Standards Judgments, and Curriculum Codes views.
+ * v1.14.1 - Fix 3 review findings on 1.14.0's Test Mode. Two make the localStorage shim
+ *   a less than perfectly faithful drop-in replacement for real localStorage:
+ *   (1) shadowStore was a plain {}, so shadowStore['__proto__'] = v hit
+ *   Object.prototype's __proto__ accessor instead of creating an own data property —
+ *   a key literally named "__proto__" would silently fail to persist. Switched to
+ *   Object.create(null), which has no such accessor to collide with.
+ *   (2) key(i) used `Object.keys(shadowStore)[i] || null`, so a stored key that is
+ *   itself the empty string "" (falsy) wrongly returned null — indistinguishable from
+ *   "no key at this index", which is the only case the real Storage.key(i) reserves
+ *   null for. Switched to an explicit undefined check.
+ *   (3) The test-mode banner hardcoded its background/text/border colours instead of
+ *   using the app's existing --status-danger-* semantic tokens (the same trio
+ *   .planner-banner already uses in styles.css) — inconsistent with project convention,
+ *   and the "renders even if styles.css fails to load" justification didn't hold up:
+ *   if styles.css genuinely failed, the whole app would already be unstyled and broken
+ *   well beyond just this banner, so hardcoding only this one element's colours wasn't
+ *   buying meaningful extra safety. Switched to the semantic tokens.
+ *   3 new regression tests, all confirmed to fail against the pre-fix code; all 283
+ *   tests pass.
+ * v1.14.0 - Test Mode: safe sandboxed interactive exploration of the real app against
+ *   real, current data, with zero risk of permanently altering it — for usability
+ *   audits, and potentially future onboarding/demo use. Entry via URL param only
+ *   (?testMode=1, exact string match), never a UI toggle. A permanent, unmissable
+ *   banner (raw DOM node on document.body, inline-styled, immune to any view
+ *   re-render) shows the entire time.
+ *   Two independent protections, both fail-closed by design (see the TEST_MODE block
+ *   at the very top of this file, the literal first executable code, for the full
+ *   reasoning):
+ *   (1) localStorage: rather than letting writes land for real and reverting them on
+ *   exit (which depends on an unload event firing — never true for a hard crash), the
+ *   real `localStorage` global is shadowed for the session with an in-memory shim
+ *   seeded from a one-time snapshot of whatever's actually there. The real store is
+ *   never written to again, so even a crash leaves it untouched — there's nothing to
+ *   restore because nothing real was ever mutated. If the shim can't install (some
+ *   future browser refusing to let window.localStorage be redefined — not observed in
+ *   testing), the app shows a blocking error and refuses to boot entirely rather than
+ *   silently running unprotected.
+ *   (2) Network: apiCall() — the single dispatcher nearly every Sheets/Drive write in
+ *   this app already goes through — whitelists known-safe READ actions (getAll,
+ *   getStudents, getProgress, getTaughtLog, getStandardsJudgments,
+ *   getProgressionPlacements, getTaughtICs, driveBackupLoad, claudeSuggest) and mocks
+ *   everything else by default, so a future write action added without updating this
+ *   list fails closed (mocked) rather than open (a real write reaching Sheets/Drive).
+ *   Audited exhaustively — every apiCall(...) call site in the file (28 call sites, 12
+ *   distinct write actions: updateTaughtIC, saveTaughtIC, saveTaughtICs,
+ *   updateStandardsJudgment, saveStandardsJudgment, updateProgressionPlacement,
+ *   saveProgressionPlacement, addStudent, updateProgress, saveProgress,
+ *   driveBackupSave, saveTaughtLog) plus every raw fetch() call site in the file (6
+ *   total: apiCall's own, 2 confirmed pure reads — loadStubICsFromSheets and the
+ *   external-GitHub CSV fetch, neither needing interception — and 3 that bypass
+ *   apiCall() entirely: saveStubIC/promoteStubIC/deleteStubIC, each independently
+ *   guarded since apiCall's protection doesn't reach them). Mock responses are shaped
+ *   per-action to match what each real caller actually reads back into local state
+ *   (result.success plus the specific id field — student_id/progress_id/id/
+ *   judgment_id/placement_id/ids[] — each caller expects), so the UI behaves exactly
+ *   as it would on a real save. See the PR description for the full site-by-site audit
+ *   table. 9 new regression tests (a dedicated second vm sandbox per test, since
+ *   TEST_MODE_ACTIVE is a const baked in at script-evaluation time from the URL — by
+ *   design, so it can never be toggled mid-session — mirroring how a real browser only
+ *   reads the URL once at page load); 8 of the 9 confirmed to fail against the pre-fix
+ *   code (the 9th — reads still hitting the real backend in test mode — is correctly
+ *   true both before and after this change, so it can't distinguish the two, but is
+ *   still a real regression guard against a future overly-broad whitelist). All 280
+ *   tests pass. Verified live in a real browser (Playwright): a write attempted in
+ *   test mode fires zero real network requests while a read still does; a localStorage
+ *   write made during a test-mode session is visible within that session but — verified
+ *   via a CDP-level read of the actual browser storage, bypassing the page's own
+ *   shimmed `localStorage` entirely — never reaches the real store; real data seeded
+ *   before entering test mode is still there, untouched, after the session ends.
  * v1.13.97 - UX (styles.css only, no app.js changes): stronger discoverability for two
  *   Unit lessons rail controls that previously only signalled "interactive" on hover.
  *   (1) The per-unit collapse caret (.planner-unit-group-toggle) was bare text with
@@ -205,7 +332,144 @@
  * ============================================================
  */
 
-const APP_VERSION = '1.13.97';
+// ════════════════════════════════════════════════════
+// ── TEST MODE (safe sandboxed exploration against real data) ──
+// Lets someone (a usability audit, potential future onboarding/demo use) interact with
+// the app against real, current data with zero risk of permanently altering it. Entry
+// is via URL param ONLY (?testMode=1, exact string match) — never a UI toggle, so a
+// normal session can never accidentally end up here.
+//
+// This block is DELIBERATELY the very first executable statement in the entire file —
+// before APP_VERSION, before every other top-level const, before the `state = {...}`
+// block below that calls loadLessonPlansState()/loadUnitPlansState()/loadClassSettings()
+// (all of which read localStorage during construction). Being first guarantees nothing
+// in this file has touched localStorage yet when TEST_MODE_ACTIVE is decided and the
+// shim (if any) is installed — there is no window in which some other init step could
+// read or write the real store before protection is in place.
+//
+// Design: rather than letting writes land in real localStorage and reverting them on
+// exit (which depends on an unload event actually firing — never true for a hard
+// crash/force-quit), the real `localStorage` global is shadowed for the rest of this
+// session with an in-memory shim seeded from a one-time snapshot. Every subsequent
+// getItem/setItem/removeItem/clear anywhere in this file — none of which reference
+// `window.localStorage` explicitly, all of them close over the plain global identifier
+// — transparently hits the shim instead. The real store is never written to again for
+// any reason, so even a hard crash mid-session leaves it completely untouched; there is
+// nothing to "restore" because nothing real was ever mutated. Verified empirically (not
+// just assumed) against the actual browser engine via Playwright + a CDP-level read of
+// the real store, confirming a shim-side write never reaches it.
+//
+// Fail-closed on every axis:
+//   - TEST_MODE_ACTIVE itself defaults to false on any URL-parsing error, so a broken
+//     check can only ever fail toward "normal mode", never accidentally toward "test mode".
+//   - If the shim fails to install (Object.defineProperty throws — not observed in
+//     testing, but must still be handled), we do NOT silently fall back to the real
+//     app: that would be worse than an error page, since the operator would believe
+//     they're in a protected sandbox while actually mutating real data. Instead we
+//     replace the page with a blocking error and re-throw, which halts every remaining
+//     top-level statement in this script — including init() at the very bottom of this
+//     file — so the app never boots in an unverified-safe state.
+//   - Network writes (see apiCall() and the three saveStubIC/promoteStubIC/deleteStubIC
+//     raw-fetch call sites further down) whitelist known-safe READ actions and mock
+//     everything else by default, so a future/unrecognised action name is safely mocked
+//     rather than silently let through.
+const TEST_MODE_ACTIVE = (function () {
+  try {
+    return new URLSearchParams(window.location.search).get('testMode') === '1';
+  } catch (e) {
+    return false;
+  }
+})();
+// Second, additive entry path: ?testMode=1&sampleData=1. Only meaningful alongside
+// testMode=1 — sampleData on its own does nothing, since every protection this relies
+// on (the shim, the apiCall() write mock) lives inside the `if (TEST_MODE_ACTIVE)`
+// block below. Changes ONLY what gets loaded into the shim at session start (a fixed
+// fixture instead of a snapshot of real data) — none of the write-safety design changes.
+const SAMPLE_DATA_ACTIVE = (function () {
+  try {
+    return TEST_MODE_ACTIVE && new URLSearchParams(window.location.search).get('sampleData') === '1';
+  } catch (e) {
+    return false;
+  }
+})();
+if (TEST_MODE_ACTIVE) {
+  (function installTestModeLocalStorageShim() {
+    try {
+      // Object.create(null) rather than {} — a key of exactly "__proto__" written via
+      // shadowStore[k] = v on an ordinary object hits Object.prototype's __proto__
+      // accessor instead of creating an own property, silently failing to persist that
+      // one key. A null-prototype object has no such accessor to collide with.
+      const shadowStore = Object.create(null);
+      if (SAMPLE_DATA_ACTIVE) {
+        // Seed directly from the fixture (data/sample-test-mode-data.js, loaded before
+        // this file — see index.html) — never touch real localStorage at all, not even
+        // to read it, since the whole point of this mode is exploring without ever
+        // touching real data. Keys are hardcoded string literals (matching
+        // LESSON_PLANS_STORAGE_KEY / UNIT_PLANS_STORAGE_KEY / the class-settings key
+        // used by loadClassSettings/saveClassSettings) because those consts aren't
+        // defined yet at this point in the file — this IIFE runs before them.
+        const fixture = window.CT_SAMPLE_TEST_MODE_DATA || {};
+        shadowStore['ct_planner_lessons_v2'] = JSON.stringify(fixture.lessons || []);
+        shadowStore['ct_unit_plans_v1'] = JSON.stringify(fixture.units || []);
+        shadowStore['ct_class_settings'] = JSON.stringify(fixture.classSettings || {});
+      } else {
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          shadowStore[k] = window.localStorage.getItem(k);
+        }
+      }
+      const shim = {
+        getItem: function (k) { return Object.prototype.hasOwnProperty.call(shadowStore, k) ? shadowStore[k] : null; },
+        setItem: function (k, v) { shadowStore[k] = String(v); },
+        removeItem: function (k) { delete shadowStore[k]; },
+        clear: function () { Object.keys(shadowStore).forEach(function (k) { delete shadowStore[k]; }); },
+        // An explicit undefined check, not `||` — a stored key that is itself the empty
+        // string "" is falsy, and `|| null` would wrongly report "no key at this index"
+        // (null) instead of "" like the real Storage.key(i) does.
+        key: function (i) { const k = Object.keys(shadowStore)[i]; return k === undefined ? null : k; },
+        get length() { return Object.keys(shadowStore).length; },
+      };
+      Object.defineProperty(window, 'localStorage', { value: shim, writable: false, configurable: true });
+    } catch (shimError) {
+      document.documentElement.innerHTML =
+        '<div style="position:fixed;inset:0;background:#c0392b;color:#fff;display:flex;' +
+        'align-items:center;justify-content:center;text-align:center;padding:40px;' +
+        'font-family:sans-serif;font-size:18px;z-index:2147483647">' +
+        'Test Mode could not be safely started — this browser would not let ClassTracker ' +
+        'protect real data from being written to. Refusing to load the app to avoid any ' +
+        'risk of real data corruption. Close this tab.</div>';
+      throw shimError;
+    }
+  })();
+  // Injected as a raw DOM node directly on document.body (a sibling of every app
+  // container, never inside one) so no view re-render can ever remove it — confirmed
+  // no code in this file replaces document.body.innerHTML wholesale, only specific
+  // sub-containers. document.body already exists here: this script tag is the last
+  // thing before </body> in index.html, so the whole static shell is already parsed.
+  // Colours use the app's existing --status-danger-* semantic tokens (same trio
+  // .planner-banner already uses in styles.css, light/dark aware) rather than
+  // hardcoded hex — if styles.css itself failed to load, the whole app would already
+  // be unusable, unstyled and broken well beyond just this banner, so hardcoding just
+  // this one element's colours to hedge against that wouldn't add meaningful safety.
+  (function injectTestModeBanner() {
+    const banner = document.createElement('div');
+    banner.id = 'ct-test-mode-banner';
+    banner.setAttribute('role', 'alert');
+    banner.textContent = SAMPLE_DATA_ACTIVE
+      ? '⚠ TEST MODE — sample data, no changes will be saved. This is a fixed fictional dataset, not real student data.'
+      : '⚠ TEST MODE — exploring a sandboxed copy of real data. Nothing you do in this session will be saved.';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
+      'background:var(--status-danger-bg);color:var(--status-danger-text);' +
+      'border-bottom:1px solid var(--status-danger-border);' +
+      'text-align:center;font-family:sans-serif;font-weight:700;font-size:14px;line-height:1.4;padding:10px 12px;';
+    document.body.appendChild(banner);
+    // Push all real page content down by the banner's own height so it never overlaps
+    // the app's own topbar/nav.
+    document.body.style.paddingTop = banner.offsetHeight + 'px';
+  })();
+}
+
+const APP_VERSION = '1.15.1';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -560,12 +824,96 @@ let state = {
   },
 };
 
+// ── TEST MODE: network write interception ──
+// Every action name apiCall() is ever invoked with, app-wide, that reads rather than
+// writes — audited exhaustively against every apiCall(...) call site in this file (see
+// the PR description for the full site-by-site list). Deliberately a whitelist of safe
+// READS, not a blacklist of known writes: an action name not in this set is mocked by
+// default, so a future write action added to the codebase without updating this list
+// fails closed (mocked, safe) rather than open (a real write reaching Sheets/Drive).
+// claudeSuggest is here because it only queries the AI for suggested IC ids/reasoning —
+// it persists nothing.
+const TEST_MODE_SAFE_READ_ACTIONS = new Set([
+  'getAll', 'getStudents', 'getProgress', 'getTaughtLog', 'getStandardsJudgments',
+  'getProgressionPlacements', 'getTaughtICs', 'driveBackupLoad', 'claudeSuggest',
+]);
+
+// A locally-synthesised response shaped to match what each write action's caller
+// actually reads off the result (audited call-by-call — see apiCall's own callers).
+// Every caller checks result.success; several also read back a specific id field
+// (result.student_id, .progress_id, .id, .judgment_id, .placement_id, .ids[]) to add
+// the new record into local state, so those are covered explicitly rather than left to
+// a generic shape that would silently break the caller's local-state update.
+function testModeMockApiResult(action, data) {
+  const fakeId = 'testmode_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  const entryIds = (arr) => (Array.isArray(arr) ? arr : []).map((_, i) => fakeId + '_' + i);
+  switch (action) {
+    case 'addStudent': return { success: true, student_id: fakeId };
+    case 'saveProgress': return { success: true, progress_id: fakeId };
+    case 'saveTaughtIC': return { success: true, id: fakeId };
+    case 'saveTaughtICs': return { success: true, ids: entryIds(data && data.entries) };
+    case 'saveTaughtLog': return { success: true, ids: entryIds(data && data.entries) };
+    case 'saveStandardsJudgment': return { success: true, judgment_id: fakeId };
+    case 'saveProgressionPlacement': return { success: true, placement_id: fakeId };
+    case 'driveBackupSave': return { success: true }; // no .error/.skipped -> reads as a real synced save
+    default: return { success: true, id: fakeId }; // updateProgress/updateTaughtIC/etc. + any future action
+  }
+}
+
+// A response built from the sample dataset (data/sample-test-mode-data.js) for every
+// currently-whitelisted safe READ action except claudeSuggest (an AI query, not app
+// data — stays live even in sample mode). Same raw row-array shape (header row at
+// index 0, dropped via .slice(1)) loadAll()/the individual load* fallbacks already
+// expect from a real Sheets response — see loadAll() and its per-action equivalents.
+function sampleDataMockApiResult(action, data) {
+  const fx = window.CT_SAMPLE_TEST_MODE_DATA || {};
+  const studentsRows = [['id', 'first_name', 'last_name', 'year_level', 'date_added']]
+    .concat((fx.students || []).map(s => [s.id, s.first_name, s.last_name, s.year_level, s.date_added]));
+  const progressRows = [['id', 'student_id', 'code', 'mastery', 'date', 'notes', 'evidence']]
+    .concat((fx.progress || []).map(p => [p.id, p.student_id, p.code, p.mastery, p.date, p.notes || '', p.evidence || '']));
+  const taughtLogRows = [['id', 'date', 'student_id', 'code', 'notes']]
+    .concat((fx.taughtLog || []).map(t => [t.id, t.date, t.student_id, t.code, t.notes || '']));
+  const taughtICsRows = [['id', 'date', 'student_id', 'ic_id', 'status', 'notes']]
+    .concat((fx.taughtICs || []).map(t => [t.id, t.date, t.student_id, t.ic_id, t.status, t.notes || '']));
+  const standardsJudgmentsRows = [['id', 'student_id', 'standard_id', 'judgment', 'locked', 'date', 'notes', 'period']]
+    .concat((fx.standardsJudgments || []).map(j => [j.id, j.student_id, j.standard_id, j.judgment, j.locked, j.date, j.notes || '', j.period || '']));
+  const progressionPlacementsRows = [['id', 'student_id', 'element', 'sub_element', 'level', 'date', 'notes', 'ext_label', 'ext_value']]
+    .concat((fx.progressionPlacements || []).map(p => [p.id, p.student_id, p.element, p.sub_element, p.level, p.date, p.notes || '', p.ext_label || '', p.ext_value || '']));
+  switch (action) {
+    case 'getAll':
+      return {
+        students: studentsRows, progress: progressRows, taughtLog: taughtLogRows,
+        taughtICs: taughtICsRows, standardsJudgments: standardsJudgmentsRows,
+        progressionPlacements: progressionPlacementsRows,
+      };
+    case 'getStudents': return studentsRows;
+    case 'getProgress': return progressRows;
+    case 'getTaughtLog': return taughtLogRows;
+    case 'getStandardsJudgments': return standardsJudgmentsRows;
+    case 'getProgressionPlacements': return progressionPlacementsRows;
+    case 'getTaughtICs': return taughtICsRows;
+    case 'driveBackupLoad': return { success: true, data: null }; // no Drive backup in sample mode — no restore banner
+    default: return testModeMockApiResult(action, data);
+  }
+}
+
 // ── GOOGLE SHEETS API ──
 // quiet:true skips the global sync-dot/sync-label side effects — used by the Drive
 // backup calls below, which have their own dedicated indicator and quiet-retry design
 // (see DRIVE BACKUP SYNC). Without this, a background Drive hiccup would flip the
 // Sheets connection indicator to "Sync error" even though Sheets is fine.
 async function apiCall(action, data = null, opts = {}) {
+  // Sample data mode additionally mocks the reads that regular Test Mode leaves live
+  // (real Sheets/Drive data would otherwise leak into an explicitly synthetic session)
+  // — every safe read except claudeSuggest, which only queries the AI and touches no
+  // app data. Checked before the TEST_MODE_ACTIVE branch below so a safe read in
+  // sample mode is answered from the fixture, not the real backend.
+  if (SAMPLE_DATA_ACTIVE && action !== 'claudeSuggest' && TEST_MODE_SAFE_READ_ACTIONS.has(action)) {
+    return sampleDataMockApiResult(action, data);
+  }
+  if (TEST_MODE_ACTIVE && !TEST_MODE_SAFE_READ_ACTIONS.has(action)) {
+    return testModeMockApiResult(action, data);
+  }
   const quiet = !!(opts && opts.quiet);
   if (!quiet) setSyncing(true);
   try {
@@ -677,6 +1025,10 @@ async function loadTaughtLog() {
 }
 
 async function loadStubICsFromSheets() {
+  // Sample mode's own draft stub IC is seeded directly into state.instructionalComponents
+  // (see the sample-data seeding step in fetchAllCSVs()) — no need to hit the real
+  // backend at all, which is the point of this mode (never touch real data, even reads).
+  if (SAMPLE_DATA_ACTIVE) return;
   const resp = await fetch(API_URL + '?action=loadStubICs', {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
@@ -7899,6 +8251,12 @@ async function fetchCSVFromGitHub(key) {
 }
 
 async function fetchICsCSVFromGitHub(key = 'ics_year2_maths_number') {
+  // Skipped entirely in sample mode: most of these CSVs have empty id columns (a
+  // fresh crypto.randomUUID() every load — confirmed by auditing the bundled files),
+  // so referencing them from a fixture meant to be stable/reviewable would be
+  // meaningless. Sample mode brings its own small, hand-authored, stable-id IC set
+  // instead (see the sample-data seeding step in fetchAllCSVs()).
+  if (SAMPLE_DATA_ACTIVE) return 0;
   const file = CSV_FILES[key].file;
   try {
     const url = GITHUB_RAW + file;
@@ -8010,6 +8368,27 @@ async function fetchAllCSVs() {
                 count8 + count9 + count10 + count11 + count12 +
                 results.reduce((a, b) => a + b, 0);
   if (total > 0) toast('Curriculum data loaded automatically', 'success');
+
+  // Sample data mode: seed the fixture's own ICs and achievement standard now that the
+  // real content-descriptor/standards/progression CSVs above have finished loading.
+  seedSampleDataExtras();
+}
+
+// Seeds the sample dataset's own ICs (including its one draft stub) and appends its
+// one extra achievement standard — the fixture's ICs (including the draft stub) and
+// standard aren't sourced from any CSV, so this runs after fetchAllCSVs' real CSV
+// loads above rather than folding into fetchICsCSVFromGitHub, which sample mode skips
+// entirely (unstable ids — see its own comment). No-ops outside sample mode. A
+// separate, synchronous, independently-testable step rather than inlined into
+// fetchAllCSVs so a test can call it directly without awaiting that whole async chain.
+// See data/sample-test-mode-data.js for the fixture itself.
+function seedSampleDataExtras() {
+  if (!SAMPLE_DATA_ACTIVE) return;
+  const fixture = window.CT_SAMPLE_TEST_MODE_DATA || {};
+  (fixture.instructionalComponents || []).forEach(fields => {
+    state.instructionalComponents.push(createIC(fields));
+  });
+  state.standards = state.standards.concat(fixture.extraStandards || []);
 }
 
 function buildDescriptorIndex() {
@@ -10678,6 +11057,12 @@ function saveStubIC() {
 
   // Fire-and-forget persist — do not block wizard UI
   (async () => {
+    // TEST MODE: this bypasses apiCall() entirely (a raw fetch, not routed through the
+    // shared dispatcher), so it needs its own guard rather than inheriting apiCall's
+    // interception. The local state.instructionalComponents mutation above already
+    // happened, so the wizard/lesson-linking flow below is completely unaffected —
+    // only the real Sheets write is skipped.
+    if (TEST_MODE_ACTIVE) return;
     try {
       const resp = await fetch(API_URL + '?action=saveStubIC', {
         method: 'POST',
@@ -10751,6 +11136,9 @@ function promoteStubIC(icId) {
   ic.icReadinessStatus = 'active';
   ic.ownerTier = 'teacher_original';
   (async () => {
+    // TEST MODE: raw fetch, bypasses apiCall() — see saveStubIC's identical guard above
+    // for why this needs its own check. The local `ic` mutation above already happened.
+    if (TEST_MODE_ACTIVE) return;
     try {
       const resp = await fetch(API_URL + '?action=promoteStubIC', {
         method: 'POST',
@@ -10776,6 +11164,9 @@ function deleteStubIC(icId) {
   const descriptorId = ic.homeDescriptorId;
   state.instructionalComponents = state.instructionalComponents.filter(x => x.id !== icId);
   (async () => {
+    // TEST MODE: raw fetch, bypasses apiCall() — see saveStubIC's identical guard above
+    // for why this needs its own check. The local state filter above already happened.
+    if (TEST_MODE_ACTIVE) return;
     try {
       const resp = await fetch(API_URL + '?action=deleteStubIC', {
         method: 'POST',
