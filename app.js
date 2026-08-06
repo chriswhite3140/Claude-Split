@@ -2,14 +2,39 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.15.0
- * Last updated: 2026-08-05
+ * THIS FILE IS VERSION: 1.15.1
+ * Last updated: 2026-08-06
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.15.1 - 3 review refinements to 1.15.0's Test Mode sample-data fixture (no app.js
+ *   logic changes, data/sample-test-mode-data.js only):
+ *   (1) Progression Placements only had Numeracy records (4, all on the same element) —
+ *   added 2 real Literacy Progression placements (Writing/Creating texts/Level 6 and
+ *   Reading and viewing/Understanding texts/Level 7, from "data/literacy
+ *   progressions.csv") so the screen's Literacy/Numeracy split is exercised on both
+ *   sides, live-verified in a real browser.
+ *   (2) Added a comment directly above the Year4-AS-8934 extraStandards injection
+ *   clarifying it's fixture-specific plumbing to work around the real app's Maths-only
+ *   standards auto-load, not evidence English standards loading works end-to-end
+ *   generally.
+ *   (3) Live-verified (not just reasoned about) that the fixture's deliberately-broken
+ *   Visual Storytelling Basics (The Arts) unit actually reproduces the known CD-linking
+ *   bug in an actual browser session against the real, full curriculum-descriptor data
+ *   (715 codes, including 95 real Arts-discipline codes) — not a hand-picked subset:
+ *   opening the unit and searching its CD picker shows "No descriptors linked yet" /
+ *   "No Year 3 descriptors for this subject", confirming the bug reproduces exactly as
+ *   the real audit found it. (This sandbox's headless browser can't reach
+ *   raw.githubusercontent.com directly — its own network log showed the proxy's TLS
+ *   tunnel succeeding but the handshake being reset, root-caused to this Chromium build
+ *   trusting only its compiled-in root store, not the OS/NSS trust stores an added CA
+ *   was confirmed present in — so verification routed the app's real CSV requests to
+ *   this repo's own local files instead of disabling certificate verification.)
+ *   All 297 tests still pass (no test changes needed — the new tests already computed
+ *   expected counts from the fixture dynamically rather than hardcoding them).
  * v1.15.0 - Test Mode: sample/synthetic data option — a second entry path,
  *   ?testMode=1&sampleData=1, that seeds a fixed, hand-authored fictional dataset
  *   (data/sample-test-mode-data.js: 18 students across Year 3/4, 4 units at different
@@ -444,7 +469,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.15.1';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';

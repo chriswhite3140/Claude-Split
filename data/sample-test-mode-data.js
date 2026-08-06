@@ -363,6 +363,9 @@
   // boot — see fetchAllCSVs) so the English standard referenced above has a row to
   // join against. Row shape/text copied verbatim from
   // data/MASTER_Achievement_Standards_ALLCODES.csv so it matches real content.
+  // This append is fixture-specific plumbing to work around that Maths-only auto-load,
+  // not a general fix — it says nothing about whether English standards loading works
+  // end-to-end in the real (non-sample) app, which still only ever auto-loads Maths.
   var extraStandards = [
     {
       'Achievement Standard ID': 'Year4-AS-8934',
@@ -378,12 +381,17 @@
   // ── Progression Placements ──
   // Numeracy Progression — Number sense and algebra / Number and place value —
   // real element/sub-element/level values from
-  // data/Numeracy_Progressions_v9_MASTER_Level_Aligned.csv.
+  // data/Numeracy_Progressions_v9_MASTER_Level_Aligned.csv. Plus 2 Literacy
+  // Progression placements — real element/sub-element/level values from
+  // data/literacy progressions.csv — so the Progression Placement screen's
+  // Literacy/Numeracy split is exercised on both sides, not just Numeracy.
   var progressionPlacements = [
     { id: 'sample-pp-01', student_id: 'sample-stu-01', element: 'Number sense and algebra', sub_element: 'Number and place value', level: '2', date: '2026-07-24', notes: '', ext_label: '', ext_value: '' },
     { id: 'sample-pp-02', student_id: 'sample-stu-02', element: 'Number sense and algebra', sub_element: 'Number and place value', level: '1', date: '2026-07-24', notes: '', ext_label: '', ext_value: '' },
     { id: 'sample-pp-03', student_id: 'sample-stu-05', element: 'Number sense and algebra', sub_element: 'Number and place value', level: '1', date: '2026-07-24', notes: '', ext_label: '', ext_value: '' },
     { id: 'sample-pp-04', student_id: 'sample-stu-06', element: 'Number sense and algebra', sub_element: 'Number and place value', level: '2', date: '2026-07-24', notes: '', ext_label: '', ext_value: '' },
+    { id: 'sample-pp-05', student_id: 'sample-stu-08', element: 'Writing', sub_element: 'Creating texts', level: 'Level 6', date: '2026-07-24', notes: '', ext_label: '', ext_value: '' },
+    { id: 'sample-pp-06', student_id: 'sample-stu-11', element: 'Reading and viewing', sub_element: 'Understanding texts', level: 'Level 7', date: '2026-07-24', notes: '', ext_label: '', ext_value: '' },
   ];
 
   window.CT_SAMPLE_TEST_MODE_DATA = {
