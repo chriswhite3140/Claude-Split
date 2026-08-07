@@ -62,6 +62,19 @@ Planner/Unit Plan data (units + lessons) is not part of this Sheets backend — 
 
 ---
 
+## Test Mode — safe exploration without touching real data
+
+The app has a built-in safe mode for interactive exploration, audits, or any extensive click-through testing, with zero risk of writing to real data.
+
+Activation is via URL param only, never a UI toggle:
+
+- `?testMode=1` — real, current data, but nothing persists. localStorage is shadowed for the session (the real store is never written to again), and all backend write actions are mocked. Use this when you specifically need to test against the real dataset's actual shape.
+- `?testMode=1&sampleData=1` — a fixed, fictional dataset instead of real data (18 students, 4 units at different stages, lessons covering all 5 teaching statuses, a mastery spread at the 80% coverage-gate boundary, a genuine coverage gap, and a deliberately-reproduced known bug in one unit). Use this by default for anything exploratory, audit-style, or involving realistic-but-fake data — it has the same non-persistence guarantee as `testMode=1` alone, but never touches or even reads real student data. `sampleData=1` does nothing without `testMode=1` also present (fail-closed by design).
+
+Default to sampleData mode for any UI audit, usability walkthrough, or exploratory session. Confirm the test-mode banner is visible before proceeding — if the URL param doesn't produce the banner, stop and report that rather than continuing on what might be the live app.
+
+---
+
 ## Key conventions
 
 - Vanilla JavaScript only — no frameworks, no npm, no build tools
