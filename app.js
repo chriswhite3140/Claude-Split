@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.0
+ * THIS FILE IS VERSION: 1.16.2
  * Last updated: 2026-08-08
  * ============================================================
  *
@@ -10,6 +10,35 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.2 - Review fix for v1.16.1's Bulk Assess scroll-preservation guard: the
+ *   selectedCode/subjectFilter identity check missed that filteredStudents (and so
+ *   the by-code roster's actual student set) also depends on yearFilter via
+ *   sortStudents(), so switching year level with the same code/subject still selected
+ *   could restore a stale scrollTop into a roster with a different set of students.
+ *   Added yearFilter as a third dimension to the same capture/restore identity check.
+ *   1 new regression test (312 total), confirmed to fail against the pre-fix code.
+ * v1.16.1 - Fix Bulk Assess losing scroll position on every rating click. Extends the
+ *   existing capturePanelScrollPositions()/restorePanelScrollPositions() mechanism
+ *   (introduced in v1.13.82/83 for the Weekly Planner rail/drawer and Unit Plans'
+ *   columns) to a new tracked class, bulk-assess-roster-body, on the by-code roster's
+ *   scrollable container — guarded on both selectedCode and subjectFilter matching
+ *   the previous render, so a stale scroll position never carries into a newly-picked,
+ *   unrelated code's roster.
+ *   The less obvious part: that mechanism is only wired into renderView()'s switch
+ *   statement, but every Bulk Assess action (rating a student, applying to all,
+ *   switching code/subject/year/strand/student/sort, discarding) calls
+ *   renderBulkAssess() DIRECTLY, never through renderView() — so a rating click never
+ *   went anywhere near the capture/restore pair at all, regardless of what classes
+ *   were in the tracked list. Fixed by having renderBulkAssess() wrap its own body
+ *   with the same shared capture/restore calls, so it self-manages its scroll
+ *   position regardless of which of its ~10 call sites triggered the re-render,
+ *   rather than touching each one individually or building a second mechanism.
+ *   5 new regression tests (311 total), 4 confirmed to fail against the pre-fix code.
+ *   Verified live in a real browser (Test Mode sample data): scrolled the roster to
+ *   300px, clicked a rating button on a student mid-list via a real DOM click event,
+ *   confirmed it stayed at exactly 300px (same pattern as the original Weekly
+ *   Planner fix's validation) — and confirmed switching to a different, unrelated
+ *   code correctly resets to the top rather than carrying the stale position over.
  * v1.16.0 - Fix the sidebar "you are here" highlight: five instances of one root
  *   cause, not three separate bugs. showView() was the only place that synced the
  *   .nav-btn.active DOM class to state.currentView; every other code path that
@@ -513,7 +542,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.16.2';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1594,29 +1623,30 @@ function showView(v) {
   renderView();
 }
 
-// The Weekly Planner rail/drawer and Unit Plans' three columns each scroll inside
-// their own body div now (see the "independent scroll per panel" CSS), instead of
-// only the whole page ever scrolling — but renderView() replaces main-content's
-// entire innerHTML on every call, so each of these bodies is a brand-new DOM node
-// every time and would otherwise always reset to scrollTop 0. That snaps a teacher
-// back to the top of a long list/drawer after routine edits (toggling an IC,
-// changing a field, adding a resource link) that re-render the very panel they're
+// The Weekly Planner rail/drawer, Unit Plans' three columns, and Bulk Assess's
+// by-code student roster each scroll inside their own body div now (see the
+// "independent scroll per panel" CSS), instead of only the whole page ever
+// scrolling — but renderView() replaces main-content's entire innerHTML on every
+// call, so each of these bodies is a brand-new DOM node every time and would
+// otherwise always reset to scrollTop 0. That snaps a teacher back to the top of a
+// long list/drawer/roster after routine edits (toggling an IC, changing a field,
+// adding a resource link, rating a student) that re-render the very panel they're
 // scrolled through. Captured right before the switch below and restored right
 // after, keyed by class name — at most one instance of each of these classes is
 // ever in the DOM at a time, so that's a sufficient key.
-const PANEL_SCROLL_BODY_CLASSES = ['planner-unit-rail-body', 'lesson-drawer-body', 'unit-seq-body', 'unit-side-body'];
+const PANEL_SCROLL_BODY_CLASSES = ['planner-unit-rail-body', 'lesson-drawer-body', 'unit-seq-body', 'unit-side-body', 'bulk-assess-roster-body'];
 
 // Every action function in this codebase mutates state (currentView via
-// setCurrentView, selectedLessonId, openUnitId, ...) BEFORE calling renderView() —
-// never after — so by the time renderView()'s own body runs, state.currentView/
-// selectedLessonId/openUnitId already describe the render about to happen, not the
-// one about to be replaced. Reading them directly here would make "did the
-// logical content actually change" always compare a value against itself,
-// permanently unable to detect navigation. main's own data-prev-* attributes are
-// the fix: stamped at the END of every render (below) with what was just
-// rendered, they're read back at the START of the next render, before anything
-// about this render has touched them, giving a true "previous" snapshot to
-// compare the new state against.
+// setCurrentView, selectedLessonId, openUnitId, bulkAssess.selectedCode, ...) BEFORE
+// calling renderView() — never after — so by the time renderView()'s own body runs,
+// state.currentView/selectedLessonId/openUnitId/bulkAssess.selectedCode already
+// describe the render about to happen, not the one about to be replaced. Reading
+// them directly here would make "did the logical content actually change" always
+// compare a value against itself, permanently unable to detect navigation. main's
+// own data-prev-* attributes are the fix: stamped at the END of every render (below)
+// with what was just rendered, they're read back at the START of the next render,
+// before anything about this render has touched them, giving a true "previous"
+// snapshot to compare the new state against.
 function capturePanelScrollPositions(main) {
   const positions = {};
   if (!main) return positions;
@@ -1632,6 +1662,9 @@ function capturePanelScrollPositions(main) {
   positions.view = main.dataset.prevView;
   positions.selectedLessonId = main.dataset.prevSelectedLessonId;
   positions.openUnitId = main.dataset.prevOpenUnitId;
+  positions.bulkAssessCode = main.dataset.prevBulkAssessCode;
+  positions.bulkAssessSubject = main.dataset.prevBulkAssessSubject;
+  positions.bulkAssessYear = main.dataset.prevBulkAssessYear;
   return positions;
 }
 
@@ -1640,20 +1673,37 @@ function restorePanelScrollPositions(main, positions) {
   const currentView = state.currentView || '';
   const currentLessonId = (state.plannerUi && state.plannerUi.selectedLessonId) || '';
   const currentUnitId = (state.unitPlansUi && state.unitPlansUi.openUnitId) || '';
+  const currentBulkAssessCode = (state.bulkAssess && state.bulkAssess.selectedCode) || '';
+  const currentBulkAssessSubject = (state.bulkAssess && state.bulkAssess.subjectFilter) || '';
+  const currentBulkAssessYear = (state.bulkAssess && state.bulkAssess.yearFilter) || '';
   // Stamp what's true NOW for the next render to compare against — always, even
   // when nothing is restored below, so the "previous" snapshot never goes stale.
   main.dataset.prevView = currentView;
   main.dataset.prevSelectedLessonId = currentLessonId;
   main.dataset.prevOpenUnitId = currentUnitId;
+  main.dataset.prevBulkAssessCode = currentBulkAssessCode;
+  main.dataset.prevBulkAssessSubject = currentBulkAssessSubject;
+  main.dataset.prevBulkAssessYear = currentBulkAssessYear;
   if (positions.view !== currentView) return;
   const sameLesson = positions.selectedLessonId === currentLessonId;
   const sameUnit = positions.openUnitId === currentUnitId;
+  // The roster's own content is fully determined by selectedCode alone (looked up
+  // directly, independent of the subject filter once a code is picked — see
+  // buildByCode()), so the subject check is never actually load-bearing today, but
+  // it's kept explicit rather than relying on that implementation detail, since a
+  // stale scroll position surviving a subject switch is exactly the kind of "unrelated
+  // code's student list" this whole mechanism exists to avoid. The year filter IS
+  // load-bearing, though: filteredStudents (and so the roster's actual student set)
+  // is filtered by yearFilter via sortStudents(), so switching year while the same
+  // code/subject stay selected still changes who's in the list.
+  const sameBulkAssessCode = positions.bulkAssessCode === currentBulkAssessCode && positions.bulkAssessSubject === currentBulkAssessSubject && positions.bulkAssessYear === currentBulkAssessYear;
   PANEL_SCROLL_BODY_CLASSES.forEach(cls => {
     if (!(cls in positions)) return;
     // planner-unit-rail-body's content (every unit lesson) doesn't depend on which
     // one is selected, so it only needs the view check above.
     if (cls === 'lesson-drawer-body' && !sameLesson) return;
     if ((cls === 'unit-seq-body' || cls === 'unit-side-body') && !sameUnit) return;
+    if (cls === 'bulk-assess-roster-body' && !sameBulkAssessCode) return;
     const el = main.querySelector('.' + cls);
     if (el) el.scrollTop = positions[cls];
   });
@@ -7452,6 +7502,19 @@ function buildCodeListItem(c, selectedCode) {
 
 // ── BULK ASSESS VIEW ──
 function renderBulkAssess(main) {
+  // Every Bulk Assess action (rating a student, applying to all, switching code/
+  // subject/year/strand/student/sort, discarding) re-renders by calling
+  // renderBulkAssess() DIRECTLY — never through renderView(), which is the only place
+  // capturePanelScrollPositions()/restorePanelScrollPositions() were previously wired
+  // in. That's the actual reason a rating click reset the roster's scroll to the top:
+  // renderView()'s own capture/restore pair around its switch statement never even
+  // ran for this path. Rather than touch every one of those call sites (or duplicate
+  // the capture/restore logic), renderBulkAssess() wraps its own body with the same
+  // shared mechanism — harmless to also run redundantly when reached via renderView()
+  // (e.g. first navigating into Bulk Assess): its capture there sees the outgoing
+  // view's markup, its own view-mismatch guard skips restoring anything, and the
+  // dataset re-stamp is idempotent.
+  const panelScrollPositions = capturePanelScrollPositions(main);
   if (!state.bulkAssess) state.bulkAssess = { mode:'by-code', yearFilter:'all', subjectFilter:'English', strandFilter:'all', selectedCode:null, selectedStudent:null, date:new Date().toISOString().split('T')[0], pendingChanges:{} };
   const ba = state.bulkAssess;
   const pendingCount = Object.keys(ba.pendingChanges).length;
@@ -7523,7 +7586,7 @@ function renderBulkAssess(main) {
             <button data-ba-action="applyMasteryToAll" data-ba-key="${code}" data-ba-val="Achieved" style="padding:4px 10px;border-radius:4px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">✓ All Achieved</button>
             <button data-ba-action="applyMasteryToAll" data-ba-key="${code}" data-ba-val="Developing" style="padding:4px 10px;border-radius:4px;border:1px solid var(--gold);background:var(--gold-dim);color:var(--gold);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">◐ All Developing</button>
           </div>
-          <div style="overflow-y:auto;flex:1"><table style="width:100%;border-collapse:collapse"><tbody>
+          <div class="bulk-assess-roster-body" style="overflow-y:auto;flex:1"><table style="width:100%;border-collapse:collapse"><tbody>
             ${filteredStudents.map((s,si) => {
               const key = s.id+'|'+code;
               const pending = ba.pendingChanges[key];
@@ -7625,6 +7688,7 @@ function renderBulkAssess(main) {
     </div>
     <div style="overflow:hidden">${modeContent}</div>
   `;
+  restorePanelScrollPositions(main, panelScrollPositions);
 }
 
 async function saveBulkAssess() {
