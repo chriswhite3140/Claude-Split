@@ -3901,6 +3901,115 @@ test('capturePanelScrollPositions / restorePanelScrollPositions never throw acro
   assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different open unit');
 });
 
+// ── Bulk Assess: scroll position lost on every rating click (extends the same ──
+// ── capturePanelScrollPositions/restorePanelScrollPositions mechanism above) ────
+console.log('Bulk Assess roster scroll preservation');
+
+function seedBulkAssessFixture(st) {
+  st.curriculumCodes = [
+    { Code: 'AC9E3LY01', Subject: 'English', 'Year Level': 'Year 3', Strand: 'Literacy' },
+    { Code: 'AC9E3LY02', Subject: 'English', 'Year Level': 'Year 3', Strand: 'Literacy' },
+  ];
+  st.students = [
+    { id: 'stu_1', first_name: 'Amelia', last_name: 'Chen', year_level: '3' },
+    { id: 'stu_2', first_name: 'Liam', last_name: "O'Connor", year_level: '3' },
+  ];
+  st.currentView = 'bulk-assess';
+  st.bulkAssess = { mode: 'by-code', yearFilter: 'all', subjectFilter: 'English', strandFilter: 'all', selectedCode: 'AC9E3LY01', selectedStudent: null, date: '2026-08-08', pendingChanges: {} };
+}
+
+test('renderBulkAssess gives the by-code roster body the bulk-assess-roster-body class the shared scroll-preservation mechanism looks for, and omits it when no code is selected yet (matching the mechanism\'s own graceful "element not found" handling)', () => {
+  resetState();
+  const st = getState();
+  seedBulkAssessFixture(st);
+  realRenderView();
+  assert.ok(documentStub.getElementById('main-content').innerHTML.includes('class="bulk-assess-roster-body"'), 'the roster body must carry the tracked class once a code is selected');
+
+  st.bulkAssess.selectedCode = null;
+  realRenderView();
+  assert.ok(!documentStub.getElementById('main-content').innerHTML.includes('bulk-assess-roster-body'), 'with no code selected, the empty-state placeholder renders instead — no roster body to (mis)track');
+});
+
+test('capturePanelScrollPositions reads the PREVIOUS render\'s Bulk Assess identity (selected code + subject filter) from main\'s own data-prev-* attributes, not live state — same ordering hazard as the Weekly Planner/Unit Plans case above, since setBulkCode() updates state.bulkAssess.selectedCode before renderBulkAssess() ever runs', () => {
+  resetState();
+  const st = getState();
+  seedBulkAssessFixture(st);
+
+  // Simulate what a prior render would have stamped while AC9E3LY01 was selected.
+  const mainStub = documentStub.getElementById('main-content');
+  mainStub.dataset.prevView = 'bulk-assess';
+  mainStub.dataset.prevBulkAssessCode = 'AC9E3LY01';
+  mainStub.dataset.prevBulkAssessSubject = 'English';
+
+  // Now simulate setBulkCode('AC9E3LY02') having already flipped state before
+  // capturePanelScrollPositions runs.
+  st.bulkAssess.selectedCode = 'AC9E3LY02';
+
+  const positions = sandbox.capturePanelScrollPositions(mainStub);
+  assert.strictEqual(positions.bulkAssessCode, 'AC9E3LY01', 'must capture the PREVIOUS selected code from main\'s stamped attribute, not the already-updated live state');
+  assert.strictEqual(positions.bulkAssessSubject, 'English', 'must likewise capture the previous subject filter, not live state');
+});
+
+test('restorePanelScrollPositions correctly detects a code switch in Bulk Assess and re-stamps the new identity for the next render, the same way it already does for the Weekly Planner\'s selected lesson and Unit Plans\' open unit', () => {
+  resetState();
+  const st = getState();
+  seedBulkAssessFixture(st);
+  const mainStub = documentStub.getElementById('main-content');
+  mainStub.dataset.prevView = 'bulk-assess';
+  mainStub.dataset.prevBulkAssessCode = 'AC9E3LY01';
+  mainStub.dataset.prevBulkAssessSubject = 'English';
+
+  const positions = { 'bulk-assess-roster-body': 300, view: 'bulk-assess', bulkAssessCode: 'AC9E3LY01', bulkAssessSubject: 'English' };
+  st.bulkAssess.selectedCode = 'AC9E3LY02'; // teacher picked a different code
+
+  sandbox.restorePanelScrollPositions(mainStub, positions);
+  // As with the Weekly Planner/Unit Plans tests above, the real scrollTop-skip
+  // needs a live DOM to observe directly (verified live via Playwright per the
+  // task's required validation); what's testable here is that the identity
+  // snapshot for the NEXT render is correctly refreshed.
+  assert.strictEqual(mainStub.dataset.prevBulkAssessCode, 'AC9E3LY02', 'must re-stamp the new selected code for the next render to compare against');
+  assert.strictEqual(mainStub.dataset.prevBulkAssessSubject, 'English', 'subject filter unchanged, but must still be re-stamped');
+});
+
+test('a bare subject-filter change with the SAME selected code still counts as different identity for Bulk Assess\'s roster — the task explicitly calls out "same selected code/subject filter" as the guard, not code alone', () => {
+  resetState();
+  const st = getState();
+  seedBulkAssessFixture(st);
+  const mainStub = documentStub.getElementById('main-content');
+  mainStub.dataset.prevView = 'bulk-assess';
+  mainStub.dataset.prevBulkAssessCode = 'AC9E3LY01';
+  mainStub.dataset.prevBulkAssessSubject = 'English';
+
+  const positions = { 'bulk-assess-roster-body': 300, view: 'bulk-assess', bulkAssessCode: 'AC9E3LY01', bulkAssessSubject: 'English' };
+  // Same code id, but the subject filter itself changed underneath it (the one
+  // dimension code alone can't distinguish, per buildByCode()'s own comment).
+  st.bulkAssess.subjectFilter = 'Mathematics';
+
+  sandbox.restorePanelScrollPositions(mainStub, positions);
+  assert.strictEqual(mainStub.dataset.prevBulkAssessSubject, 'Mathematics', 'must re-stamp the new subject filter for the next render to compare against');
+});
+
+test('capturePanelScrollPositions / restorePanelScrollPositions never throw across every Bulk Assess identity-change combination, including from/to a null selectedCode', () => {
+  resetState();
+  const st = getState();
+  seedBulkAssessFixture(st);
+  const mainStub = documentStub.getElementById('main-content');
+  const positions = sandbox.capturePanelScrollPositions(mainStub);
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, positions), 'first-ever render, nothing stamped yet');
+
+  st.bulkAssess.selectedCode = 'AC9E3LY02';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different code now selected');
+
+  st.bulkAssess.subjectFilter = 'Mathematics';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different subject filter');
+
+  st.bulkAssess.selectedCode = null;
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'code cleared back to the empty state');
+
+  st.currentView = 'planner';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'navigated away from Bulk Assess entirely');
+});
+
 // ── Review fix: rail text truncation regression from the independent-scroll PR ──
 console.log('Unit lessons rail scrollbar-width compensation (truncation regression fix)');
 
