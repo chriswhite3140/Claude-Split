@@ -4925,6 +4925,252 @@ test('the fixture has a genuine coverage gap (AC9S3U02 — soils, rocks and mine
   assert.ok(fixture.taughtLog.some(t => t.code === 'AC9M3N02'), 'sanity: AC9M3N02 does have taughtLog coverage, so it is NOT the fixture\'s coverage gap');
 });
 
+// ── Sidebar "you are here" highlight (syncNavHighlight) ─────────────────────────
+console.log('Sidebar nav highlight');
+
+// The shared sandbox above deliberately stubs document.querySelectorAll('.nav-btn')
+// to always return [] and getElementById() to hand back a fresh element with a
+// no-op classList (fine for the other 297 tests, none of which check real
+// class-list state) — neither is faithful enough to verify actual highlight
+// behaviour, so this gets its own dedicated vm context, mirroring
+// makeTestModeSandbox's approach: a real classList per button (an actual tracked
+// Set, not a no-op), and a real, exact copy of index.html's 15 sidebar nav-btn ids
+// (14 real views + nav-log-today, the Log Today wizard launcher, which isn't a
+// view at all — see its own comment in index.html). renderView() and
+// openCodeDetail() are stubbed to no-ops after evaluation (same convention as
+// `sandbox.renderView = function(){}` above) — this suite only cares whether the
+// right button gets .active, not what the rest of the screen renders, and
+// openStubReview() schedules a real setTimeout() into openCodeDetail() that would
+// otherwise still be pending (and could throw against this minimal state) when
+// Node's event loop drains after the synchronous test body returns.
+const NAV_VIEW_TO_ID = {
+  'dashboard': 'nav-dashboard',
+  'students': 'nav-students',
+  'overview': 'nav-overview',
+  'bulk-assess': 'nav-bulk-assess',
+  'daily-log': 'nav-daily-log',
+  'unit-plans': 'nav-unit-plans',
+  'planner': 'nav-planner',
+  'coverage': 'nav-coverage',
+  'standards-judgments': 'nav-standards-judgments',
+  'progression-placement': 'nav-progression-placement',
+  'curriculum': 'nav-curriculum',
+  'standards': 'nav-standards',
+  'progressions': 'nav-progressions',
+  'admin': 'nav-admin',
+};
+const NAV_BTN_IDS = Object.values(NAV_VIEW_TO_ID).concat(['nav-log-today']);
+
+function makeNavHighlightSandbox() {
+  function makeTrackedNavBtn(id) {
+    const classes = new Set(['nav-btn']);
+    return {
+      id, tagName: 'BUTTON',
+      get className() { return Array.from(classes).join(' '); },
+      classList: {
+        add(c) { classes.add(c); },
+        remove(c) { classes.delete(c); },
+        toggle(c, force) {
+          const on = force !== undefined ? force : !classes.has(c);
+          if (on) classes.add(c); else classes.delete(c);
+          return on;
+        },
+        contains(c) { return classes.has(c); },
+      },
+      style: {}, dataset: {}, innerHTML: '', textContent: '',
+      setAttribute() {}, getAttribute() { return null; }, removeAttribute() {},
+      appendChild() {}, removeChild() {}, remove() {}, insertBefore() {},
+      addEventListener() {}, removeEventListener() {}, focus() {},
+      querySelector() { return null; }, querySelectorAll() { return []; },
+      closest() { return null; }, getBoundingClientRect() { return {}; },
+    };
+  }
+  function makeGenericStubEl() {
+    return {
+      style: {}, className: '', id: '', innerHTML: '', textContent: '', value: '',
+      dataset: {}, scrollTop: 0, firstChild: null,
+      classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+      appendChild() {}, removeChild() {}, remove() {}, insertBefore() {},
+      setAttribute() {}, getAttribute() { return null; }, removeAttribute() {},
+      addEventListener() {}, removeEventListener() {}, focus() {},
+      querySelector() { return null; }, querySelectorAll() { return []; },
+      closest() { return null; }, getBoundingClientRect() { return {}; },
+    };
+  }
+
+  const navBtns = {};
+  NAV_BTN_IDS.forEach(id => { navBtns[id] = makeTrackedNavBtn(id); });
+  const genericElCache = {};
+
+  const navDocumentStub = {
+    addEventListener() {}, removeEventListener() {},
+    getElementById(id) {
+      if (navBtns[id]) return navBtns[id];
+      return genericElCache[id] || (genericElCache[id] = makeGenericStubEl());
+    },
+    querySelector() { return null; },
+    // app.js's only querySelectorAll('.nav-btn') call site is syncNavHighlight()
+    // itself (confirmed by grep) — safe to special-case exactly that selector and
+    // fall back to [] for everything else, matching the shared stub above.
+    querySelectorAll(sel) { return sel === '.nav-btn' ? Object.values(navBtns) : []; },
+    createElement() { return makeGenericStubEl(); },
+    body: makeGenericStubEl(),
+    documentElement: makeGenericStubEl(),
+  };
+
+  const navLocalStorageStub = {
+    getItem() { return null; }, setItem() {}, removeItem() {}, clear() {},
+  };
+  const navWindowStub = {
+    addEventListener() {}, removeEventListener() {},
+    matchMedia() { return { matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }; },
+    localStorage: navLocalStorageStub,
+    document: navDocumentStub,
+    open() {},
+  };
+  const navSandbox = {
+    console,
+    document: navDocumentStub,
+    window: navWindowStub,
+    localStorage: navLocalStorageStub,
+    navigator: { userAgent: 'node-test' },
+    location: { href: '', search: '', hash: '' },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    fetch: () => new Promise(() => {}),
+    alert() {}, confirm() { return true; }, prompt() { return null; },
+    CSS: { escape: (s) => String(s) },
+    Date, Math, JSON,
+  };
+  navSandbox.globalThis = navSandbox;
+  vm.createContext(navSandbox);
+  vm.runInContext(
+    appSrc + '\n;globalThis.__navGetState = function(){ return state; };\n',
+    navSandbox,
+    { filename: 'app.js (nav highlight sandbox)' }
+  );
+  navSandbox.renderView = function () {};
+  navSandbox.openCodeDetail = function () {};
+
+  return { sandbox: navSandbox, navBtns, getState: navSandbox.__navGetState };
+}
+
+// Every button other than `activeId` (or every button, if activeId is null) must be
+// inactive — guards against a fix that adds .active to the right button without
+// actually clearing a stale one first (syncNavHighlight's whole job is BOTH halves).
+function assertOnlyActive(navBtns, activeId, msg) {
+  for (const id of Object.keys(navBtns)) {
+    const shouldBeActive = id === activeId;
+    assert.strictEqual(navBtns[id].classList.contains('active'), shouldBeActive,
+      `${msg}: ${id} must be ${shouldBeActive ? 'active' : 'inactive'}`);
+  }
+}
+
+test('index.html has no duplicate sidebar nav-btn ids — the exact defect class behind Bug 2 (Session History and Log Today both resolving to nav-daily-log), guarded generally so a future button can\'t silently collide the same way', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const ids = Array.from(html.matchAll(/class="nav-btn[^"]*"\s+onclick="[^"]*"\s+id="([^"]+)"/g)).map(m => m[1]);
+  assert.ok(ids.length >= 14, 'sanity: must have found the sidebar nav buttons at all');
+  const seen = new Set();
+  const dupes = [];
+  for (const id of ids) { if (seen.has(id)) dupes.push(id); seen.add(id); }
+  assert.deepStrictEqual(dupes, [], 'no two nav-btn elements may share the same id');
+  assert.ok(ids.includes('nav-daily-log'), 'Session History\'s button must be nav-daily-log, matching the "daily-log" view name showView() looks it up by');
+  assert.ok(ids.includes('nav-log-today'), 'Log Today (a wizard launcher, not a view) must have its own id, distinct from Session History\'s');
+});
+
+// The dedicated sandbox's navBtns dictionary above is hardcoded to the IDEAL
+// nav-<viewname> scheme — a real regression in index.html itself (a button's actual
+// id drifting away from its own showView('<viewname>') call, exactly how Bug 2 AND a
+// previously-undocumented 5th instance — Bulk Assess: id="nav-bulk" vs. its view name
+// "bulk-assess", found during this fix's audit for more instances — both arose) would
+// still pass every sandbox-based test below, since the sandbox's ids never drift; only
+// reading the real file, independent of the sandbox, can catch that. This is the one
+// test in this file that would have caught Bulk Assess's mismatch on its own, with no
+// prior knowledge of which id it was supposed to be — it re-derives the expectation
+// from each button's own onclick="showView('...')" call rather than a hand-written list.
+test('every sidebar nav-btn that calls showView(\'<view>\') has an id of exactly nav-<view> — the general form of Bug 2/5, so a future button reintroducing this drift is caught even if nobody thinks to hardcode its specific id into a test', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const matches = Array.from(html.matchAll(/class="nav-btn[^"]*"\s+onclick="showView\('([^']+)'\)"\s+id="([^"]+)"/g));
+  assert.strictEqual(matches.length, 14, 'sanity: must have found exactly the 14 showView(...)-driving nav buttons (Log Today is deliberately excluded — it calls openDailyLogWizard(), not showView)');
+  for (const [, view, id] of matches) {
+    assert.strictEqual(id, 'nav-' + view, `the button for showView('${view}') must have id="nav-${view}" — found id="${id}"`);
+  }
+});
+
+test('showView() correctly highlights its own nav-btn, and only its own, for every one of the 14 real views — including reaching Session History correctly now that its id no longer collides with Log Today\'s (Bug 2)', () => {
+  for (const [view, expectedId] of Object.entries(NAV_VIEW_TO_ID)) {
+    const { sandbox: nav, navBtns } = makeNavHighlightSandbox();
+    nav.showView(view);
+    assertOnlyActive(navBtns, expectedId, `showView('${view}')`);
+  }
+});
+
+test('showView(\'daily-log\') (Session History) does not light up Log Today\'s button — the two are different, non-interchangeable sidebar entries (Bug 2\'s exact symptom)', () => {
+  const { sandbox: nav, navBtns } = makeNavHighlightSandbox();
+  nav.showView('daily-log');
+  assert.ok(navBtns['nav-daily-log'].classList.contains('active'), 'Session History\'s own button must be active');
+  assert.ok(!navBtns['nav-log-today'].classList.contains('active'), 'Log Today must NOT light up just because Session History was opened');
+});
+
+test('the exact init() restore sequence (setCurrentView with persist:false, then syncNavHighlight) highlights the right button after a simulated reload, for a real spread of persisted views — without ever calling showView() or renderView() (Bug 1)', () => {
+  for (const [view, expectedId] of Object.entries(NAV_VIEW_TO_ID)) {
+    const { sandbox: nav, navBtns, getState } = makeNavHighlightSandbox();
+    nav.setCurrentView(view, { persist: false });
+    nav.syncNavHighlight();
+    assertOnlyActive(navBtns, expectedId, `restored view '${view}'`);
+    assert.strictEqual(getState().currentView, view, 'sanity: state.currentView must actually be the restored view');
+  }
+});
+
+test('setCurrentView() alone, without syncNavHighlight(), leaves the DOM highlight stuck on whatever was active before — demonstrating Bug 1\'s exact mechanism (state changes, DOM never told) so the fix above is provably doing real work, not passing by coincidence', () => {
+  const { sandbox: nav, navBtns } = makeNavHighlightSandbox();
+  // app.js calls init() itself at module load (its very last line) — exactly like a
+  // real page load — and init()'s own synchronous prefix runs through its own
+  // syncNavHighlight() call before suspending on its first await, correctly lighting
+  // up nav-dashboard for the default restored view. That's the fix already doing its
+  // job; sanity-check it below, then show what happens without that call: a bare
+  // setCurrentView() changes state but leaves the highlight exactly where it was.
+  assertOnlyActive(navBtns, 'nav-dashboard', 'sanity: init()\'s own restore path already highlighted dashboard correctly');
+  nav.setCurrentView('planner', { persist: false });
+  assertOnlyActive(navBtns, 'nav-dashboard', 'setCurrentView alone must NOT move the highlight — without a syncNavHighlight() call it stays stuck on the stale previous view, exactly Bug 1\'s "resets to/stays on Dashboard" symptom');
+});
+
+test('openStudentDetail() highlights nav-students (Bug 3) — student-detail is a sub-view reached only through Students, not a nav item of its own, and the previous view\'s highlight must be cleared, not just left stuck', () => {
+  const { sandbox: nav, navBtns, getState } = makeNavHighlightSandbox();
+  const state = getState();
+  state.students = [{ id: 'stu_1', first_name: 'Test', last_name: 'Student', year_level: '3' }];
+  nav.showView('planner'); // establish a different starting highlight first
+  assertOnlyActive(navBtns, 'nav-planner', 'sanity: planner is active before opening the student');
+
+  nav.openStudentDetail('stu_1');
+  assert.strictEqual(state.currentView, 'student-detail', 'sanity: openStudentDetail must actually switch to the student-detail view');
+  assertOnlyActive(navBtns, 'nav-students', 'openStudentDetail');
+});
+
+test('openStubReview() (the "1 draft IC needs review" banner\'s Review now button) highlights nav-curriculum (Bug 4 — the same root cause found in a 4th call site during the audit for more instances)', () => {
+  const { sandbox: nav, navBtns, getState } = makeNavHighlightSandbox();
+  const state = getState();
+  state.instructionalComponents = [
+    { id: 'stub_1', homeDescriptorId: 'CD_1', ownerTier: 'teacher_stub', icReadinessStatus: 'draft', createdAt: '2026-01-01T00:00:00.000Z' },
+  ];
+  state.curriculumCodes = [];
+  nav.showView('overview'); // establish a different starting highlight first
+  assertOnlyActive(navBtns, 'nav-overview', 'sanity: overview is active before reviewing the stub');
+
+  nav.openStubReview();
+  assert.strictEqual(state.currentView, 'curriculum', 'sanity: openStubReview must actually switch to the Curriculum Codes view');
+  assertOnlyActive(navBtns, 'nav-curriculum', 'openStubReview');
+});
+
+test('syncNavHighlight() clears a stale highlight rather than only ever adding — calling it twice for two different views leaves just the second one active, not both', () => {
+  const { sandbox: nav, navBtns } = makeNavHighlightSandbox();
+  nav.setCurrentView('admin', { persist: false });
+  nav.syncNavHighlight();
+  assertOnlyActive(navBtns, 'nav-admin', 'first sync');
+  nav.setCurrentView('coverage', { persist: false });
+  nav.syncNavHighlight();
+  assertOnlyActive(navBtns, 'nav-coverage', 'second sync must clear the first, not accumulate');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────────
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

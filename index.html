@@ -28,14 +28,25 @@
       <button class="nav-btn" onclick="showView('overview')" id="nav-overview">
         <span class="nav-icon">▦</span> Class Overview
       </button>
-      <button class="nav-btn" onclick="showView('bulk-assess')" id="nav-bulk">
+      <!-- id must be nav-bulk-assess (not nav-bulk) to match syncNavHighlight()'s
+           `nav-` + state.currentView lookup, which uses the view name 'bulk-assess'
+           this button's own showView() call passes — the old nav-bulk id never
+           matched that lookup, so this item never highlighted at all (found during
+           the audit for other instances of the sidebar-highlight root cause). -->
+      <button class="nav-btn" onclick="showView('bulk-assess')" id="nav-bulk-assess">
         <span class="nav-icon">⊞</span> Bulk Assess
       </button>
-      <button class="nav-btn" onclick="openDailyLogWizard()" id="nav-daily-log" style="position:relative">
+      <button class="nav-btn" onclick="openDailyLogWizard()" id="nav-log-today" style="position:relative">
         <span class="nav-icon">✦</span> Log Today
         <span id="daily-log-badge" style="display:none;position:absolute;right:10px;top:50%;transform:translateY(-50%);background:var(--gold);color:#0f1117;font-family:'DM Mono',monospace;font-size:var(--label-size);font-weight:700;padding:1px 5px;border-radius:8px">NEW</span>
       </button>
-      <button class="nav-btn" onclick="showView('daily-log')" id="nav-daily-log-view">
+      <!-- id must be nav-daily-log (not nav-daily-log-view) to match syncNavHighlight()'s
+           `nav-` + state.currentView lookup, which uses the view name 'daily-log' this
+           button's own showView() call passes — a mismatch here previously caused this
+           button and Log Today above (a non-view wizard launcher, not a real "view",
+           so its id doesn't need to match anything) to collide on nav-daily-log,
+           and the highlight lookup always found Log Today's button first. -->
+      <button class="nav-btn" onclick="showView('daily-log')" id="nav-daily-log">
         <span class="nav-icon">◷</span> Session History
       </button>
       <button class="nav-btn" onclick="showView('unit-plans')" id="nav-unit-plans">
