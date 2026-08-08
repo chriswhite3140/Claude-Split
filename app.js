@@ -2,14 +2,58 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.15.1
- * Last updated: 2026-08-06
+ * THIS FILE IS VERSION: 1.16.0
+ * Last updated: 2026-08-08
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.0 - Fix the sidebar "you are here" highlight: five instances of one root
+ *   cause, not three separate bugs. showView() was the only place that synced the
+ *   .nav-btn.active DOM class to state.currentView; every other code path that
+ *   changes what's displayed either skipped that sync entirely or hit an id mismatch
+ *   in it. Fixed by introducing a single shared syncNavHighlight() (clears every
+ *   .nav-btn's active class, then re-adds it to the one matching state.currentView —
+ *   student-detail, a sub-view with no nav item of its own, maps back onto
+ *   nav-students) that every one of those call sites now goes through:
+ *   (1) init()'s reload-restore path (setCurrentView(uiState.currentView,
+ *   {persist:false})) — previously updated state only, so the highlight always reset
+ *   to whatever showView() had last drawn before the reload, i.e. Dashboard.
+ *   (2) Session History's nav button had id="nav-daily-log-view", but its view name
+ *   is "daily-log" and showView()'s lookup is document.getElementById('nav-' + v) —
+ *   so it actually resolved to nav-daily-log, an id already used by the unrelated
+ *   Log Today button (a wizard launcher, not a view), which lit up instead. Fixed by
+ *   renaming Session History's button to nav-daily-log (matching the nav-<viewname>
+ *   convention every other button already follows) and Log Today's to nav-log-today.
+ *   (3) openStudentDetail() cleared every .nav-btn's active class but never re-added
+ *   one, since student-detail isn't itself a nav item — the sidebar went completely
+ *   blank on any student profile.
+ *   (4) openStubReview() (the "N draft ICs need review" banner's Review now button)
+ *   had the exact same gap as (1) — changed state.currentView and called
+ *   renderView() directly, never syncing the highlight — found during the explicit
+ *   audit for further instances, not part of the original report.
+ *   (5) Bulk Assess's nav button had id="nav-bulk", but its view name is
+ *   "bulk-assess" — the exact same id/view-name mismatch class as (2), meaning its
+ *   sidebar item never highlighted at all, on ANY navigation to it, not just an edge
+ *   case. Also found during the audit, and confirmed by a general regression test
+ *   (below) that re-derives each button's expected id from its own onclick markup
+ *   rather than checking a hand-written list — the kind of check that would have
+ *   caught this without knowing in advance which button was wrong.
+ *   9 new regression tests (306 total): systematic coverage of showView() for all 14
+ *   real views, the exact init() restore sequence, both id-mismatch defect classes
+ *   (a general "every showView() button's id matches nav-<view>" check, not just the
+ *   two specific ids fixed), and each of the two non-showView() call sites (student
+ *   detail, stub review) — 7 of the 9 confirmed to fail against the pre-fix code (the
+ *   remaining 2 test showView()'s lookup logic against an idealized DOM in isolation,
+ *   which was always correct — only the ids themselves were wrong, caught separately
+ *   by the id-matching tests). Verified live in a real browser (Test Mode sample
+ *   data): all 14 views individually, student detail, the stub-review banner, and —
+ *   since Test Mode's localStorage shim means a true page reload doesn't persist
+ *   anything, by design — the exact init() restore sequence run directly against the
+ *   real shimmed store rather than through a reload that would test Test Mode's own
+ *   non-persistence instead of this fix.
  * v1.15.1 - 3 review refinements to 1.15.0's Test Mode sample-data fixture (no app.js
  *   logic changes, data/sample-test-mode-data.js only):
  *   (1) Progression Placements only had Numeracy records (4, all on the same element) —
@@ -469,7 +513,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.15.1';
+const APP_VERSION = '1.16.0';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1519,6 +1563,23 @@ function parseCSVLine(line) {
 }
 
 // ── VIEWS ──
+// Keeps the sidebar's "you are here" (.nav-btn.active) highlight in sync with
+// state.currentView. Every place that changes what's displayed to the user must call
+// this rather than re-implementing (or silently skipping) the DOM sync itself — that
+// per-call-site duplication is exactly how the highlight previously drifted out of
+// sync with reality (stuck on Dashboard after a reload, wrong button lit for Session
+// History, gone entirely after opening a student profile, and again after opening a
+// draft-IC review from its banner — see the version history entry for the full
+// root-cause writeup). student-detail is a sub-view reached only through Students, not
+// its own top-level nav item, so it maps back onto nav-students rather than a
+// (non-existent) nav-student-detail.
+function syncNavHighlight() {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  const navView = state.currentView === 'student-detail' ? 'students' : state.currentView;
+  const nb = document.getElementById('nav-' + navView);
+  if (nb) nb.classList.add('active');
+}
+
 function showView(v) {
   // Warn if navigating away from bulk assess with unsaved changes
   if (state.currentView === 'bulk-assess' && state.bulkAssess) {
@@ -1529,9 +1590,7 @@ function showView(v) {
     }
   }
   setCurrentView(v);
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  const nb = document.getElementById('nav-' + v);
-  if (nb) nb.classList.add('active');
+  syncNavHighlight();
   renderView();
 }
 
@@ -6119,7 +6178,7 @@ function openStudentDetail(studentId) {
     const subjects = getEnabledSubjectsFromRows(state.curriculumCodes);
     state.detailSubjectFilter = subjects[0] || 'English';
   }
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  syncNavHighlight();
   renderView();
 }
 
@@ -12372,6 +12431,7 @@ async function init() {
 
   const uiState = loadUIState();
   setCurrentView(uiState.currentView, { persist: false });
+  syncNavHighlight();
 
   // Clean start for the consolidated planner (step 1): wipe retired surfaces' data.
   plannerWipeLegacyPlanningData();
@@ -12496,6 +12556,7 @@ function openStubReview() {
   }
 
   setCurrentView('curriculum', { persist: true });
+  syncNavHighlight();
   renderView();
 
   setTimeout(() => {
