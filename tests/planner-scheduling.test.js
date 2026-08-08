@@ -3930,7 +3930,7 @@ test('renderBulkAssess gives the by-code roster body the bulk-assess-roster-body
   assert.ok(!documentStub.getElementById('main-content').innerHTML.includes('bulk-assess-roster-body'), 'with no code selected, the empty-state placeholder renders instead — no roster body to (mis)track');
 });
 
-test('capturePanelScrollPositions reads the PREVIOUS render\'s Bulk Assess identity (selected code + subject filter) from main\'s own data-prev-* attributes, not live state — same ordering hazard as the Weekly Planner/Unit Plans case above, since setBulkCode() updates state.bulkAssess.selectedCode before renderBulkAssess() ever runs', () => {
+test('capturePanelScrollPositions reads the PREVIOUS render\'s Bulk Assess identity (selected code + subject filter + year filter) from main\'s own data-prev-* attributes, not live state — same ordering hazard as the Weekly Planner/Unit Plans case above, since setBulkCode() updates state.bulkAssess.selectedCode before renderBulkAssess() ever runs', () => {
   resetState();
   const st = getState();
   seedBulkAssessFixture(st);
@@ -3940,6 +3940,7 @@ test('capturePanelScrollPositions reads the PREVIOUS render\'s Bulk Assess ident
   mainStub.dataset.prevView = 'bulk-assess';
   mainStub.dataset.prevBulkAssessCode = 'AC9E3LY01';
   mainStub.dataset.prevBulkAssessSubject = 'English';
+  mainStub.dataset.prevBulkAssessYear = 'all';
 
   // Now simulate setBulkCode('AC9E3LY02') having already flipped state before
   // capturePanelScrollPositions runs.
@@ -3948,6 +3949,7 @@ test('capturePanelScrollPositions reads the PREVIOUS render\'s Bulk Assess ident
   const positions = sandbox.capturePanelScrollPositions(mainStub);
   assert.strictEqual(positions.bulkAssessCode, 'AC9E3LY01', 'must capture the PREVIOUS selected code from main\'s stamped attribute, not the already-updated live state');
   assert.strictEqual(positions.bulkAssessSubject, 'English', 'must likewise capture the previous subject filter, not live state');
+  assert.strictEqual(positions.bulkAssessYear, 'all', 'must likewise capture the previous year filter, not live state');
 });
 
 test('restorePanelScrollPositions correctly detects a code switch in Bulk Assess and re-stamps the new identity for the next render, the same way it already does for the Weekly Planner\'s selected lesson and Unit Plans\' open unit', () => {
@@ -3958,8 +3960,9 @@ test('restorePanelScrollPositions correctly detects a code switch in Bulk Assess
   mainStub.dataset.prevView = 'bulk-assess';
   mainStub.dataset.prevBulkAssessCode = 'AC9E3LY01';
   mainStub.dataset.prevBulkAssessSubject = 'English';
+  mainStub.dataset.prevBulkAssessYear = 'all';
 
-  const positions = { 'bulk-assess-roster-body': 300, view: 'bulk-assess', bulkAssessCode: 'AC9E3LY01', bulkAssessSubject: 'English' };
+  const positions = { 'bulk-assess-roster-body': 300, view: 'bulk-assess', bulkAssessCode: 'AC9E3LY01', bulkAssessSubject: 'English', bulkAssessYear: 'all' };
   st.bulkAssess.selectedCode = 'AC9E3LY02'; // teacher picked a different code
 
   sandbox.restorePanelScrollPositions(mainStub, positions);
@@ -3969,6 +3972,7 @@ test('restorePanelScrollPositions correctly detects a code switch in Bulk Assess
   // snapshot for the NEXT render is correctly refreshed.
   assert.strictEqual(mainStub.dataset.prevBulkAssessCode, 'AC9E3LY02', 'must re-stamp the new selected code for the next render to compare against');
   assert.strictEqual(mainStub.dataset.prevBulkAssessSubject, 'English', 'subject filter unchanged, but must still be re-stamped');
+  assert.strictEqual(mainStub.dataset.prevBulkAssessYear, 'all', 'year filter unchanged, but must still be re-stamped');
 });
 
 test('a bare subject-filter change with the SAME selected code still counts as different identity for Bulk Assess\'s roster — the task explicitly calls out "same selected code/subject filter" as the guard, not code alone', () => {
@@ -3979,14 +3983,40 @@ test('a bare subject-filter change with the SAME selected code still counts as d
   mainStub.dataset.prevView = 'bulk-assess';
   mainStub.dataset.prevBulkAssessCode = 'AC9E3LY01';
   mainStub.dataset.prevBulkAssessSubject = 'English';
+  mainStub.dataset.prevBulkAssessYear = 'all';
 
-  const positions = { 'bulk-assess-roster-body': 300, view: 'bulk-assess', bulkAssessCode: 'AC9E3LY01', bulkAssessSubject: 'English' };
+  const positions = { 'bulk-assess-roster-body': 300, view: 'bulk-assess', bulkAssessCode: 'AC9E3LY01', bulkAssessSubject: 'English', bulkAssessYear: 'all' };
   // Same code id, but the subject filter itself changed underneath it (the one
   // dimension code alone can't distinguish, per buildByCode()'s own comment).
   st.bulkAssess.subjectFilter = 'Mathematics';
 
   sandbox.restorePanelScrollPositions(mainStub, positions);
   assert.strictEqual(mainStub.dataset.prevBulkAssessSubject, 'Mathematics', 'must re-stamp the new subject filter for the next render to compare against');
+});
+
+test('a bare year-filter change with the SAME selected code/subject still counts as different identity for Bulk Assess\'s roster — filteredStudents (and so the roster\'s actual student set) depends on yearFilter via sortStudents(), so a stale scrollTop must not survive a year switch (review finding on PR #99)', () => {
+  resetState();
+  const st = getState();
+  seedBulkAssessFixture(st);
+  const mainStub = documentStub.getElementById('main-content');
+  mainStub.dataset.prevView = 'bulk-assess';
+  mainStub.dataset.prevBulkAssessCode = 'AC9E3LY01';
+  mainStub.dataset.prevBulkAssessSubject = 'English';
+  mainStub.dataset.prevBulkAssessYear = 'all';
+
+  const positions = { 'bulk-assess-roster-body': 300, view: 'bulk-assess', bulkAssessCode: 'AC9E3LY01', bulkAssessSubject: 'English', bulkAssessYear: 'all' };
+  // Same code and subject, but the year filter changed underneath it — a
+  // different roster of students, per filteredStudents/sortStudents(). As with
+  // the sibling tests above, this stub's querySelector() is a fixed no-op (it
+  // doesn't parse innerHTML), so the actual scrollTop-skip can only be observed
+  // in a live DOM (verified live via Playwright, extending the same check
+  // already run for the code/subject cases); what's testable here is that a
+  // year-only change is correctly treated as a DIFFERENT identity rather than
+  // silently falling through the code+subject guard.
+  st.bulkAssess.yearFilter = '3';
+
+  sandbox.restorePanelScrollPositions(mainStub, positions);
+  assert.strictEqual(mainStub.dataset.prevBulkAssessYear, '3', 'must re-stamp the new year filter for the next render to compare against');
 });
 
 test('capturePanelScrollPositions / restorePanelScrollPositions never throw across every Bulk Assess identity-change combination, including from/to a null selectedCode', () => {
@@ -4002,6 +4032,9 @@ test('capturePanelScrollPositions / restorePanelScrollPositions never throw acro
 
   st.bulkAssess.subjectFilter = 'Mathematics';
   assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different subject filter');
+
+  st.bulkAssess.yearFilter = '3';
+  assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'different year filter');
 
   st.bulkAssess.selectedCode = null;
   assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'code cleared back to the empty state');

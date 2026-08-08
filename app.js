@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.1
+ * THIS FILE IS VERSION: 1.16.2
  * Last updated: 2026-08-08
  * ============================================================
  *
@@ -10,6 +10,13 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.2 - Review fix for v1.16.1's Bulk Assess scroll-preservation guard: the
+ *   selectedCode/subjectFilter identity check missed that filteredStudents (and so
+ *   the by-code roster's actual student set) also depends on yearFilter via
+ *   sortStudents(), so switching year level with the same code/subject still selected
+ *   could restore a stale scrollTop into a roster with a different set of students.
+ *   Added yearFilter as a third dimension to the same capture/restore identity check.
+ *   1 new regression test (312 total), confirmed to fail against the pre-fix code.
  * v1.16.1 - Fix Bulk Assess losing scroll position on every rating click. Extends the
  *   existing capturePanelScrollPositions()/restorePanelScrollPositions() mechanism
  *   (introduced in v1.13.82/83 for the Weekly Planner rail/drawer and Unit Plans'
@@ -535,7 +542,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.1';
+const APP_VERSION = '1.16.2';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1657,6 +1664,7 @@ function capturePanelScrollPositions(main) {
   positions.openUnitId = main.dataset.prevOpenUnitId;
   positions.bulkAssessCode = main.dataset.prevBulkAssessCode;
   positions.bulkAssessSubject = main.dataset.prevBulkAssessSubject;
+  positions.bulkAssessYear = main.dataset.prevBulkAssessYear;
   return positions;
 }
 
@@ -1667,6 +1675,7 @@ function restorePanelScrollPositions(main, positions) {
   const currentUnitId = (state.unitPlansUi && state.unitPlansUi.openUnitId) || '';
   const currentBulkAssessCode = (state.bulkAssess && state.bulkAssess.selectedCode) || '';
   const currentBulkAssessSubject = (state.bulkAssess && state.bulkAssess.subjectFilter) || '';
+  const currentBulkAssessYear = (state.bulkAssess && state.bulkAssess.yearFilter) || '';
   // Stamp what's true NOW for the next render to compare against — always, even
   // when nothing is restored below, so the "previous" snapshot never goes stale.
   main.dataset.prevView = currentView;
@@ -1674,16 +1683,20 @@ function restorePanelScrollPositions(main, positions) {
   main.dataset.prevOpenUnitId = currentUnitId;
   main.dataset.prevBulkAssessCode = currentBulkAssessCode;
   main.dataset.prevBulkAssessSubject = currentBulkAssessSubject;
+  main.dataset.prevBulkAssessYear = currentBulkAssessYear;
   if (positions.view !== currentView) return;
   const sameLesson = positions.selectedLessonId === currentLessonId;
   const sameUnit = positions.openUnitId === currentUnitId;
   // The roster's own content is fully determined by selectedCode alone (looked up
   // directly, independent of the subject filter once a code is picked — see
-  // buildByCode()), so this second check is never actually load-bearing today, but
+  // buildByCode()), so the subject check is never actually load-bearing today, but
   // it's kept explicit rather than relying on that implementation detail, since a
   // stale scroll position surviving a subject switch is exactly the kind of "unrelated
-  // code's student list" this whole mechanism exists to avoid.
-  const sameBulkAssessCode = positions.bulkAssessCode === currentBulkAssessCode && positions.bulkAssessSubject === currentBulkAssessSubject;
+  // code's student list" this whole mechanism exists to avoid. The year filter IS
+  // load-bearing, though: filteredStudents (and so the roster's actual student set)
+  // is filtered by yearFilter via sortStudents(), so switching year while the same
+  // code/subject stay selected still changes who's in the list.
+  const sameBulkAssessCode = positions.bulkAssessCode === currentBulkAssessCode && positions.bulkAssessSubject === currentBulkAssessSubject && positions.bulkAssessYear === currentBulkAssessYear;
   PANEL_SCROLL_BODY_CLASSES.forEach(cls => {
     if (!(cls in positions)) return;
     // planner-unit-rail-body's content (every unit lesson) doesn't depend on which
