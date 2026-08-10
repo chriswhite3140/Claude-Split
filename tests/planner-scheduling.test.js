@@ -501,7 +501,7 @@ test('plannerToggleUnitGroupCollapsed does a targeted refresh of #planner-unit-r
   assert.ok(bodyEl.innerHTML.includes('Fractions'), 'the collapsed heading still renders into that same container');
 });
 
-test('a collapsed unit group auto-expands while a search or subject filter is active, so a filter can never hide a match behind a collapsed heading — and the manually-collapsed state is preserved underneath, restored once the filter clears', () => {
+test('a collapsed unit group auto-expands while a SEARCH term is active, so a search can never hide a match behind a collapsed heading — and the manually-collapsed state is preserved underneath, restored once the search clears', () => {
   resetState();
   const st = getState();
   sandbox.plannerToggleUnitGroupCollapsed('unit_1'); // manually collapse Fractions
@@ -511,21 +511,75 @@ test('a collapsed unit group auto-expands while a search or subject filter is ac
   st.plannerUi.railSearch = 'intro';
   let html = sandbox.plannerUnitSidebarHtml();
   assert.ok(html.includes('Intro to fractions'), 'a collapsed group must auto-expand to reveal a matching search result');
-  assert.ok(html.includes('disabled'), 'the collapse toggle is disabled while a filter forces the group open, so it cannot fight the filter');
+  assert.ok(html.includes('disabled'), 'the collapse toggle is disabled while search forces the group open, so it cannot fight the filter');
 
   // Clearing the search must restore the manual collapse — not force every group open.
   st.plannerUi.railSearch = '';
   html = sandbox.plannerUnitSidebarHtml();
-  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'unit_1 must return to its manually-collapsed state once the filter clears');
-  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true, 'the stored manual collapse state itself was never overwritten by the filter override');
+  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'unit_1 must return to its manually-collapsed state once search clears');
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true, 'the stored manual collapse state itself was never overwritten by the search override');
+});
 
-  // Same guarantee for the subject filter, independent of search.
-  st.plannerUi.railSubjectFilter = 'Mathematics';
+test('a SUBJECT-ONLY filter (no search term) must NOT force a collapsed group open, and must NOT disable its collapse toggle — a subject filter is all-or-nothing per group (a unit\'s lessons all share one subject), so a group visible at all under it already has every lesson matching; there\'s nothing to protect by forcing it open (review finding: this previously behaved the same as search)', () => {
+  resetState();
+  const st = getState();
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1'); // manually collapse Fractions
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true, 'sanity: collapsed with no filter active');
+
+  st.plannerUi.railSubjectFilter = 'Mathematics'; // unit_1's own subject — matches, no search term
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true, 'a subject-only filter must leave manual collapse state respected, not force it open');
+  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'unit_1 stays collapsed — its lessons must not render');
+  assert.ok(html.includes('Fractions') && /2 lessons/.test(html), 'the heading and count still show, same as an unfiltered collapse');
+  assert.ok(!html.includes('disabled'), 'the collapse toggle must stay enabled under a subject-only filter, unlike under an active search');
+
+  // Now add a search term on top of the still-active subject filter — force-expand
+  // must kick in exactly as it does with search alone.
+  st.plannerUi.railSearch = 'intro';
   html = sandbox.plannerUnitSidebarHtml();
-  assert.ok(html.includes('Intro to fractions') && html.includes('Equivalent fractions'), 'a subject filter must also force a collapsed matching group open');
+  assert.ok(html.includes('Intro to fractions'), 'adding a search term on top of the subject filter must force the group open');
+  assert.ok(html.includes('disabled'), 'the toggle must become disabled once search is active, subject filter or not');
+
+  // Clearing just the search term, while the subject filter stays active, must
+  // restore manual collapse immediately — no need to also clear the subject filter.
+  st.plannerUi.railSearch = '';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.ok(!html.includes('Intro to fractions'), 'clearing only the search term must return unit_1 to its manually-collapsed state, even with the subject filter still active');
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true);
+});
+
+test('a subject filter that matches only SOME of a mixed-subject unit\'s lessons must still force the group open and disable its toggle, just like search — a lesson\'s subject is independently editable and can genuinely diverge from its parent unit\'s (review finding on the subject-only-never-forces-open fix)', () => {
+  resetState();
+  const st = getState();
+  // ul_2 ("Equivalent fractions") edited independently to a different subject than its
+  // parent unit_1 (Mathematics) — a supported, real state (see the rail-filter test
+  // covering this same fixture pattern), not a data-integrity bug. unit_1 is now a
+  // genuinely mixed-subject unit: ul_1 stays Mathematics, ul_2 is now English.
+  st.lessonPlans.find(l => l.id === 'ul_2').subject = 'English';
+  sandbox.plannerToggleUnitGroupCollapsed('unit_1'); // manually collapse Fractions
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true, 'sanity: collapsed with no filter active');
+
+  // A Mathematics-only filter now matches just ul_1 — a PARTIAL match within unit_1 —
+  // so it must be treated the same as a partial search match: force the group open.
+  st.plannerUi.railSubjectFilter = 'Mathematics';
+  let html = sandbox.plannerUnitSidebarHtml();
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), false, 'a subject filter that only partially matches a mixed-subject unit must force it open');
+  assert.ok(html.includes('Intro to fractions'), 'the matching (Mathematics) lesson must be visible, not hidden behind the collapsed heading');
+  assert.ok(!html.includes('Equivalent fractions'), 'the non-matching (English) sibling still correctly stays filtered out');
+  assert.ok(html.includes('disabled'), 'the toggle must be disabled while this group is force-open by a partial subject match, exactly as it is for a partial search match');
+
+  // Same check the other way — an English-only filter also matches just one of the
+  // unit's two lessons.
+  st.plannerUi.railSubjectFilter = 'English';
+  html = sandbox.plannerUnitSidebarHtml();
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), false, 'the reverse partial match (English) must also force the group open');
+  assert.ok(html.includes('Equivalent fractions') && !html.includes('Intro to fractions'));
+
+  // Clearing the subject filter must restore the manual collapse.
   st.plannerUi.railSubjectFilter = '';
   html = sandbox.plannerUnitSidebarHtml();
-  assert.ok(!html.includes('Intro to fractions'), 'and again returns to collapsed once that filter clears too');
+  assert.ok(!html.includes('Intro to fractions') && !html.includes('Equivalent fractions'), 'clearing the filter returns unit_1 to its manually-collapsed state');
+  assert.strictEqual(sandbox.plannerUnitGroupIsCollapsed('unit_1'), true);
 });
 
 test('unit rail group collapse toggling is UI-only — never mutates state.lessonPlans or state.unitPlans', () => {
