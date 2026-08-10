@@ -2,14 +2,31 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.2
- * Last updated: 2026-08-08
+ * THIS FILE IS VERSION: 1.16.3
+ * Last updated: 2026-08-10
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.3 - Fix Weekly Planner's Unit lessons rail wrongly disabling manual collapse
+ *   for a subject-only filter. plannerUnitGroupIsCollapsed()/plannerUnitSidebarHtml()
+ *   both force-expanded a group and disabled its collapse toggle whenever ANY rail
+ *   filter was active (search OR subject). But only search can produce a partial match
+ *   within a group (some lessons match, some don't) — the actual reason force-expand
+ *   exists, to avoid hiding a match behind a collapsed heading. A subject filter alone
+ *   is all-or-nothing per group (a unit's lessons all share one subject), so a group
+ *   visible at all under a subject-only filter already has every lesson matching —
+ *   nothing to protect by forcing it open. Renamed the shared check from
+ *   plannerRailFilterActive() to plannerRailSearchActive(), now search-only; the
+ *   subject filter's own matching logic (plannerRailFilteredGroups) is untouched.
+ *   2 new/updated regression tests (313 total), confirmed to fail against the pre-fix
+ *   code. Verified live (Test Mode sample data): a subject-only filter left manual
+ *   collapse fully respected (toggle enabled, state preserved); adding a search term on
+ *   top still force-expanded and disabled the toggle; clearing just the search term
+ *   (subject filter left active) immediately restored manual collapse without needing
+ *   to also clear the subject filter.
  * v1.16.2 - Review fix for v1.16.1's Bulk Assess scroll-preservation guard: the
  *   selectedCode/subjectFilter identity check missed that filteredStudents (and so
  *   the by-code roster's actual student set) also depends on yearFilter via
@@ -542,7 +559,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.2';
+const APP_VERSION = '1.16.3';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2246,24 +2263,34 @@ function plannerRailClearFilters() {
   renderView();
 }
 
-// True while the rail's search box or subject dropdown is actively narrowing what
-// shows — used to decide whether a unit group's manual collapse state should be
-// overridden at render time (see plannerUnitGroupIsCollapsed).
-function plannerRailFilterActive() {
-  return !!((state.plannerUi.railSearch || '').trim() || state.plannerUi.railSubjectFilter);
+// True while the rail's search box specifically has a term in it — used to decide
+// whether a unit group's manual collapse state should be overridden at render time
+// (see plannerUnitGroupIsCollapsed). Only search can produce a PARTIAL match within a
+// group (some of a unit's lessons match, some don't) — that's the actual reason the
+// force-expand/disable-toggle behavior exists, to avoid hiding a match behind a
+// collapsed heading. The subject filter alone is all-or-nothing per group (a unit's
+// lessons all share one subject — see plannerRailFilteredGroups), so a group that's
+// visible at all under a subject-only filter already has every one of its lessons
+// matching; there's nothing left to protect by forcing it open. Deliberately does NOT
+// look at railSubjectFilter (review finding: it previously did, forcing every group
+// open — and disabling manual collapse — for a subject-only filter that had nothing to
+// hide).
+function plannerRailSearchActive() {
+  return !!(state.plannerUi.railSearch || '').trim();
 }
 
 // Per-unit collapse state for the rail's accordion groups. Manually toggled state
 // (state.plannerUi.railGroupsCollapsed, keyed by unit id) defaults to expanded
-// (false/absent) so first load never opens with everything closed. While a filter is
-// active this always returns false regardless of the stored value: plannerRailFilteredGroups
+// (false/absent) so first load never opens with everything closed. While a search term
+// is active this always returns false regardless of the stored value: plannerRailFilteredGroups
 // has already dropped every group with no matching lesson, so every group reaching
 // this point IS a match and must never be hidden behind a collapsed heading. The
-// stored value itself is left untouched by this override, so once the filter clears,
+// stored value itself is left untouched by this override, so once the search clears,
 // plannerUnitSidebarHtml goes back to whatever the teacher had manually set —
-// collapse state and filter state cooperate instead of one clobbering the other.
+// collapse state and search state cooperate instead of one clobbering the other. A
+// subject filter alone does not trigger this override — see plannerRailSearchActive.
 function plannerUnitGroupIsCollapsed(unitId) {
-  if (plannerRailFilterActive()) return false;
+  if (plannerRailSearchActive()) return false;
   return !!(state.plannerUi.railGroupsCollapsed && state.plannerUi.railGroupsCollapsed[unitId]);
 }
 
@@ -2300,12 +2327,12 @@ function plannerUnitSidebarHtml() {
   if (!groups.length) {
     return `<div class="planner-unit-rail-empty">No unit lessons match your search or filter.</div>`;
   }
-  const filterActive = plannerRailFilterActive();
+  const searchActive = plannerRailSearchActive();
   return groups.map(({ unit, lessons }) => {
     const title = unit.title || 'Untitled unit';
     const collapsed = plannerUnitGroupIsCollapsed(unit.id);
     const count = `${lessons.length} lesson${lessons.length === 1 ? '' : 's'}`;
-    const toggleAttrs = filterActive
+    const toggleAttrs = searchActive
       ? `disabled title="Expanded to show matching lessons"`
       : `onclick="plannerToggleUnitGroupCollapsed('${plannerJsStr(unit.id)}')" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(title)}"`;
     return `
