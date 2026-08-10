@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.5
+ * THIS FILE IS VERSION: 1.16.6
  * Last updated: 2026-08-10
  * ============================================================
  *
@@ -10,6 +10,29 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.6 - Fix 3 of PLANNER_SUBJECTS' 8 broad subject categories ('The Arts',
+ *   'Technologies', 'Health & PE') being unable to ever link a curriculum descriptor.
+ *   Curriculum data's actual Subject values are the granular Australian Curriculum
+ *   subjects (Dance/Drama/Media Arts/Music/Visual Arts, Design and Technologies/Digital
+ *   Technologies, HPE — already tracked by BANDED_SUBJECTS), but unitCDResultsHtml
+ *   (unit CD linking) and plannerICResultsHtml (lesson IC picker) filtered
+ *   state.curriculumCodes with a direct c.Subject === unit.subject/lesson.subject
+ *   equality check — always zero results for those 3 categories, for any search term.
+ *   A third instance of the identical bug, plannerSuggestICsFromIntention (the "Suggest
+ *   from intention" scorer), was found during this fix's own audit beyond the two named
+ *   in the original report — left unfixed it would have kept "Suggest from intention"
+ *   silently broken for exactly the categories this fix targets. Fixed via a new mapping
+ *   layer, plannerCurriculumSubjectsFor(), rather than restructuring PLANNER_SUBJECTS
+ *   itself (a deliberate, established decision, left untouched) — reuses BANDED_SUBJECTS'
+ *   own granular spellings rather than redefining them separately; the other 5 categories
+ *   fall back to matching themselves, unchanged. 11 new regression tests (325 total),
+ *   confirmed to fail (hard crash — the function didn't exist) against the pre-fix code.
+ *   Verified live in a real browser against the full real curriculum dataset (715 codes):
+ *   Mathematics as a working control, then all three previously-broken categories — using
+ *   Test Mode sample data's own "Visual Storytelling Basics" (The Arts) unit, built
+ *   specifically to reproduce this bug with zero linked CDs — confirmed descriptors now
+ *   surface for all three, and completed an actual link end-to-end on the Arts unit
+ *   (linkedCDIds went from 0 to 1).
  * v1.16.5 - Removed the Weekly Planner rail's force-open/disabled-toggle behavior for
  *   unit groups entirely (plannerRailGroupForceOpen and its call sites, along with
  *   plannerRailSearchActive). Across v1.16.3/v1.16.4 this behavior went from "any
@@ -592,7 +615,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.5';
+const APP_VERSION = '1.16.6';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -799,6 +822,30 @@ const BANDED_SUBJECTS = new Set([
   'HPE', 'Design and Technologies', 'Digital Technologies',
   'Dance', 'Drama', 'Media Arts', 'Music', 'Visual Arts',
 ]);
+
+// Maps PLANNER_SUBJECTS' 8 broad dropdown categories to the granular Australian
+// Curriculum Subject value(s) — state.curriculumCodes' .Subject, drawn from the same
+// set BANDED_SUBJECTS tracks above — that fall under each one. 'The Arts',
+// 'Technologies', and 'Health & PE' are each broader than any single granular Subject
+// value, so a direct c.Subject === unit.subject/lesson.subject equality check can never
+// match a curriculum code for a unit/lesson set to one of these three (bug: zero
+// curriculum descriptor results, for any search term, for every Arts/Technologies/
+// Health & PE unit). The other 5 PLANNER_SUBJECTS categories have no entry here because
+// curriculum data's Subject value already equals the PLANNER_SUBJECTS value exactly —
+// see plannerCurriculumSubjectsFor()'s fallback below.
+const PLANNER_SUBJECT_TO_CURRICULUM_SUBJECTS = {
+  'The Arts': ['Dance', 'Drama', 'Media Arts', 'Music', 'Visual Arts'],
+  'Technologies': ['Design and Technologies', 'Digital Technologies'],
+  'Health & PE': ['HPE'],
+};
+
+// Returns the granular curriculum Subject value(s) a broad PLANNER_SUBJECTS category
+// should be matched against, for filtering state.curriculumCodes (or anything keyed off
+// a CD's .Subject) by a unit's or lesson's own (broad) subject field. See
+// PLANNER_SUBJECT_TO_CURRICULUM_SUBJECTS above.
+function plannerCurriculumSubjectsFor(subject) {
+  return PLANNER_SUBJECT_TO_CURRICULUM_SUBJECTS[subject] || [subject];
+}
 
 function bandYearLevel(studentYear) {
   const map = {
@@ -2628,12 +2675,13 @@ function plannerICResultsHtml(lesson) {
   // suppressed system-default ICs are excluded the same way getICsForDescriptor and
   // the Curriculum Codes view exclude them, so a hidden IC can't reappear in either
   // group; the Weekly Planner picker (no unit) keeps its existing behaviour.
+  const curriculumSubjects = subject ? plannerCurriculumSubjectsFor(subject) : null;
   const subjectPool = state.instructionalComponents.filter(ic => {
     if (ic.isArchived) return false;
     if (unit && ic.ownerTier === 'system_default' && ic.suppressedByTeacher) return false;
-    if (!subject) return true;
+    if (!curriculumSubjects) return true;
     const cd = state.curriculumCodes.find(c => c.Code === ic.homeDescriptorId);
-    return cd && cd.Subject === subject;
+    return cd && curriculumSubjects.includes(cd.Subject);
   });
 
   // Unit context (Issue 2): a lesson inside a unit defaults its IC picker to the
@@ -4018,12 +4066,13 @@ function plannerSuggestICsFromIntention() {
   // linkedDescriptorIds no longer "lends" its score to an unrelated IC — every IC now
   // stands on its own content.
   const cdByCode = new Map(state.curriculumCodes.map(c => [c.Code, c]));
+  const curriculumSubjects = plannerCurriculumSubjectsFor(lesson.subject);
   const scored = state.instructionalComponents
     .filter(ic => !ic.isArchived && !(ic.ownerTier === 'system_default' && ic.suppressedByTeacher))
     .filter(ic => {
       const cd = cdByCode.get(ic.homeDescriptorId);
       if (!cd) return false;
-      if (cd.Subject !== lesson.subject || !isCurriculumCodeEnabled(cd)) return false;
+      if (!curriculumSubjects.includes(cd.Subject) || !isCurriculumCodeEnabled(cd)) return false;
       return plannerDescriptorMatchesYearLevels(cd, classYearLevels);
     })
     .map(ic => ({ ic, score: plannerScoreIC(ic, tokens) }))
@@ -5514,7 +5563,8 @@ function unitCDResultsHtml(unit) {
   if (!unit.subject) return '';
   const search = (state.unitPlansUi.cdSearch || '').trim().toLowerCase();
   const selected = new Set(Array.isArray(unit.linkedCDIds) ? unit.linkedCDIds : []);
-  let pool = state.curriculumCodes.filter(c => c.Subject === unit.subject && isCurriculumCodeEnabled(c));
+  const curriculumSubjects = plannerCurriculumSubjectsFor(unit.subject);
+  let pool = state.curriculumCodes.filter(c => curriculumSubjects.includes(c.Subject) && isCurriculumCodeEnabled(c));
   // Default to the unit's own year level; the "Show all years" toggle lifts this.
   const yearFiltered = !!normaliseYear(unit.yearLevel) && !state.unitPlansUi.cdShowAllYears;
   if (yearFiltered) {

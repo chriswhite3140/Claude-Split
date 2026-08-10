@@ -96,7 +96,8 @@ vm.runInContext(
   // const/let top-level bindings (unlike function declarations) don't attach to the
   // vm context object, so PLANNER_GLOSSARY etc. aren't reachable as GLOSSARY.PLANNER_GLOSSARY
   // — expose them explicitly, same convention as __getState/__getDlState above.
-  ';globalThis.__getGlossary = function(){ return { PLANNER_GLOSSARY, PLANNER_CONFIDENCE_GLOSSARY, PLANNER_STATUS_GLOSSARY, UNIT_TEACHING_STATUSES }; };\n',
+  ';globalThis.__getGlossary = function(){ return { PLANNER_GLOSSARY, PLANNER_CONFIDENCE_GLOSSARY, PLANNER_STATUS_GLOSSARY, UNIT_TEACHING_STATUSES }; };\n' +
+  ';globalThis.__getPlannerSubjectConstants = function(){ return { PLANNER_SUBJECTS, BANDED_SUBJECTS }; };\n',
   sandbox,
   { filename: 'app.js' }
 );
@@ -110,6 +111,7 @@ sandbox.toast = function (msg, type) { toasts.push({ msg, type }); };
 const getState = sandbox.__getState;
 const getDlState = sandbox.__getDlState;
 const GLOSSARY = sandbox.__getGlossary();
+const PLANNER_SUBJECT_CONSTANTS = sandbox.__getPlannerSubjectConstants();
 
 // Objects created inside the vm context have a different prototype than this realm,
 // so assert.deepStrictEqual reports them as "not reference-equal". Compare by value.
@@ -1901,8 +1903,8 @@ test('an IC\'s own home descriptor determines its year eligibility — a linkedD
 
 test('an IC whose home descriptor cannot be resolved is dropped from suggestions, not failed open — the renderer could never show it anyway', () => {
   // plannerICResultsHtml's own subjectPool requires a resolved, subject-matching
-  // descriptor to render an IC (see its `cd && cd.Subject === subject` check) — so a
-  // "fail open" IC here would never actually reach the screen. It would only occupy
+  // descriptor to render an IC (see its `cd && curriculumSubjects.includes(cd.Subject)`
+  // check) — so a "fail open" IC here would never actually reach the screen. It would only occupy
   // one of the 20 ranked slots and make the toast's count claim more matches than the
   // results panel ends up showing. Dropping it here keeps the two paths consistent.
   resetState();
@@ -2107,6 +2109,105 @@ test('the unit-CD priority boost does not bypass the class year-level filter —
   const scores = getState().plannerUi.suggestionScores;
   assert.ok(!Object.prototype.hasOwnProperty.call(scores, 'ic_year5'), 'a unit-linked CD outside the class\'s year level must still be excluded — the boost only reorders ICs that already passed the year filter');
   assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_year2'), 'the in-year IC should still be ranked normally');
+});
+
+// ── PLANNER_SUBJECTS broad category -> curriculum data's granular Subject mapping ──
+console.log('Broad-subject-to-granular-curriculum-subject mapping (Arts/Technologies/Health & PE)');
+
+// PLANNER_SUBJECTS offers 8 broad categories, but curriculum data's actual .Subject
+// values are the granular Australian Curriculum subjects (see BANDED_SUBJECTS). Before
+// plannerCurriculumSubjectsFor(), a unit/lesson set to 'The Arts', 'Technologies', or
+// 'Health & PE' could never match any curriculum code — a direct c.Subject ===
+// unit.subject/lesson.subject equality check compared a broad bucket name against a
+// granular value that never equals it. Covers all three affected call sites:
+// unitCDResultsHtml (unit CD linking), plannerICResultsHtml (lesson IC picker), and
+// plannerSuggestICsFromIntention (the "Suggest from intention" scorer) — the third one
+// found during this fix's own audit, beyond the two named in the original report.
+function setBroadSubjectFixture(broadSubject, granularSubject) {
+  resetClassSettings(); // fresh, nothing disabled — isCurriculumCodeEnabled() must not itself hide the fixture
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'CD_1', Subject: granularSubject, Strand: 'Strand A', 'Year Level': 'Year 3', Descriptor: 'first descriptor' },
+    { Code: 'CD_2', Subject: granularSubject, Strand: 'Strand A', 'Year Level': 'Year 3', Descriptor: 'second descriptor' },
+  ];
+  st.instructionalComponents = [
+    { id: 'ic_1', homeDescriptorId: 'CD_1', linkedDescriptorIds: [], name: 'Skill one', description: 'Skill one description.', isArchived: false, ownerTier: 'teacher_stub', suppressedByTeacher: false },
+  ];
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], subject: broadSubject, yearLevel: '3' };
+  const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+  st.lessonPlans[idx] = { ...st.lessonPlans[idx], subject: broadSubject, unitId: 'unit_1' };
+  // Bypass year filtering (unitCDMatchesYear/icYearFiltered band Year 3 -> Year 4 for
+  // BANDED_SUBJECTS, per bandYearLevel — a real, separately-tested behaviour, not what
+  // this fixture is isolating) so only the subject taxonomy mapping is under test here.
+  st.unitPlansUi.cdShowAllYears = true;
+  st.plannerUi.icShowAllYears = true;
+  // plannerEnsureUiState() only fills these in if absent (an "ensure", not a reset), so
+  // a leftover suggestion run from an earlier test in this file could otherwise make
+  // plannerICResultsHtml take its "suggestionsAreForThisLesson" branch instead of the
+  // plain browse path this fixture means to exercise. Clear explicitly.
+  st.plannerUi.suggestedICIds = [];
+  st.plannerUi.suggestionScores = {};
+  st.plannerUi.suggestionLessonId = null;
+  st.plannerUi.icSearch = '';
+  return st;
+}
+
+['The Arts', 'Technologies', 'Health & PE'].forEach(broadSubject => {
+  const granular = sandbox.plannerCurriculumSubjectsFor(broadSubject);
+
+  test(`unitCDResultsHtml surfaces curriculum descriptors for a unit set to '${broadSubject}' — previously always zero results, for any search term`, () => {
+    resetState();
+    setBroadSubjectFixture(broadSubject, granular[0]);
+    const st = getState();
+    const unit = st.unitPlans.find(u => u.id === 'unit_1');
+    const html = sandbox.unitCDResultsHtml(unit);
+    assert.ok(html.includes('CD_1') && html.includes('CD_2'), `descriptors with Subject '${granular[0]}' must surface for a unit whose broad subject is '${broadSubject}'`);
+    assert.ok(!html.includes('unit-cd-empty'), 'must not fall through to the "No descriptors for this subject" empty state');
+  });
+
+  test(`plannerICResultsHtml surfaces ICs for a lesson set to '${broadSubject}' — previously always zero results`, () => {
+    resetState();
+    setBroadSubjectFixture(broadSubject, granular[0]);
+    const st = getState();
+    const lesson = st.lessonPlans.find(l => l.id === 'ul_1');
+    const html = sandbox.plannerICResultsHtml(lesson);
+    assert.ok(html.includes('data-ic-id="ic_1"') || html.includes('ic_1'), `an IC homed on a '${granular[0]}' descriptor must surface for a lesson whose broad subject is '${broadSubject}'`);
+  });
+
+  test(`plannerSuggestICsFromIntention scores ICs for a lesson set to '${broadSubject}' — previously the candidate pool was always empty`, () => {
+    resetState();
+    resetClassSettings();
+    setBroadSubjectFixture(broadSubject, granular[0]);
+    const st = getState();
+    const idx = st.lessonPlans.findIndex(l => l.id === 'ul_1');
+    st.lessonPlans[idx] = { ...st.lessonPlans[idx], intention: 'Skill one description.' };
+    st.plannerUi.selectedLessonId = 'ul_1';
+
+    sandbox.plannerSuggestICsFromIntention();
+    const scores = getState().plannerUi.suggestionScores;
+    assert.ok(Object.prototype.hasOwnProperty.call(scores, 'ic_1'), `an IC homed on a '${granular[0]}' descriptor must be scored for a lesson whose broad subject is '${broadSubject}'`);
+  });
+});
+
+test('plannerCurriculumSubjectsFor maps each of the 3 broad-but-granular categories to their exact curriculum Subject values, reusing BANDED_SUBJECTS\' own spellings, and falls back to [subject] itself for the other 5 PLANNER_SUBJECTS categories', () => {
+  eqJson(sandbox.plannerCurriculumSubjectsFor('The Arts').slice().sort(), ['Dance', 'Drama', 'Media Arts', 'Music', 'Visual Arts']);
+  eqJson(sandbox.plannerCurriculumSubjectsFor('Technologies').slice().sort(), ['Design and Technologies', 'Digital Technologies']);
+  eqJson(sandbox.plannerCurriculumSubjectsFor('Health & PE'), ['HPE']);
+  // Every mapped granular value must actually be one BANDED_SUBJECTS already tracks —
+  // no independently-redefined spelling that could silently drift from it.
+  ['The Arts', 'Technologies', 'Health & PE'].forEach(broad => {
+    sandbox.plannerCurriculumSubjectsFor(broad).forEach(granular => {
+      assert.ok(PLANNER_SUBJECT_CONSTANTS.BANDED_SUBJECTS.has(granular), `'${granular}' (mapped from '${broad}') must be one of BANDED_SUBJECTS' own tracked values`);
+    });
+  });
+  ['English', 'Mathematics', 'Science', 'HASS', 'Languages'].forEach(subject => {
+    eqJson(sandbox.plannerCurriculumSubjectsFor(subject), [subject], `'${subject}' has no granular split — curriculum data's Subject value already equals it exactly`);
+  });
+});
+
+test('PLANNER_SUBJECTS itself is untouched — still exactly the 8 broad categories, not restructured into granular ones', () => {
+  eqJson(PLANNER_SUBJECT_CONSTANTS.PLANNER_SUBJECTS, ['English','Mathematics','Science','HASS','The Arts','Technologies','Health & PE','Languages']);
 });
 
 // ── Stopwords / absolute confidence floor / IC-level scoring (v1.13.70 fix) ──────
