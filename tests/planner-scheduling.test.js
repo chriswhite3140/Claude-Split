@@ -2190,6 +2190,65 @@ function setBroadSubjectFixture(broadSubject, granularSubject) {
   });
 });
 
+// Pooling CDs across multiple granular subjects (The Arts, Technologies) under one
+// broad-category unit means search/label need to disambiguate WHICH granular subject a
+// result belongs to — otherwise a teacher can never reliably search for, or even see,
+// e.g. Digital Technologies specifically within a Technologies unit (review finding on
+// this PR). Health & PE maps to a single granular subject, so it's the negative control
+// here — no disambiguation is needed or shown for it, same as any ordinary subject.
+test('unitCDResultsHtml lets a search term match the granular curriculum Subject itself, not just Code/Strand/descriptor text, for a broad category mapped to multiple granular subjects', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.curriculumCodes = [
+    { Code: 'DT_1', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Year 3', Descriptor: 'build a simple structure' },
+    { Code: 'DT_2', Subject: 'Digital Technologies', Strand: 'Processes', 'Year Level': 'Year 3', Descriptor: 'follow a sequence of steps' },
+  ];
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], subject: 'Technologies', yearLevel: '3' };
+  st.unitPlansUi.cdShowAllYears = true;
+  const unit = st.unitPlans.find(u => u.id === 'unit_1');
+
+  st.unitPlansUi.cdSearch = 'digital technologies';
+  let html = sandbox.unitCDResultsHtml(unit);
+  assert.ok(html.includes('DT_2'), 'searching the granular subject name must match a descriptor whose Subject is that exact granular value');
+  assert.ok(!html.includes('DT_1'), 'the other granular subject\'s descriptor must not match a search for a different one');
+
+  st.unitPlansUi.cdSearch = 'design and technologies';
+  html = sandbox.unitCDResultsHtml(unit);
+  assert.ok(html.includes('DT_1') && !html.includes('DT_2'), 'the reverse search must isolate the other granular subject');
+});
+
+test('unitCDResultsHtml shows each result\'s granular curriculum Subject when the unit\'s broad subject maps to more than one (The Arts, Technologies), so results from different curriculum areas stay distinguishable — but omits it for a broad subject that maps to only one, where it would be redundant', () => {
+  resetState();
+  resetClassSettings();
+  const st = getState();
+  st.unitPlansUi.cdSearch = ''; // resetState() doesn't clear this — must not inherit a leftover search from an earlier test
+  st.curriculumCodes = [
+    { Code: 'DT_1', Subject: 'Design and Technologies', Strand: 'Processes', 'Year Level': 'Year 3', Descriptor: 'build a simple structure' },
+    { Code: 'DT_2', Subject: 'Digital Technologies', Strand: 'Processes', 'Year Level': 'Year 3', Descriptor: 'follow a sequence of steps' },
+  ];
+  const unitIdx = st.unitPlans.findIndex(u => u.id === 'unit_1');
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], subject: 'Technologies', yearLevel: '3' };
+  st.unitPlansUi.cdShowAllYears = true;
+  let unit = st.unitPlans.find(u => u.id === 'unit_1');
+  let html = sandbox.unitCDResultsHtml(unit);
+  assert.ok(html.includes('Design and Technologies') && html.includes('Digital Technologies'), 'a Technologies unit (2 granular subjects) must show each result\'s own granular subject');
+
+  // Negative control: Health & PE maps to a single granular subject (HPE) — no
+  // disambiguation is needed, so it must not be shown (matching ordinary, unmapped
+  // subjects like Mathematics, which never show a redundant subject label either).
+  st.curriculumCodes = [
+    { Code: 'HPE_1', Subject: 'HPE', Strand: 'Movement', 'Year Level': 'Year 3', Descriptor: 'practise fundamental movement skills' },
+  ];
+  st.unitPlans[unitIdx] = { ...st.unitPlans[unitIdx], subject: 'Health & PE' };
+  unit = st.unitPlans.find(u => u.id === 'unit_1');
+  html = sandbox.unitCDResultsHtml(unit);
+  assert.ok(html.includes('HPE_1'), 'sanity: the HPE descriptor must still surface');
+  assert.ok(html.includes(' · Movement'), 'sanity: the Strand must still render as normal');
+  assert.ok(!html.includes(' · HPE · Movement'), 'a single-granular-subject broad category must not show a redundant subject label per result');
+});
+
 test('plannerCurriculumSubjectsFor maps each of the 3 broad-but-granular categories to their exact curriculum Subject values, reusing BANDED_SUBJECTS\' own spellings, and falls back to [subject] itself for the other 5 PLANNER_SUBJECTS categories', () => {
   eqJson(sandbox.plannerCurriculumSubjectsFor('The Arts').slice().sort(), ['Dance', 'Drama', 'Media Arts', 'Music', 'Visual Arts']);
   eqJson(sandbox.plannerCurriculumSubjectsFor('Technologies').slice().sort(), ['Design and Technologies', 'Digital Technologies']);
