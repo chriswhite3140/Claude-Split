@@ -2,14 +2,89 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.7
- * Last updated: 2026-08-10
+ * THIS FILE IS VERSION: 1.16.10
+ * Last updated: 2026-08-12
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.10 - Review fix for v1.16.8/v1.16.9's Progress fix (Codex finding): making
+ *   getLatestProgressRecord deterministic fixed the display bug, but it also meant every
+ *   save (saveBulkAssess/saveProgress/saveProgressBatch) now deterministically targets
+ *   the TRUE latest row for update-in-place — including a deliberately BACKDATED save
+ *   (Bulk Assess's date picker exists specifically so a teacher can log a missed lesson).
+ *   A backdated save would silently overwrite and destroy the latest row's real data
+ *   (rewriting its date down to the backdated value along with the new rating), and if a
+ *   third, in-between-date duplicate survived, it would then wrongly outrank the
+ *   corrupted row — making the backdated save appear to have vanished on top of the data
+ *   loss. This is silent, permanent data loss, categorically worse than the display bug
+ *   this whole fix started from. Added progressRecordToUpdate(sid, code, newDate), which
+ *   refuses to treat the current latest row as "existing" when newDate is earlier than
+ *   it — a same-day or later save still safely updates in place, but anything backdated
+ *   always inserts a new row instead, so backdating adds real history rather than
+ *   overwriting the most recent entry. Routed all 3 save-side existing-record checks
+ *   through it (the same 3 sites v1.16.8 touched); the 4 display-only
+ *   getLatestProgressRecord call sites are untouched, since backdate protection is only
+ *   meaningful for the update-vs-insert decision. Added a testAsync() lane to the test
+ *   harness (awaits a real async app function to full completion, not just its
+ *   synchronous portion before the first internal await) specifically so this fix could
+ *   be proven against the fully-settled resulting state, not just the save call's
+ *   arguments. 3 new regression tests (335 total) covering all 3 call sites, including
+ *   the exact compound scenario Codex described (3 duplicate rows, a backdated save, a
+ *   surviving in-between-date duplicate) — confirmed to fail against the pre-fix code.
+ *   Verified live (Test Mode sample data, real render/click/save pipeline): the same
+ *   3-duplicate-plus-backdate scenario correctly inserted a new row, left all 3 existing
+ *   rows byte-for-byte untouched, and the displayed rating stayed on the true latest.
+ *
+ * v1.16.9 - Review fix for v1.16.8's getLatestProgressRecord: it sorted matches by date
+ *   descending but Array.sort is stable, so two rows sharing the same day-only date
+ *   (date is an <input type="date">) returned 0 from the comparator and fell back to
+ *   original array order — i.e. sheet-row/append order — meaning index [0] after the
+ *   sort was the OLDER of the two same-date rows, not the latest. Same-date duplicates
+ *   are common precisely for this bug's own scenario: setting a rating and clearing it
+ *   again in the same session lands two rows on the same date. Rewrote
+ *   getLatestProgressRecord as a single forward pass using >= so a same-date tie is
+ *   broken in favor of the later-appended (array-later) row, instead of silently keeping
+ *   the earlier one. All 5 call sites already routed through this shared helper needed
+ *   no changes themselves. 1 new regression test (332 total), confirmed to fail against
+ *   the pre-fix (sort-based) code.
+ * v1.16.8 - Fix Bulk Assess rating clear not persisting (two symptoms: can't clear a
+ *   rating once set, and clearing doesn't stick after save). Root cause: Progress is
+ *   append-only history (old rows are never deleted/replaced — a student+code pair can
+ *   have more than one row), but every "what's the current rating" lookup used
+ *   state.progress.find(), which returns the first array match, not the latest by date.
+ *   loadAll()/loadProgress() apply zero sorting, so state.progress is exactly raw
+ *   sheet-row order — if a student+code pair has duplicate rows, .find() keeps latching
+ *   onto whichever one loads first (typically the oldest, since updateProgress mutates a
+ *   row in place without moving it and saveProgress appends new rows at the end), never
+ *   reflecting a genuinely newer row. Fixed by adding getLatestProgressRecord(sid, code)
+ *   — filters to matching rows and picks the latest by date, mirroring the identical
+ *   existing convention in saveTaughtICRecord — and routing every state.progress.find()
+ *   call site through it consistently: the display-side lookup (getMasteryForCode), both
+ *   save-side existing-record checks that decide update-vs-insert (saveBulkAssess,
+ *   saveProgress, saveProgressBatch), and two detail-view lookups that render alongside
+ *   getMasteryForCode's result (the Student Detail codes table's Date column, the code
+ *   detail panel) which would otherwise have shown a mismatched date/record next to the
+ *   now-corrected mastery value. Append-only architecture and updateProgress/saveProgress
+ *   call patterns are unchanged — purely a read-side "which row is current" fix. 4 new
+ *   regression tests (331 total), confirmed to fail against the pre-fix code.
+ *   Investigation note: checked whether real duplicate Progress rows exist for the
+ *   reported case as instructed, but this sandbox's outbound network policy blocks
+ *   script.google.com outright (confirmed via the proxy's own status log — explicit
+ *   connect_rejected/403 policy denial, not a transient failure), so the real backend
+ *   is unreachable from here and this couldn't be checked directly against the actual
+ *   Sheet. The .find()-first-match mechanism itself is confirmed in the code and is a
+ *   sufficient explanation for both reported symptoms on its own; verified instead via a
+ *   live browser session (Test Mode sample data, real render/click/save pipeline) with a
+ *   synthetic duplicate-row fixture shaped exactly like loadAll()'s real unsorted output:
+ *   an older 'Achieved' row first in the array, the true-latest 'Achieved' row last.
+ *   Clearing that rating and saving correctly targeted the latest row's id (not the
+ *   stale older row a plain .find() would have grabbed), and the display correctly
+ *   reflected 'Not taught' afterward. Recommend a quick manual check against the real
+ *   data (set a rating, clear it, save, reload) since real-Sheet duplicates couldn't be
+ *   ruled in or out from this sandbox.
  * v1.16.7 - Review fix for v1.16.6's broad-subject CD mapping: pooling curriculum
  *   descriptors across multiple granular subjects under one broad PLANNER_SUBJECTS
  *   category (The Arts, Technologies) left no way to tell, search for, or reliably find
@@ -631,7 +706,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.7';
+const APP_VERSION = '1.16.10';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1383,9 +1458,7 @@ async function addStudent(data) {
 
 async function saveProgress(data) {
   invalidateReadinessCache();
-  const existing = state.progress.find(
-    p => p.student_id === data.student_id && p.code === data.content_descriptor_code
-  );
+  const existing = progressRecordToUpdate(data.student_id, data.content_descriptor_code, data.date_assessed);
   if (existing) {
     const result = await apiCall('updateProgress', {
       progress_id: existing.id,
@@ -1422,9 +1495,7 @@ async function saveProgressBatch(entries) {
   let savedCount = 0;
   for (const data of entries) {
     try {
-      const existing = state.progress.find(
-        p => p.student_id === data.student_id && p.code === data.content_descriptor_code
-      );
+      const existing = progressRecordToUpdate(data.student_id, data.content_descriptor_code, data.date_assessed || today);
       if (existing) {
         const result = await apiCall('updateProgress', {
           progress_id: existing.id,
@@ -1558,10 +1629,37 @@ function getComponentMasterySummary(studentId, code) {
   else if (pct >= 30) label = 'Developing';
   return { total: comps.length, achieved: achievedCount, pct, label };
 }
+// Progress is append-only history — a student+code pair can have more than one
+// row (old rows are never deleted/replaced). "Current" must always be the latest
+// by date, never just the first array match (array order is raw, unsorted sheet order).
+// date is day-only (an <input type="date">), so two records from the same day — e.g.
+// setting a rating and clearing it again in the same session — are common; a single
+// forward pass with >= breaks that tie in favor of the later (later-appended) array
+// entry, rather than a sort's stable tie-break silently keeping the earlier one.
+function getLatestProgressRecord(sid, code) {
+  let latest = null;
+  for (const p of state.progress) {
+    if (p.student_id !== sid || p.code !== code) continue;
+    if (!latest || new Date(p.date) >= new Date(latest.date)) latest = p;
+  }
+  return latest;
+}
+// A save whose date is earlier than the current latest record (a backdated entry —
+// e.g. logging a missed lesson via Bulk Assess's date picker) must never update that
+// record in place: doing so would silently destroy its data, and if another duplicate
+// with an in-between date survives, the backdated save can even appear to vanish behind
+// it on the next read. Only a save on or after the current latest's date may safely
+// reuse it (same-day corrections); anything earlier always inserts a new row instead,
+// so backdating adds real history rather than overwriting the most recent entry.
+function progressRecordToUpdate(sid, code, newDate) {
+  const latest = getLatestProgressRecord(sid, code);
+  if (!latest) return null;
+  return new Date(newDate) < new Date(latest.date) ? null : latest;
+}
 function getMasteryForCode(sid, code) {
   const summary = getComponentMasterySummary(sid, code);
   if (summary) return componentLabelToLegacyMastery(summary.label);
-  const p = state.progress.find(x => x.student_id === sid && x.code === code);
+  const p = getLatestProgressRecord(sid, code);
   return p ? p.mastery : 'Not taught';
 }
 function masteryClass(m) {
@@ -6607,7 +6705,7 @@ function renderStudentDetail(main) {
                 ${filteredCodes.map(c => {
                   const mastery = getMasteryForCode(s.id, c.Code);
                   const componentSummary = getComponentMasterySummary(s.id, c.Code);
-                  const prog = state.progress.find(p => p.student_id === s.id && p.code === c.Code);
+                  const prog = getLatestProgressRecord(s.id, c.Code);
                   const date = prog ? prog.date.split('T')[0] : '—';
                   const taught = wasCodeTaughtToStudent(s.id, c.Code);
                   const taughtDates = getTaughtDatesForCode(s.id, c.Code);
@@ -6895,7 +6993,7 @@ function openCodeDetail(code, studentId) {
         </div>`;
       }).join('')
     : '';
-  const prog = studentId ? state.progress.find(p => p.student_id === studentId && p.code === code) : null;
+  const prog = studentId ? getLatestProgressRecord(studentId, code) : null;
 
   const ics = getICsForDescriptor(code);
   const descriptorType = cd.descriptorType || 'knowledge';
@@ -7816,7 +7914,7 @@ async function saveBulkAssess() {
     // so the saved record is unset rather than left at its previous value.
     const mastery = rawMastery === null ? 'Not taught' : rawMastery;
     const [studentId, code] = key.split('|');
-    const existing = state.progress.find(p => p.student_id===studentId && p.code===code);
+    const existing = progressRecordToUpdate(studentId, code, ba.date);
     try {
       if (existing) {
         const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });
@@ -8819,7 +8917,7 @@ function openMasteryBannerModal(pairs) {
   // Pre-populate with existing progress records (edit flow)
   readyPairs.forEach(pair => {
     const key = pair.student.id + '|' + pair.descriptorId;
-    const existing = state.progress.find(p => p.student_id === pair.student.id && p.code === pair.descriptorId);
+    const existing = getLatestProgressRecord(pair.student.id, pair.descriptorId);
     if (existing) {
       masteryPickerState.selections[key] = { mastery: existing.mastery, notReadyReason: null };
     }
