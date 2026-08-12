@@ -4280,6 +4280,19 @@ test('getLatestProgressRecord returns null with no matching rows, and the single
   assert.strictEqual(sandbox.getLatestProgressRecord('stu_2', 'AC9E3LY01').id, 'only_one');
 });
 
+test('getLatestProgressRecord breaks a same-date tie in favor of the later-appended (array-later) row, not the earlier one a stable sort\'s tie-break would silently keep — date is day-only, so setting a rating and clearing it again in the same session is a same-date duplicate, exactly this bug\'s own real-world case (review finding)', () => {
+  resetState();
+  const st = getState();
+  // Two rows, identical date, appended in order: the earlier-appended row set the
+  // rating, the later-appended row is the same-day clear that must win.
+  st.progress = [
+    { id: 'p_set', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' },
+    { id: 'p_cleared', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Not taught', date: '2026-07-20', notes: '' },
+  ];
+  const rec = sandbox.getLatestProgressRecord('stu_1', 'AC9E3LY01');
+  assert.strictEqual(rec.id, 'p_cleared', 'the later-appended same-date row must win the tie, not the earlier-appended one');
+});
+
 test('getMasteryForCode reflects a manually-cleared rating (a later "Not taught" row) even though an earlier "Achieved" row sits first in state.progress — this is the exact "clearing doesn\'t persist" symptom: a plain .find() would keep returning the stale Achieved row forever regardless of what was saved afterward', () => {
   resetState();
   const st = getState();

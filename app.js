@@ -2,7 +2,7 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.8
+ * THIS FILE IS VERSION: 1.16.9
  * Last updated: 2026-08-12
  * ============================================================
  *
@@ -10,6 +10,18 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.9 - Review fix for v1.16.8's getLatestProgressRecord: it sorted matches by date
+ *   descending but Array.sort is stable, so two rows sharing the same day-only date
+ *   (date is an <input type="date">) returned 0 from the comparator and fell back to
+ *   original array order — i.e. sheet-row/append order — meaning index [0] after the
+ *   sort was the OLDER of the two same-date rows, not the latest. Same-date duplicates
+ *   are common precisely for this bug's own scenario: setting a rating and clearing it
+ *   again in the same session lands two rows on the same date. Rewrote
+ *   getLatestProgressRecord as a single forward pass using >= so a same-date tie is
+ *   broken in favor of the later-appended (array-later) row, instead of silently keeping
+ *   the earlier one. All 5 call sites already routed through this shared helper needed
+ *   no changes themselves. 1 new regression test (332 total), confirmed to fail against
+ *   the pre-fix (sort-based) code.
  * v1.16.8 - Fix Bulk Assess rating clear not persisting (two symptoms: can't clear a
  *   rating once set, and clearing doesn't stick after save). Root cause: Progress is
  *   append-only history (old rows are never deleted/replaced — a student+code pair can
@@ -666,7 +678,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.8';
+const APP_VERSION = '1.16.9';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1592,11 +1604,17 @@ function getComponentMasterySummary(studentId, code) {
 // Progress is append-only history — a student+code pair can have more than one
 // row (old rows are never deleted/replaced). "Current" must always be the latest
 // by date, never just the first array match (array order is raw, unsorted sheet order).
+// date is day-only (an <input type="date">), so two records from the same day — e.g.
+// setting a rating and clearing it again in the same session — are common; a single
+// forward pass with >= breaks that tie in favor of the later (later-appended) array
+// entry, rather than a sort's stable tie-break silently keeping the earlier one.
 function getLatestProgressRecord(sid, code) {
-  const matches = state.progress.filter(p => p.student_id === sid && p.code === code);
-  return matches.length
-    ? matches.sort((a, b) => new Date(b.date) - new Date(a.date))[0]
-    : null;
+  let latest = null;
+  for (const p of state.progress) {
+    if (p.student_id !== sid || p.code !== code) continue;
+    if (!latest || new Date(p.date) >= new Date(latest.date)) latest = p;
+  }
+  return latest;
 }
 function getMasteryForCode(sid, code) {
   const summary = getComponentMasterySummary(sid, code);
