@@ -144,12 +144,15 @@
       subject: 'The Arts',
       yearLevel: '3',
       term: 'Term 3',
-      // Deliberately empty: The Arts is a banded subject where unitCDResultsHtml's
-      // CD search currently never matches (it filters state.curriculumCodes by
-      // c.Subject === unit.subject, but the CSV Subject values for Arts subjects are
-      // the specific discipline — Dance/Drama/Media Arts/Music/Visual Arts — never
-      // the umbrella "The Arts"). Included on purpose so sample data exercises this
-      // known-broken path as a live regression check, per the task brief.
+      // Deliberately empty: The Arts is a banded subject — the CSV Subject values for
+      // Arts subjects are the specific discipline (Dance/Drama/Media Arts/Music/Visual
+      // Arts), never the umbrella "The Arts". unitCDResultsHtml used to filter
+      // state.curriculumCodes by a direct c.Subject === unit.subject equality check,
+      // which could never match any of those for a unit whose own subject was the
+      // broad "The Arts" — fixed via plannerCurriculumSubjectsFor()'s broad-to-granular
+      // mapping. Left with zero linked CDs on purpose so this unit keeps exercising the
+      // CD-linking path (a teacher can now actually browse/search and link one) as a
+      // live regression check, per the task brief.
       linkedCDIds: [],
       assessmentNotes: '',
       lessonIds: ['sample-lsn-d1', 'sample-lsn-d2'],
