@@ -2,13 +2,41 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.9
+ * THIS FILE IS VERSION: 1.16.10
  * Last updated: 2026-08-12
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
+ *
+ * v1.16.10 - Review fix for v1.16.8/v1.16.9's Progress fix (Codex finding): making
+ *   getLatestProgressRecord deterministic fixed the display bug, but it also meant every
+ *   save (saveBulkAssess/saveProgress/saveProgressBatch) now deterministically targets
+ *   the TRUE latest row for update-in-place — including a deliberately BACKDATED save
+ *   (Bulk Assess's date picker exists specifically so a teacher can log a missed lesson).
+ *   A backdated save would silently overwrite and destroy the latest row's real data
+ *   (rewriting its date down to the backdated value along with the new rating), and if a
+ *   third, in-between-date duplicate survived, it would then wrongly outrank the
+ *   corrupted row — making the backdated save appear to have vanished on top of the data
+ *   loss. This is silent, permanent data loss, categorically worse than the display bug
+ *   this whole fix started from. Added progressRecordToUpdate(sid, code, newDate), which
+ *   refuses to treat the current latest row as "existing" when newDate is earlier than
+ *   it — a same-day or later save still safely updates in place, but anything backdated
+ *   always inserts a new row instead, so backdating adds real history rather than
+ *   overwriting the most recent entry. Routed all 3 save-side existing-record checks
+ *   through it (the same 3 sites v1.16.8 touched); the 4 display-only
+ *   getLatestProgressRecord call sites are untouched, since backdate protection is only
+ *   meaningful for the update-vs-insert decision. Added a testAsync() lane to the test
+ *   harness (awaits a real async app function to full completion, not just its
+ *   synchronous portion before the first internal await) specifically so this fix could
+ *   be proven against the fully-settled resulting state, not just the save call's
+ *   arguments. 3 new regression tests (335 total) covering all 3 call sites, including
+ *   the exact compound scenario Codex described (3 duplicate rows, a backdated save, a
+ *   surviving in-between-date duplicate) — confirmed to fail against the pre-fix code.
+ *   Verified live (Test Mode sample data, real render/click/save pipeline): the same
+ *   3-duplicate-plus-backdate scenario correctly inserted a new row, left all 3 existing
+ *   rows byte-for-byte untouched, and the displayed rating stayed on the true latest.
  *
  * v1.16.9 - Review fix for v1.16.8's getLatestProgressRecord: it sorted matches by date
  *   descending but Array.sort is stable, so two rows sharing the same day-only date
@@ -678,7 +706,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.9';
+const APP_VERSION = '1.16.10';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1430,7 +1458,7 @@ async function addStudent(data) {
 
 async function saveProgress(data) {
   invalidateReadinessCache();
-  const existing = getLatestProgressRecord(data.student_id, data.content_descriptor_code);
+  const existing = progressRecordToUpdate(data.student_id, data.content_descriptor_code, data.date_assessed);
   if (existing) {
     const result = await apiCall('updateProgress', {
       progress_id: existing.id,
@@ -1467,7 +1495,7 @@ async function saveProgressBatch(entries) {
   let savedCount = 0;
   for (const data of entries) {
     try {
-      const existing = getLatestProgressRecord(data.student_id, data.content_descriptor_code);
+      const existing = progressRecordToUpdate(data.student_id, data.content_descriptor_code, data.date_assessed || today);
       if (existing) {
         const result = await apiCall('updateProgress', {
           progress_id: existing.id,
@@ -1615,6 +1643,18 @@ function getLatestProgressRecord(sid, code) {
     if (!latest || new Date(p.date) >= new Date(latest.date)) latest = p;
   }
   return latest;
+}
+// A save whose date is earlier than the current latest record (a backdated entry —
+// e.g. logging a missed lesson via Bulk Assess's date picker) must never update that
+// record in place: doing so would silently destroy its data, and if another duplicate
+// with an in-between date survives, the backdated save can even appear to vanish behind
+// it on the next read. Only a save on or after the current latest's date may safely
+// reuse it (same-day corrections); anything earlier always inserts a new row instead,
+// so backdating adds real history rather than overwriting the most recent entry.
+function progressRecordToUpdate(sid, code, newDate) {
+  const latest = getLatestProgressRecord(sid, code);
+  if (!latest) return null;
+  return new Date(newDate) < new Date(latest.date) ? null : latest;
 }
 function getMasteryForCode(sid, code) {
   const summary = getComponentMasterySummary(sid, code);
@@ -7874,7 +7914,7 @@ async function saveBulkAssess() {
     // so the saved record is unset rather than left at its previous value.
     const mastery = rawMastery === null ? 'Not taught' : rawMastery;
     const [studentId, code] = key.split('|');
-    const existing = getLatestProgressRecord(studentId, code);
+    const existing = progressRecordToUpdate(studentId, code, ba.date);
     try {
       if (existing) {
         const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });

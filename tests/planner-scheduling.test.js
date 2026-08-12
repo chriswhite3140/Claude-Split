@@ -129,6 +129,16 @@ function test(name, fn) {
   catch (e) { failures.push({ name, e }); console.log('  ✗ ' + name + '\n      ' + (e && e.message)); }
 }
 
+// Rare — only when a test genuinely needs to await a real async app function to
+// completion (its full promise chain settled, not just the synchronous portion
+// before its first internal await) to observe the resulting state. Queued and run
+// after every synchronous test() above, right before the final summary, so the
+// normal synchronous suite (the vast majority of tests) is completely unaffected.
+const asyncTests = [];
+function testAsync(name, fn) {
+  asyncTests.push({ name, fn });
+}
+
 const WEEK_A = '2026-06-29'; // a Monday
 const WEEK_B = '2026-07-06'; // the following Monday
 
@@ -4324,6 +4334,106 @@ test('saveBulkAssess resolves its update-vs-insert "existing" decision to the la
   assert.strictEqual(apiCalls[0].data.progress_id, 'p_latest', 'must update the latest row (p_latest), not the stale p_old row a plain .find() would have returned first');
 });
 
+// ── Review fix: a BACKDATED save must never overwrite the current latest row ──────
+// (Codex finding on this PR) — making getLatestProgressRecord deterministic fixed the
+// display bug, but it also meant every save now deterministically targets the TRUE
+// latest row for update-in-place. If the teacher deliberately saves an earlier date
+// (Bulk Assess's date picker exists specifically for logging a missed lesson), that
+// would silently overwrite and destroy the latest row's real data — and if a THIRD,
+// in-between-date duplicate survives, it then wrongly outranks the corrupted latest
+// row, making the backdated save appear to have vanished. progressRecordToUpdate()
+// now refuses to treat the latest row as "existing" when the new date is earlier than
+// it, so a backdated save always inserts new history instead of destroying old.
+console.log('Backdated saves never overwrite the current latest Progress row (review finding)');
+
+testAsync('saveBulkAssess: a backdated save (earlier than the current latest row), with a THIRD in-between-date duplicate also present, inserts a new row and leaves all three existing rows byte-for-byte untouched — the exact data-loss scenario Codex flagged', async () => {
+  resetState();
+  const st = getState();
+  st.students = [{ id: 'stu_1', first_name: 'Amelia', last_name: 'Chen', year_level: '3' }];
+  st.curriculumCodes = [{ Code: 'AC9E3LY01', Subject: 'English', 'Year Level': 'Year 3', Strand: 'Literacy' }];
+  st.instructionalComponents = [];
+  // Three existing rows. p_mid is the "surviving duplicate with a later date" that
+  // would wrongly become "current" if p_latest got corrupted down to the backdated date.
+  st.progress = [
+    { id: 'p_old', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Emerging', date: '2026-05-01', notes: '' },
+    { id: 'p_mid', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Developing', date: '2026-06-15', notes: '' },
+    { id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' },
+  ];
+  st.currentView = 'bulk-assess';
+  // The teacher backdates to 2026-06-01 — catching up on a missed lesson — earlier
+  // than BOTH p_mid (2026-06-15) and p_latest (2026-07-20).
+  st.bulkAssess = { mode: 'by-code', yearFilter: 'all', subjectFilter: 'English', strandFilter: 'all', selectedCode: 'AC9E3LY01', selectedStudent: null, date: '2026-06-01', pendingChanges: { 'stu_1|AC9E3LY01': 'Emerging' } };
+
+  const apiCalls = [];
+  const realApiCall = sandbox.apiCall;
+  sandbox.apiCall = function (action, data) {
+    apiCalls.push({ action, data });
+    return Promise.resolve(action === 'saveProgress' ? { success: true, progress_id: 'p_backdated' } : { success: true });
+  };
+  try {
+    await sandbox.saveBulkAssess();
+  } finally {
+    sandbox.apiCall = realApiCall;
+  }
+
+  assert.strictEqual(apiCalls.length, 1, 'exactly one save call');
+  assert.strictEqual(apiCalls[0].action, 'saveProgress', 'a backdated save (earlier than the current latest) must INSERT a new row, never updateProgress an existing one');
+
+  eqJson(st.progress.find(p => p.id === 'p_old'), { id: 'p_old', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Emerging', date: '2026-05-01', notes: '' }, 'the oldest row must be untouched');
+  eqJson(st.progress.find(p => p.id === 'p_mid'), { id: 'p_mid', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Developing', date: '2026-06-15', notes: '' }, 'the in-between duplicate must be untouched — exactly the row that would wrongly "win" getLatestProgressRecord if p_latest had been corrupted down to the backdated date');
+  eqJson(st.progress.find(p => p.id === 'p_latest'), { id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' }, 'the true latest row must survive completely unmodified — this is the record Codex found being silently destroyed');
+
+  const backdatedRow = st.progress.find(p => p.id === 'p_backdated');
+  assert.ok(backdatedRow, 'a new row for the backdated save must have been inserted');
+  assert.strictEqual(backdatedRow.date, '2026-06-01');
+  assert.strictEqual(backdatedRow.mastery, 'Emerging');
+
+  assert.strictEqual(sandbox.getLatestProgressRecord('stu_1', 'AC9E3LY01').id, 'p_latest', 'the backdated insert must not disturb what counts as "current" — still the true latest row, not the in-between duplicate and not the newly-inserted backdated row');
+  assert.strictEqual(sandbox.getMasteryForCode('stu_1', 'AC9E3LY01'), 'Achieved');
+});
+
+testAsync('saveProgress (the single-entry save path, not Bulk Assess) applies the same backdate protection: a date earlier than the current latest record inserts a new row rather than overwriting it', async () => {
+  resetState();
+  const st = getState();
+  st.progress = [{ id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' }];
+
+  const apiCalls = [];
+  const realApiCall = sandbox.apiCall;
+  sandbox.apiCall = function (action, data) {
+    apiCalls.push({ action, data });
+    return Promise.resolve(action === 'saveProgress' ? { success: true, progress_id: 'p_new' } : { success: true });
+  };
+  try {
+    await sandbox.saveProgress({ student_id: 'stu_1', content_descriptor_code: 'AC9E3LY01', mastery_level: 'Developing', date_assessed: '2026-06-01', teacher_notes: '' });
+  } finally {
+    sandbox.apiCall = realApiCall;
+  }
+
+  assert.strictEqual(apiCalls[0].action, 'saveProgress', 'a backdated date must insert, not update');
+  eqJson(st.progress.find(p => p.id === 'p_latest'), { id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' }, 'the true latest row must be untouched');
+});
+
+testAsync('saveProgressBatch applies the same backdate protection per-entry: a batch entry dated earlier than the current latest record inserts a new row rather than overwriting it', async () => {
+  resetState();
+  const st = getState();
+  st.progress = [{ id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' }];
+
+  const apiCalls = [];
+  const realApiCall = sandbox.apiCall;
+  sandbox.apiCall = function (action, data) {
+    apiCalls.push({ action, data });
+    return Promise.resolve(action === 'saveProgress' ? { success: true, progress_id: 'p_new' } : { success: true });
+  };
+  try {
+    await sandbox.saveProgressBatch([{ student_id: 'stu_1', content_descriptor_code: 'AC9E3LY01', mastery_level: 'Developing', date_assessed: '2026-06-01', teacher_notes: '' }]);
+  } finally {
+    sandbox.apiCall = realApiCall;
+  }
+
+  assert.strictEqual(apiCalls[0].action, 'saveProgress', 'a backdated batch entry must insert, not update');
+  eqJson(st.progress.find(p => p.id === 'p_latest'), { id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' }, 'the true latest row must be untouched');
+});
+
 // ── Review fix: rail text truncation regression from the independent-scroll PR ──
 console.log('Unit lessons rail scrollbar-width compensation (truncation regression fix)');
 
@@ -5595,8 +5705,16 @@ test('syncNavHighlight() clears a stale highlight rather than only ever adding �
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────
-console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
-if (failures.length) {
-  for (const f of failures) console.error('FAILED: ' + f.name + '\n' + (f.e && f.e.stack || f.e));
-  process.exit(1);
-}
+(async () => {
+  for (const { name, fn } of asyncTests) {
+    toasts = [];
+    windowOpenCalls = [];
+    try { await fn(); passed++; console.log('  ✓ ' + name); }
+    catch (e) { failures.push({ name, e }); console.log('  ✗ ' + name + '\n      ' + (e && e.message)); }
+  }
+  console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
+  if (failures.length) {
+    for (const f of failures) console.error('FAILED: ' + f.name + '\n' + (f.e && f.e.stack || f.e));
+    process.exit(1);
+  }
+})();
