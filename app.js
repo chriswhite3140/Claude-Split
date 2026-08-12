@@ -2,14 +2,49 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.7
- * Last updated: 2026-08-10
+ * THIS FILE IS VERSION: 1.16.8
+ * Last updated: 2026-08-12
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.8 - Fix Bulk Assess rating clear not persisting (two symptoms: can't clear a
+ *   rating once set, and clearing doesn't stick after save). Root cause: Progress is
+ *   append-only history (old rows are never deleted/replaced — a student+code pair can
+ *   have more than one row), but every "what's the current rating" lookup used
+ *   state.progress.find(), which returns the first array match, not the latest by date.
+ *   loadAll()/loadProgress() apply zero sorting, so state.progress is exactly raw
+ *   sheet-row order — if a student+code pair has duplicate rows, .find() keeps latching
+ *   onto whichever one loads first (typically the oldest, since updateProgress mutates a
+ *   row in place without moving it and saveProgress appends new rows at the end), never
+ *   reflecting a genuinely newer row. Fixed by adding getLatestProgressRecord(sid, code)
+ *   — filters to matching rows and picks the latest by date, mirroring the identical
+ *   existing convention in saveTaughtICRecord — and routing every state.progress.find()
+ *   call site through it consistently: the display-side lookup (getMasteryForCode), both
+ *   save-side existing-record checks that decide update-vs-insert (saveBulkAssess,
+ *   saveProgress, saveProgressBatch), and two detail-view lookups that render alongside
+ *   getMasteryForCode's result (the Student Detail codes table's Date column, the code
+ *   detail panel) which would otherwise have shown a mismatched date/record next to the
+ *   now-corrected mastery value. Append-only architecture and updateProgress/saveProgress
+ *   call patterns are unchanged — purely a read-side "which row is current" fix. 4 new
+ *   regression tests (331 total), confirmed to fail against the pre-fix code.
+ *   Investigation note: checked whether real duplicate Progress rows exist for the
+ *   reported case as instructed, but this sandbox's outbound network policy blocks
+ *   script.google.com outright (confirmed via the proxy's own status log — explicit
+ *   connect_rejected/403 policy denial, not a transient failure), so the real backend
+ *   is unreachable from here and this couldn't be checked directly against the actual
+ *   Sheet. The .find()-first-match mechanism itself is confirmed in the code and is a
+ *   sufficient explanation for both reported symptoms on its own; verified instead via a
+ *   live browser session (Test Mode sample data, real render/click/save pipeline) with a
+ *   synthetic duplicate-row fixture shaped exactly like loadAll()'s real unsorted output:
+ *   an older 'Achieved' row first in the array, the true-latest 'Achieved' row last.
+ *   Clearing that rating and saving correctly targeted the latest row's id (not the
+ *   stale older row a plain .find() would have grabbed), and the display correctly
+ *   reflected 'Not taught' afterward. Recommend a quick manual check against the real
+ *   data (set a rating, clear it, save, reload) since real-Sheet duplicates couldn't be
+ *   ruled in or out from this sandbox.
  * v1.16.7 - Review fix for v1.16.6's broad-subject CD mapping: pooling curriculum
  *   descriptors across multiple granular subjects under one broad PLANNER_SUBJECTS
  *   category (The Arts, Technologies) left no way to tell, search for, or reliably find
@@ -631,7 +666,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.7';
+const APP_VERSION = '1.16.8';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1383,9 +1418,7 @@ async function addStudent(data) {
 
 async function saveProgress(data) {
   invalidateReadinessCache();
-  const existing = state.progress.find(
-    p => p.student_id === data.student_id && p.code === data.content_descriptor_code
-  );
+  const existing = getLatestProgressRecord(data.student_id, data.content_descriptor_code);
   if (existing) {
     const result = await apiCall('updateProgress', {
       progress_id: existing.id,
@@ -1422,9 +1455,7 @@ async function saveProgressBatch(entries) {
   let savedCount = 0;
   for (const data of entries) {
     try {
-      const existing = state.progress.find(
-        p => p.student_id === data.student_id && p.code === data.content_descriptor_code
-      );
+      const existing = getLatestProgressRecord(data.student_id, data.content_descriptor_code);
       if (existing) {
         const result = await apiCall('updateProgress', {
           progress_id: existing.id,
@@ -1558,10 +1589,19 @@ function getComponentMasterySummary(studentId, code) {
   else if (pct >= 30) label = 'Developing';
   return { total: comps.length, achieved: achievedCount, pct, label };
 }
+// Progress is append-only history — a student+code pair can have more than one
+// row (old rows are never deleted/replaced). "Current" must always be the latest
+// by date, never just the first array match (array order is raw, unsorted sheet order).
+function getLatestProgressRecord(sid, code) {
+  const matches = state.progress.filter(p => p.student_id === sid && p.code === code);
+  return matches.length
+    ? matches.sort((a, b) => new Date(b.date) - new Date(a.date))[0]
+    : null;
+}
 function getMasteryForCode(sid, code) {
   const summary = getComponentMasterySummary(sid, code);
   if (summary) return componentLabelToLegacyMastery(summary.label);
-  const p = state.progress.find(x => x.student_id === sid && x.code === code);
+  const p = getLatestProgressRecord(sid, code);
   return p ? p.mastery : 'Not taught';
 }
 function masteryClass(m) {
@@ -6607,7 +6647,7 @@ function renderStudentDetail(main) {
                 ${filteredCodes.map(c => {
                   const mastery = getMasteryForCode(s.id, c.Code);
                   const componentSummary = getComponentMasterySummary(s.id, c.Code);
-                  const prog = state.progress.find(p => p.student_id === s.id && p.code === c.Code);
+                  const prog = getLatestProgressRecord(s.id, c.Code);
                   const date = prog ? prog.date.split('T')[0] : '—';
                   const taught = wasCodeTaughtToStudent(s.id, c.Code);
                   const taughtDates = getTaughtDatesForCode(s.id, c.Code);
@@ -6895,7 +6935,7 @@ function openCodeDetail(code, studentId) {
         </div>`;
       }).join('')
     : '';
-  const prog = studentId ? state.progress.find(p => p.student_id === studentId && p.code === code) : null;
+  const prog = studentId ? getLatestProgressRecord(studentId, code) : null;
 
   const ics = getICsForDescriptor(code);
   const descriptorType = cd.descriptorType || 'knowledge';
@@ -7816,7 +7856,7 @@ async function saveBulkAssess() {
     // so the saved record is unset rather than left at its previous value.
     const mastery = rawMastery === null ? 'Not taught' : rawMastery;
     const [studentId, code] = key.split('|');
-    const existing = state.progress.find(p => p.student_id===studentId && p.code===code);
+    const existing = getLatestProgressRecord(studentId, code);
     try {
       if (existing) {
         const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });
@@ -8819,7 +8859,7 @@ function openMasteryBannerModal(pairs) {
   // Pre-populate with existing progress records (edit flow)
   readyPairs.forEach(pair => {
     const key = pair.student.id + '|' + pair.descriptorId;
-    const existing = state.progress.find(p => p.student_id === pair.student.id && p.code === pair.descriptorId);
+    const existing = getLatestProgressRecord(pair.student.id, pair.descriptorId);
     if (existing) {
       masteryPickerState.selections[key] = { mastery: existing.mastery, notReadyReason: null };
     }

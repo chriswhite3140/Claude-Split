@@ -4237,6 +4237,80 @@ test('capturePanelScrollPositions / restorePanelScrollPositions never throw acro
   assert.doesNotThrow(() => sandbox.restorePanelScrollPositions(mainStub, sandbox.capturePanelScrollPositions(mainStub)), 'navigated away from Bulk Assess entirely');
 });
 
+// ── Fix: Progress "current" lookups must pick latest-by-date, not first .find() match ──
+// Progress is append-only history (old rows are never deleted/replaced — new rows
+// supersede old ones by date), so a student+code pair can legitimately end up with more
+// than one row. Every "what's the current rating" lookup must resolve to the latest by
+// date; picking the first array match instead silently pins "current" to whichever row
+// happens to sit first in the raw, unsorted sheet-row order loadAll()/loadProgress()
+// return — typically the oldest — which is how a rating clear could appear to not stick,
+// and to keep reverting after a reload.
+console.log('Progress "current" lookups pick latest-by-date, not first array match');
+
+function seedDuplicateProgressFixture(st) {
+  st.students = [{ id: 'stu_1', first_name: 'Amelia', last_name: 'Chen', year_level: '3' }];
+  st.curriculumCodes = [{ Code: 'AC9E3LY01', Subject: 'English', 'Year Level': 'Year 3', Strand: 'Literacy' }];
+  st.instructionalComponents = [];
+  // Deliberately out of date order, matching the shape loadAll()/loadProgress() actually
+  // produce (zero sorting — raw sheet-row order): the oldest row sits first, a mid-aged
+  // row second, and the true latest (a manually-cleared rating) sits last, since
+  // updateProgress mutates a row in place — its position never moves — while saveProgress
+  // appends new rows at the end.
+  st.progress = [
+    { id: 'p_old', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-05-01', notes: '' },
+    { id: 'p_mid', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Developing', date: '2026-06-15', notes: '' },
+    { id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Not taught', date: '2026-07-20', notes: '' },
+  ];
+}
+
+test('getLatestProgressRecord returns the row with the latest date, not the first array match, when a student+code pair has duplicate rows', () => {
+  resetState();
+  const st = getState();
+  seedDuplicateProgressFixture(st);
+  const rec = sandbox.getLatestProgressRecord('stu_1', 'AC9E3LY01');
+  assert.strictEqual(rec.id, 'p_latest', 'must resolve to the chronologically latest row, not state.progress[0]');
+});
+
+test('getLatestProgressRecord returns null with no matching rows, and the single match when there is exactly one — the common, non-duplicate case is unaffected', () => {
+  resetState();
+  const st = getState();
+  seedDuplicateProgressFixture(st);
+  assert.strictEqual(sandbox.getLatestProgressRecord('stu_1', 'AC9M3N02'), null, 'no rows at all for this code');
+  st.progress = [{ id: 'only_one', student_id: 'stu_2', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-05-01', notes: '' }];
+  assert.strictEqual(sandbox.getLatestProgressRecord('stu_2', 'AC9E3LY01').id, 'only_one');
+});
+
+test('getMasteryForCode reflects a manually-cleared rating (a later "Not taught" row) even though an earlier "Achieved" row sits first in state.progress — this is the exact "clearing doesn\'t persist" symptom: a plain .find() would keep returning the stale Achieved row forever regardless of what was saved afterward', () => {
+  resetState();
+  const st = getState();
+  seedDuplicateProgressFixture(st);
+  assert.strictEqual(sandbox.getMasteryForCode('stu_1', 'AC9E3LY01'), 'Not taught', 'the latest row (a cleared rating) must win over the earlier Achieved row that happens to load first');
+});
+
+test('saveBulkAssess resolves its update-vs-insert "existing" decision to the latest-by-date row, so a rating clear updates the true current record instead of silently re-updating a stale earlier row', () => {
+  resetState();
+  const st = getState();
+  seedDuplicateProgressFixture(st);
+  st.currentView = 'bulk-assess';
+  st.bulkAssess = { mode: 'by-code', yearFilter: 'all', subjectFilter: 'English', strandFilter: 'all', selectedCode: 'AC9E3LY01', selectedStudent: null, date: '2026-08-08', pendingChanges: { 'stu_1|AC9E3LY01': null } };
+
+  const apiCalls = [];
+  const realApiCall = sandbox.apiCall;
+  sandbox.apiCall = function (action, data) {
+    apiCalls.push({ action, data });
+    return Promise.resolve({ success: true });
+  };
+  try {
+    sandbox.saveBulkAssess(); // async — runs synchronously up to its first await, which is as far as this test needs: that's where "existing" gets decided and used
+  } finally {
+    sandbox.apiCall = realApiCall;
+  }
+
+  assert.strictEqual(apiCalls.length, 1, 'exactly one save call must have been issued synchronously before the first await suspended the loop');
+  assert.strictEqual(apiCalls[0].action, 'updateProgress', 'a record already exists for this student+code, so this must update it, not insert a new one');
+  assert.strictEqual(apiCalls[0].data.progress_id, 'p_latest', 'must update the latest row (p_latest), not the stale p_old row a plain .find() would have returned first');
+});
+
 // ── Review fix: rail text truncation regression from the independent-scroll PR ──
 console.log('Unit lessons rail scrollbar-width compensation (truncation regression fix)');
 
