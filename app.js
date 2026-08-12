@@ -2,13 +2,42 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.10
+ * THIS FILE IS VERSION: 1.16.11
  * Last updated: 2026-08-12
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
+ *
+ * v1.16.11 - Fix regression reported live post-v1.16.10: a Bulk Assess rating clear was
+ *   still not persisting after reload, with NO backdating involved (unlike the v1.16.10
+ *   scenario) and a duplicated "Saved 1 assessment" toast for one change. Investigated
+ *   two hypotheses rather than assuming either: (1) a same-date tie-break gap in
+ *   getLatestProgressRecord — checked directly via a real single-click, same-day,
+ *   non-backdated clear against both a single row and pre-existing duplicate rows; it
+ *   persisted correctly both times, ruling this out; (2) the double toast — reproduced
+ *   live via real DOM clicks (not calling functions directly): a genuine single click
+ *   fires saveBulkAssess() exactly once and saves correctly, but the Save button had NO
+ *   guard against re-entrant invocation — it stays fully clickable for the entire network
+ *   round-trip, so a second click (a real double-click, or a second click made while
+ *   waiting for feedback that a live network request takes time to give) fires a second,
+ *   fully independent, concurrent invocation. Two real clicks reproduced the exact
+ *   duplicated-toast symptom (2 concurrent updateProgress calls). This sandbox has no
+ *   access to the live Apps Script backend (script.google.com confirmed blocked, see
+ *   prior notes) or its source, so whether two concurrent writes to the same Sheets row
+ *   there can produce a lost/reverted update could not be directly confirmed or ruled
+ *   out — but "never issue two concurrent saves for one set of pending changes" is
+ *   correct regardless of the exact backend mechanism, so fixed the confirmed cause:
+ *   added a state.bulkAssess.saving in-flight flag, checked and set synchronously before
+ *   any await, with the Save/Discard buttons re-rendered as disabled ("Saving…") for the
+ *   duration rather than staying clickable the whole round-trip. 2 new regression tests
+ *   (337 total): the re-entrant-call guard (confirmed to fail against the pre-fix code —
+ *   2 apiCalls instead of 1) and a dedicated same-day non-backdated clear-and-reread case
+ *   matching Chris's exact reported scenario (passes either way, evidencing the tie-break
+ *   hypothesis was never the cause). Verified live via real DOM clicks: two clicks on the
+ *   same button now produce exactly one apiCall, one toast pair, and the correct final
+ *   state.
  *
  * v1.16.10 - Review fix for v1.16.8/v1.16.9's Progress fix (Codex finding): making
  *   getLatestProgressRecord deterministic fixed the display bug, but it also meant every
@@ -706,7 +735,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.10';
+const APP_VERSION = '1.16.11';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -7572,7 +7601,7 @@ function applyMasteryToAll(code, mastery) {
   state.students.filter(s => ba.yearFilter==='all'||normaliseYear(s.year_level)===ba.yearFilter).forEach(s => { ba.pendingChanges[s.id+'|'+code]=mastery; });
   renderBulkAssess(document.getElementById('main-content'));
 }
-function discardBulkChanges() { state.bulkAssess.pendingChanges={}; renderBulkAssess(document.getElementById('main-content')); }
+function discardBulkChanges() { if (state.bulkAssess.saving) return; state.bulkAssess.pendingChanges={}; renderBulkAssess(document.getElementById('main-content')); }
 
 document.addEventListener('click', function(e) {
   // ── Generic data-action handlers (delegated; preferred over inline onclick) ──
@@ -7894,8 +7923,8 @@ function renderBulkAssess(main) {
       <div style="width:1px;height:18px;background:var(--border2);margin:0 3px;margin-left:auto"></div>
       <input type="date" value="${ba.date}" onchange="state.bulkAssess.date=this.value" style="background:var(--surface-alt);border:1px solid var(--border2);border-radius:5px;padding:4px 8px;color:var(--text-muted);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;outline:none">
       ${pendingCount > 0 ? `
-        <button onclick="saveBulkAssess()" style="padding:5px 16px;border-radius:6px;border:none;background:var(--green);color:var(--primary-contrast);font-family:'DM Mono',monospace;font-size:11px;font-weight:700;cursor:pointer">↑ Save ${pendingCount} change${pendingCount>1?'s':''}</button>
-        <button onclick="discardBulkChanges()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer">✕ Discard</button>` : ''}
+        <button onclick="saveBulkAssess()" ${ba.saving?'disabled':''} style="padding:5px 16px;border-radius:6px;border:none;background:var(--green);color:var(--primary-contrast);font-family:'DM Mono',monospace;font-size:11px;font-weight:700;cursor:${ba.saving?'default':'pointer'};opacity:${ba.saving?'0.6':'1'}">↑ ${ba.saving?'Saving…':`Save ${pendingCount} change${pendingCount>1?'s':''}`}</button>
+        <button onclick="discardBulkChanges()" ${ba.saving?'disabled':''} style="padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px;cursor:${ba.saving?'default':'pointer'};opacity:${ba.saving?'0.6':'1'}">✕ Discard</button>` : ''}
     </div>
     <div style="overflow:hidden">${modeContent}</div>
   `;
@@ -7904,28 +7933,44 @@ function renderBulkAssess(main) {
 
 async function saveBulkAssess() {
   const ba = state.bulkAssess;
+  // The Save button stays in the DOM (and clickable) for the whole network round-trip —
+  // nothing previously stopped a second click (a real double-click, or a second click
+  // while waiting for visual feedback) from firing a second, fully concurrent
+  // invocation racing the first: two independent updateProgress/saveProgress calls for
+  // the same pending changes, a duplicated "Saved" toast, and — since a live Sheets
+  // backend gives no guarantee two concurrent writes to the same row are safely ordered
+  // — a real risk of a lost/overwritten update there that a single local browser session
+  // has no way to detect or reproduce. Guard against re-entry instead of relying on the
+  // click being singular.
+  if (ba.saving) return;
   const changes = Object.entries(ba.pendingChanges);
   if (!changes.length) return;
+  ba.saving = true;
+  renderBulkAssess(document.getElementById('main-content')); // reflect "saving" immediately, disabling the button for the duration
   setSyncing(true);
   toast(`Saving ${changes.length} change${changes.length>1?'s':''}…`, 'info');
   let saved = 0;
-  for (const [key, rawMastery] of changes) {
-    // A null pending value means "clear this rating" — persist it as 'Not taught'
-    // so the saved record is unset rather than left at its previous value.
-    const mastery = rawMastery === null ? 'Not taught' : rawMastery;
-    const [studentId, code] = key.split('|');
-    const existing = progressRecordToUpdate(studentId, code, ba.date);
-    try {
-      if (existing) {
-        const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });
-        if (r.success) { existing.mastery=mastery; existing.date=ba.date; saved++; }
-      } else {
-        const r = await apiCall('saveProgress', { student_id:studentId, content_descriptor_code:code, mastery_level:mastery, date_assessed:ba.date, teacher_notes:'' });
-        if (r.success) { state.progress.push({ id:r.progress_id, student_id:studentId, code, mastery, date:ba.date, notes:'' }); saved++; }
-      }
-    } catch(e) { console.error('Failed to save', key, e); }
+  try {
+    for (const [key, rawMastery] of changes) {
+      // A null pending value means "clear this rating" — persist it as 'Not taught'
+      // so the saved record is unset rather than left at its previous value.
+      const mastery = rawMastery === null ? 'Not taught' : rawMastery;
+      const [studentId, code] = key.split('|');
+      const existing = progressRecordToUpdate(studentId, code, ba.date);
+      try {
+        if (existing) {
+          const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });
+          if (r.success) { existing.mastery=mastery; existing.date=ba.date; saved++; }
+        } else {
+          const r = await apiCall('saveProgress', { student_id:studentId, content_descriptor_code:code, mastery_level:mastery, date_assessed:ba.date, teacher_notes:'' });
+          if (r.success) { state.progress.push({ id:r.progress_id, student_id:studentId, code, mastery, date:ba.date, notes:'' }); saved++; }
+        }
+      } catch(e) { console.error('Failed to save', key, e); }
+    }
+    ba.pendingChanges = {};
+  } finally {
+    ba.saving = false;
   }
-  ba.pendingChanges = {};
   setSyncing(false);
   toast(`✓ Saved ${saved} assessment${saved>1?'s':''}`, 'success');
   renderBulkAssess(document.getElementById('main-content'));

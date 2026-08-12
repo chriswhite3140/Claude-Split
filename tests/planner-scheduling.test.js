@@ -4434,6 +4434,77 @@ testAsync('saveProgressBatch applies the same backdate protection per-entry: a b
   eqJson(st.progress.find(p => p.id === 'p_latest'), { id: 'p_latest', student_id: 'stu_1', code: 'AC9E3LY01', mastery: 'Achieved', date: '2026-07-20', notes: '' }, 'the true latest row must be untouched');
 });
 
+// ── Regression: rating clear still not persisting after PR #103 (Chris's live report) ──
+// Reproduced live: a real double-click on Bulk Assess's Save button (which stayed fully
+// clickable for the entire network round-trip, with no in-flight guard) fired TWO fully
+// independent, concurrent saveBulkAssess() invocations — the cause of the duplicated
+// "Saved 1 assessment" toast Chris saw. Chris's own alternate hypothesis (a same-date
+// tie-break gap) was checked directly and ruled out — a genuine single-click, same-day,
+// non-backdated clear already persisted correctly even with pre-existing duplicate rows.
+console.log('Bulk Assess double-click / re-entrant save guard (regression: rating clear not persisting)');
+
+testAsync('saveBulkAssess guards against re-entrant invocation — calling it again while a save is already in flight (the exact race a double-click produces, live-reproduced) issues no second apiCall and does not disturb the in-progress save', async () => {
+  resetState();
+  const st = getState();
+  st.students = [{ id: 'stu_1', first_name: 'Olive', last_name: 'Alder', year_level: '3' }];
+  st.curriculumCodes = [{ Code: 'AC9EFLA01', Subject: 'English', 'Year Level': 'Year 3', Strand: 'Literacy' }];
+  st.instructionalComponents = [];
+  st.progress = [{ id: 'p_achieved', student_id: 'stu_1', code: 'AC9EFLA01', mastery: 'Achieved', date: '2026-08-12', notes: '' }];
+  st.currentView = 'bulk-assess';
+  st.bulkAssess = { mode: 'by-code', yearFilter: 'all', subjectFilter: 'English', strandFilter: 'all', selectedCode: 'AC9EFLA01', selectedStudent: null, date: '2026-08-12', pendingChanges: { 'stu_1|AC9EFLA01': null } };
+
+  const apiCalls = [];
+  const realApiCall = sandbox.apiCall;
+  let resolveFirst;
+  sandbox.apiCall = function (action, data) {
+    apiCalls.push({ action, data });
+    return new Promise(resolve => { resolveFirst = () => resolve({ success: true }); });
+  };
+
+  const firstCall = sandbox.saveBulkAssess();
+  // Fire a second invocation before the first's apiCall has resolved — a double-click's
+  // exact timing (both start before either has a result back).
+  const secondCall = sandbox.saveBulkAssess();
+
+  assert.strictEqual(apiCalls.length, 1, 'the re-entrant call must not have issued its own apiCall while the first is still in flight');
+  assert.strictEqual(st.bulkAssess.saving, true, 'the in-flight flag must be set for the duration of the save');
+
+  resolveFirst();
+  try {
+    await firstCall;
+    await secondCall;
+  } finally {
+    sandbox.apiCall = realApiCall;
+  }
+
+  assert.strictEqual(apiCalls.length, 1, 'still exactly one apiCall once both invocations have fully settled');
+  assert.strictEqual(st.bulkAssess.saving, false, 'the in-flight flag must be cleared once the save completes');
+  assert.strictEqual(st.progress.find(p => p.id === 'p_achieved').mastery, 'Not taught', 'the single save must have taken effect');
+});
+
+testAsync('saveBulkAssess: a same-day, non-backdated clear — Chris\'s exact reported scenario (no backdating, the assessment date left at today throughout) — correctly persists as "Not taught", confirming the same-date tie-break logic itself was not the cause', async () => {
+  resetState();
+  const st = getState();
+  st.students = [{ id: 'stu_1', first_name: 'Olive', last_name: 'Alder', year_level: '3' }];
+  st.curriculumCodes = [{ Code: 'AC9EFLA01', Subject: 'English', 'Year Level': 'Year 3', Strand: 'Literacy' }];
+  st.instructionalComponents = [];
+  st.progress = [{ id: 'p_achieved', student_id: 'stu_1', code: 'AC9EFLA01', mastery: 'Achieved', date: '2026-08-12', notes: '' }];
+  st.currentView = 'bulk-assess';
+  st.bulkAssess = { mode: 'by-code', yearFilter: 'all', subjectFilter: 'English', strandFilter: 'all', selectedCode: 'AC9EFLA01', selectedStudent: null, date: '2026-08-12', pendingChanges: { 'stu_1|AC9EFLA01': null } };
+
+  const realApiCall = sandbox.apiCall;
+  sandbox.apiCall = function () { return Promise.resolve({ success: true }); };
+  try {
+    await sandbox.saveBulkAssess();
+  } finally {
+    sandbox.apiCall = realApiCall;
+  }
+
+  assert.strictEqual(st.progress.length, 1, 'must update the existing row in place, not insert a second row for the same date');
+  assert.strictEqual(st.progress[0].mastery, 'Not taught');
+  assert.strictEqual(sandbox.getMasteryForCode('stu_1', 'AC9EFLA01'), 'Not taught', 'a fresh read (as a page reload would do) must reflect the clear');
+});
+
 // ── Review fix: rail text truncation regression from the independent-scroll PR ──
 console.log('Unit lessons rail scrollbar-width compensation (truncation regression fix)');
 
