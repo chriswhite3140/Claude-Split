@@ -2,13 +2,56 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.10
+ * THIS FILE IS VERSION: 1.16.12
  * Last updated: 2026-08-12
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
+ *
+ * v1.16.12 - Review fix for v1.16.11's re-entrant-save guard (Macroscope + Codex, both
+ *   independently): the new `ba.saving` flag stops a second SAVE from firing, but left
+ *   the mastery rating buttons, the "Apply to All" buttons, and the date input fully
+ *   live during an in-flight save. A teacher rating a different student (or changing the
+ *   date) while a save was still in progress would mutate `ba.pendingChanges` after that
+ *   save had already snapshotted it — and the in-flight save's own blanket
+ *   `ba.pendingChanges = {}` at completion would then silently discard that newer edit,
+ *   with no error and no visual sign anything was lost. Fixed by disabling all three
+ *   (mastery buttons, Apply to All, the date input) whenever `ba.saving` is true — the
+ *   same treatment already given to Save/Discard — plus a defensive in-function guard on
+ *   setBulkMastery/applyMasteryToAll themselves (mirroring discardBulkChanges), so the
+ *   refusal holds even outside the real click path. 1 new regression test (338 total),
+ *   confirmed to fail against the pre-fix code.
+ *
+ * v1.16.11 - Fix regression reported live post-v1.16.10: a Bulk Assess rating clear was
+ *   still not persisting after reload, with NO backdating involved (unlike the v1.16.10
+ *   scenario) and a duplicated "Saved 1 assessment" toast for one change. Investigated
+ *   two hypotheses rather than assuming either: (1) a same-date tie-break gap in
+ *   getLatestProgressRecord — checked directly via a real single-click, same-day,
+ *   non-backdated clear against both a single row and pre-existing duplicate rows; it
+ *   persisted correctly both times, ruling this out; (2) the double toast — reproduced
+ *   live via real DOM clicks (not calling functions directly): a genuine single click
+ *   fires saveBulkAssess() exactly once and saves correctly, but the Save button had NO
+ *   guard against re-entrant invocation — it stays fully clickable for the entire network
+ *   round-trip, so a second click (a real double-click, or a second click made while
+ *   waiting for feedback that a live network request takes time to give) fires a second,
+ *   fully independent, concurrent invocation. Two real clicks reproduced the exact
+ *   duplicated-toast symptom (2 concurrent updateProgress calls). This sandbox has no
+ *   access to the live Apps Script backend (script.google.com confirmed blocked, see
+ *   prior notes) or its source, so whether two concurrent writes to the same Sheets row
+ *   there can produce a lost/reverted update could not be directly confirmed or ruled
+ *   out — but "never issue two concurrent saves for one set of pending changes" is
+ *   correct regardless of the exact backend mechanism, so fixed the confirmed cause:
+ *   added a state.bulkAssess.saving in-flight flag, checked and set synchronously before
+ *   any await, with the Save/Discard buttons re-rendered as disabled ("Saving…") for the
+ *   duration rather than staying clickable the whole round-trip. 2 new regression tests
+ *   (337 total): the re-entrant-call guard (confirmed to fail against the pre-fix code —
+ *   2 apiCalls instead of 1) and a dedicated same-day non-backdated clear-and-reread case
+ *   matching Chris's exact reported scenario (passes either way, evidencing the tie-break
+ *   hypothesis was never the cause). Verified live via real DOM clicks: two clicks on the
+ *   same button now produce exactly one apiCall, one toast pair, and the correct final
+ *   state.
  *
  * v1.16.10 - Review fix for v1.16.8/v1.16.9's Progress fix (Codex finding): making
  *   getLatestProgressRecord deterministic fixed the display bug, but it also meant every
@@ -706,7 +749,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.10';
+const APP_VERSION = '1.16.12';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -7547,6 +7590,7 @@ function setBulkStrand(s)  { state.bulkAssess.strandFilter=s; renderBulkAssess(d
 function setBulkCode(c)    { state.bulkAssess.selectedCode=c; renderBulkAssess(document.getElementById('main-content')); }
 function setBulkStudent(s) { state.bulkAssess.selectedStudent=s; renderBulkAssess(document.getElementById('main-content')); }
 function setBulkMastery(key, mastery) {
+  if (state.bulkAssess.saving) return; // a save is already reading a snapshot of pendingChanges — never mutate it mid-flight, that snapshot's own completion wipes the whole map
   const [sid, code] = key.split('|');
   const saved = getMasteryForCode(sid, code);
   const pending = state.bulkAssess.pendingChanges[key];
@@ -7569,10 +7613,11 @@ function setBulkMastery(key, mastery) {
 }
 function applyMasteryToAll(code, mastery) {
   const ba = state.bulkAssess;
+  if (ba.saving) return; // same reason as setBulkMastery's guard above
   state.students.filter(s => ba.yearFilter==='all'||normaliseYear(s.year_level)===ba.yearFilter).forEach(s => { ba.pendingChanges[s.id+'|'+code]=mastery; });
   renderBulkAssess(document.getElementById('main-content'));
 }
-function discardBulkChanges() { state.bulkAssess.pendingChanges={}; renderBulkAssess(document.getElementById('main-content')); }
+function discardBulkChanges() { if (state.bulkAssess.saving) return; state.bulkAssess.pendingChanges={}; renderBulkAssess(document.getElementById('main-content')); }
 
 document.addEventListener('click', function(e) {
   // ── Generic data-action handlers (delegated; preferred over inline onclick) ──
@@ -7767,7 +7812,10 @@ function renderBulkAssess(main) {
       const [col, bg] = masteryColours[m];
       const active = current === m;
       const canClear = active && m !== 'Not taught';
-      return `<button data-ba-action="setBulkMastery" data-ba-key="${key}" data-ba-val="${m}" title="${canClear?'Click again to clear':m}" style="padding:3px 9px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">${m}</button>`;
+      // Disabled while a save is in flight — otherwise a rating clicked mid-save mutates
+      // pendingChanges after the save already snapshotted it, and gets silently wiped
+      // when that save's blanket `ba.pendingChanges = {}` runs (review finding).
+      return `<button data-ba-action="setBulkMastery" data-ba-key="${key}" data-ba-val="${m}" ${ba.saving?'disabled':''} title="${canClear?'Click again to clear':m}" style="padding:3px 9px;border-radius:4px;border:1px solid ${active?col:'var(--border2)'};background:${active?bg:'none'};color:${active?col:'var(--text3)'};font-family:'DM Mono',monospace;font-size:10px;cursor:${ba.saving?'default':'pointer'};opacity:${ba.saving?'0.5':'1'}">${m}</button>`;
     }).join('');
   }
 
@@ -7794,8 +7842,8 @@ function renderBulkAssess(main) {
           <div style="padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface-alt);display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0">
             <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue)">${code}</span>
             <span style="font-size:12px;color:var(--text-muted);flex:1;line-height:1.3">${cd ? (cd.Descriptor||cd.Aspect||'') : ''}</span>
-            <button data-ba-action="applyMasteryToAll" data-ba-key="${code}" data-ba-val="Achieved" style="padding:4px 10px;border-radius:4px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">✓ All Achieved</button>
-            <button data-ba-action="applyMasteryToAll" data-ba-key="${code}" data-ba-val="Developing" style="padding:4px 10px;border-radius:4px;border:1px solid var(--gold);background:var(--gold-dim);color:var(--gold);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">◐ All Developing</button>
+            <button data-ba-action="applyMasteryToAll" data-ba-key="${code}" data-ba-val="Achieved" ${ba.saving?'disabled':''} style="padding:4px 10px;border-radius:4px;border:1px solid var(--green);background:var(--green-dim);color:var(--green);font-family:'DM Mono',monospace;font-size:10px;cursor:${ba.saving?'default':'pointer'};opacity:${ba.saving?'0.5':'1'}">✓ All Achieved</button>
+            <button data-ba-action="applyMasteryToAll" data-ba-key="${code}" data-ba-val="Developing" ${ba.saving?'disabled':''} style="padding:4px 10px;border-radius:4px;border:1px solid var(--gold);background:var(--gold-dim);color:var(--gold);font-family:'DM Mono',monospace;font-size:10px;cursor:${ba.saving?'default':'pointer'};opacity:${ba.saving?'0.5':'1'}">◐ All Developing</button>
           </div>
           <div class="bulk-assess-roster-body" style="overflow-y:auto;flex:1"><table style="width:100%;border-collapse:collapse"><tbody>
             ${filteredStudents.map((s,si) => {
@@ -7892,10 +7940,10 @@ function renderBulkAssess(main) {
       <div style="width:1px;height:18px;background:var(--border2);margin:0 3px"></div>
       <button onclick="toggleStudentSort();renderBulkAssess(document.getElementById('main-content'))" title="Toggle name sort order" style="padding:4px 10px;border-radius:4px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'DM Mono',monospace;font-size:10px;cursor:pointer;white-space:nowrap">${state.studentSortBy === 'last_name' ? '↕ Last, First' : '↕ First, Last'}</button>
       <div style="width:1px;height:18px;background:var(--border2);margin:0 3px;margin-left:auto"></div>
-      <input type="date" value="${ba.date}" onchange="state.bulkAssess.date=this.value" style="background:var(--surface-alt);border:1px solid var(--border2);border-radius:5px;padding:4px 8px;color:var(--text-muted);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;outline:none">
+      <input type="date" value="${ba.date}" onchange="state.bulkAssess.date=this.value" ${ba.saving?'disabled':''} style="background:var(--surface-alt);border:1px solid var(--border2);border-radius:5px;padding:4px 8px;color:var(--text-muted);font-family:'DM Mono',monospace;font-size:11px;cursor:${ba.saving?'default':'pointer'};outline:none;opacity:${ba.saving?'0.5':'1'}">
       ${pendingCount > 0 ? `
-        <button onclick="saveBulkAssess()" style="padding:5px 16px;border-radius:6px;border:none;background:var(--green);color:var(--primary-contrast);font-family:'DM Mono',monospace;font-size:11px;font-weight:700;cursor:pointer">↑ Save ${pendingCount} change${pendingCount>1?'s':''}</button>
-        <button onclick="discardBulkChanges()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer">✕ Discard</button>` : ''}
+        <button onclick="saveBulkAssess()" ${ba.saving?'disabled':''} style="padding:5px 16px;border-radius:6px;border:none;background:var(--green);color:var(--primary-contrast);font-family:'DM Mono',monospace;font-size:11px;font-weight:700;cursor:${ba.saving?'default':'pointer'};opacity:${ba.saving?'0.6':'1'}">↑ ${ba.saving?'Saving…':`Save ${pendingCount} change${pendingCount>1?'s':''}`}</button>
+        <button onclick="discardBulkChanges()" ${ba.saving?'disabled':''} style="padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:none;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px;cursor:${ba.saving?'default':'pointer'};opacity:${ba.saving?'0.6':'1'}">✕ Discard</button>` : ''}
     </div>
     <div style="overflow:hidden">${modeContent}</div>
   `;
@@ -7904,28 +7952,44 @@ function renderBulkAssess(main) {
 
 async function saveBulkAssess() {
   const ba = state.bulkAssess;
+  // The Save button stays in the DOM (and clickable) for the whole network round-trip —
+  // nothing previously stopped a second click (a real double-click, or a second click
+  // while waiting for visual feedback) from firing a second, fully concurrent
+  // invocation racing the first: two independent updateProgress/saveProgress calls for
+  // the same pending changes, a duplicated "Saved" toast, and — since a live Sheets
+  // backend gives no guarantee two concurrent writes to the same row are safely ordered
+  // — a real risk of a lost/overwritten update there that a single local browser session
+  // has no way to detect or reproduce. Guard against re-entry instead of relying on the
+  // click being singular.
+  if (ba.saving) return;
   const changes = Object.entries(ba.pendingChanges);
   if (!changes.length) return;
+  ba.saving = true;
+  renderBulkAssess(document.getElementById('main-content')); // reflect "saving" immediately, disabling the button for the duration
   setSyncing(true);
   toast(`Saving ${changes.length} change${changes.length>1?'s':''}…`, 'info');
   let saved = 0;
-  for (const [key, rawMastery] of changes) {
-    // A null pending value means "clear this rating" — persist it as 'Not taught'
-    // so the saved record is unset rather than left at its previous value.
-    const mastery = rawMastery === null ? 'Not taught' : rawMastery;
-    const [studentId, code] = key.split('|');
-    const existing = progressRecordToUpdate(studentId, code, ba.date);
-    try {
-      if (existing) {
-        const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });
-        if (r.success) { existing.mastery=mastery; existing.date=ba.date; saved++; }
-      } else {
-        const r = await apiCall('saveProgress', { student_id:studentId, content_descriptor_code:code, mastery_level:mastery, date_assessed:ba.date, teacher_notes:'' });
-        if (r.success) { state.progress.push({ id:r.progress_id, student_id:studentId, code, mastery, date:ba.date, notes:'' }); saved++; }
-      }
-    } catch(e) { console.error('Failed to save', key, e); }
+  try {
+    for (const [key, rawMastery] of changes) {
+      // A null pending value means "clear this rating" — persist it as 'Not taught'
+      // so the saved record is unset rather than left at its previous value.
+      const mastery = rawMastery === null ? 'Not taught' : rawMastery;
+      const [studentId, code] = key.split('|');
+      const existing = progressRecordToUpdate(studentId, code, ba.date);
+      try {
+        if (existing) {
+          const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });
+          if (r.success) { existing.mastery=mastery; existing.date=ba.date; saved++; }
+        } else {
+          const r = await apiCall('saveProgress', { student_id:studentId, content_descriptor_code:code, mastery_level:mastery, date_assessed:ba.date, teacher_notes:'' });
+          if (r.success) { state.progress.push({ id:r.progress_id, student_id:studentId, code, mastery, date:ba.date, notes:'' }); saved++; }
+        }
+      } catch(e) { console.error('Failed to save', key, e); }
+    }
+    ba.pendingChanges = {};
+  } finally {
+    ba.saving = false;
   }
-  ba.pendingChanges = {};
   setSyncing(false);
   toast(`✓ Saved ${saved} assessment${saved>1?'s':''}`, 'success');
   renderBulkAssess(document.getElementById('main-content'));
