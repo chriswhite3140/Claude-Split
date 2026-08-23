@@ -4505,6 +4505,46 @@ testAsync('saveBulkAssess: a same-day, non-backdated clear — Chris\'s exact re
   assert.strictEqual(sandbox.getMasteryForCode('stu_1', 'AC9EFLA01'), 'Not taught', 'a fresh read (as a page reload would do) must reflect the clear');
 });
 
+testAsync('setBulkMastery/applyMasteryToAll refuse to mutate pendingChanges while a save is in flight — otherwise an edit made mid-save is silently discarded when the in-flight save\'s blanket "ba.pendingChanges = {}" runs once it completes (review finding on this PR, from both Macroscope and Codex independently)', async () => {
+  resetState();
+  const st = getState();
+  st.students = [
+    { id: 'stu_1', first_name: 'Olive', last_name: 'Alder', year_level: '3' },
+    { id: 'stu_2', first_name: 'Priya', last_name: 'Nair', year_level: '3' },
+  ];
+  st.curriculumCodes = [{ Code: 'AC9EFLA01', Subject: 'English', 'Year Level': 'Year 3', Strand: 'Literacy' }];
+  st.instructionalComponents = [];
+  st.progress = [];
+  st.currentView = 'bulk-assess';
+  st.bulkAssess = { mode: 'by-code', yearFilter: 'all', subjectFilter: 'English', strandFilter: 'all', selectedCode: 'AC9EFLA01', selectedStudent: null, date: '2026-08-12', pendingChanges: { 'stu_1|AC9EFLA01': 'Achieved' } };
+
+  let resolveApiCall;
+  const realApiCall = sandbox.apiCall;
+  sandbox.apiCall = function () {
+    return new Promise(resolve => { resolveApiCall = () => resolve({ success: true, progress_id: 'p_new' }); });
+  };
+
+  const saveCall = sandbox.saveBulkAssess();
+  assert.strictEqual(st.bulkAssess.saving, true, 'save must be in flight for this test to be meaningful');
+
+  // The teacher rates a DIFFERENT student while stu_1's save is still in flight.
+  sandbox.setBulkMastery('stu_2|AC9EFLA01', 'Developing');
+  assert.strictEqual(st.bulkAssess.pendingChanges['stu_2|AC9EFLA01'], undefined, 'a mid-save rating click must be refused outright, not silently accepted only to be wiped later');
+
+  sandbox.applyMasteryToAll('AC9EFLA01', 'Emerging');
+  assert.strictEqual(st.bulkAssess.pendingChanges['stu_2|AC9EFLA01'], undefined, 'applyMasteryToAll must also be refused mid-save');
+
+  resolveApiCall();
+  try {
+    await saveCall;
+  } finally {
+    sandbox.apiCall = realApiCall;
+  }
+
+  assert.strictEqual(st.bulkAssess.saving, false, 'the flag must clear once the save completes');
+  eqJson(st.bulkAssess.pendingChanges, {}, 'pendingChanges is empty after the save completes — nothing was silently lost, because nothing new was ever accepted mid-flight in the first place');
+});
+
 // ── Review fix: rail text truncation regression from the independent-scroll PR ──
 console.log('Unit lessons rail scrollbar-width compensation (truncation regression fix)');
 
