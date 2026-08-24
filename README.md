@@ -24,6 +24,8 @@ https://chriswhite3140.github.io/Claude-Split
 - `styles.css` — all styling
 - `docs/` — authoritative design documents (read before making changes)
 - `data/` — curriculum source files (CSV)
+- `apps-script/` — Google Apps Script backend source kept here for review, alongside what's actually deployed (this repo has no direct access to that separate script project — see `CLAUDE.md`'s Backend section)
+- `tests/` — automated regression suite (`node tests/planner-scheduling.test.js`)
 - `.github/` — Claude Code workflows and issue templates
 
 ## Design documents
