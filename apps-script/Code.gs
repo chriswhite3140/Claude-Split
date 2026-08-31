@@ -461,12 +461,12 @@ function updateStandardsJudgment(data) {
   var periodCol = headers.indexOf("period");
 
   for (var r = 1; r < values.length; r++) {
-    if (String(values[r][idCol]) === String(data.id)) {
-      if (judgmentCol > -1) sheet.getRange(r + 1, judgmentCol + 1).setValue(data.judgment || values[r][judgmentCol]);
-      if (lockedCol > -1) sheet.getRange(r + 1, lockedCol + 1).setValue(data.locked === true ? true : (data.locked === false ? false : values[r][lockedCol]));
-      if (dateCol > -1) sheet.getRange(r + 1, dateCol + 1).setValue(data.date || values[r][dateCol]);
-      if (notesCol > -1) sheet.getRange(r + 1, notesCol + 1).setValue(data.notes || values[r][notesCol]);
-      if (periodCol > -1) sheet.getRange(r + 1, periodCol + 1).setValue(data.period || values[r][periodCol]);
+    if (String(values[r][idCol]) === String(data.judgment_id || data.id)) {
+      if (judgmentCol > -1 && data.hasOwnProperty('judgment')) sheet.getRange(r + 1, judgmentCol + 1).setValue(data.judgment);
+      if (lockedCol > -1 && data.hasOwnProperty('locked')) sheet.getRange(r + 1, lockedCol + 1).setValue(data.locked);
+      if (dateCol > -1 && data.hasOwnProperty('date')) sheet.getRange(r + 1, dateCol + 1).setValue(data.date);
+      if (notesCol > -1 && data.hasOwnProperty('notes')) sheet.getRange(r + 1, notesCol + 1).setValue(data.notes);
+      if (periodCol > -1 && data.hasOwnProperty('period')) sheet.getRange(r + 1, periodCol + 1).setValue(data.period);
 
       clearAllCache();
       return { success: true };
@@ -524,14 +524,14 @@ function updateProgressionPlacement(data) {
   var extValueCol = headers.indexOf("ext_value");
 
   for (var r = 1; r < values.length; r++) {
-    if (String(values[r][idCol]) === String(data.id)) {
-      if (elementCol > -1) sheet.getRange(r + 1, elementCol + 1).setValue(data.element || values[r][elementCol]);
-      if (subElementCol > -1) sheet.getRange(r + 1, subElementCol + 1).setValue(data.sub_element || values[r][subElementCol]);
-      if (levelCol > -1) sheet.getRange(r + 1, levelCol + 1).setValue(data.level || values[r][levelCol]);
-      if (dateCol > -1) sheet.getRange(r + 1, dateCol + 1).setValue(data.date || values[r][dateCol]);
-      if (notesCol > -1) sheet.getRange(r + 1, notesCol + 1).setValue(data.notes || values[r][notesCol]);
-      if (extLabelCol > -1) sheet.getRange(r + 1, extLabelCol + 1).setValue(data.ext_label || values[r][extLabelCol]);
-      if (extValueCol > -1) sheet.getRange(r + 1, extValueCol + 1).setValue(data.ext_value || values[r][extValueCol]);
+    if (String(values[r][idCol]) === String(data.placement_id || data.id)) {
+      if (elementCol > -1 && data.hasOwnProperty('element')) sheet.getRange(r + 1, elementCol + 1).setValue(data.element);
+      if (subElementCol > -1 && data.hasOwnProperty('sub_element')) sheet.getRange(r + 1, subElementCol + 1).setValue(data.sub_element);
+      if (levelCol > -1 && data.hasOwnProperty('level')) sheet.getRange(r + 1, levelCol + 1).setValue(data.level);
+      if (dateCol > -1 && data.hasOwnProperty('date')) sheet.getRange(r + 1, dateCol + 1).setValue(data.date);
+      if (notesCol > -1 && data.hasOwnProperty('notes')) sheet.getRange(r + 1, notesCol + 1).setValue(data.notes);
+      if (extLabelCol > -1 && data.hasOwnProperty('ext_label')) sheet.getRange(r + 1, extLabelCol + 1).setValue(data.ext_label);
+      if (extValueCol > -1 && data.hasOwnProperty('ext_value')) sheet.getRange(r + 1, extValueCol + 1).setValue(data.ext_value);
 
       clearAllCache();
       return { success: true };

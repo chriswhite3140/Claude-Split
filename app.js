@@ -749,7 +749,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.12';
+const APP_VERSION = '1.16.13';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
