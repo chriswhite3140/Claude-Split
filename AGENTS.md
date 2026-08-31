@@ -126,3 +126,61 @@ If a feature is user-facing, explain exactly how to test it.
 - Build new systems first, then do refinement in a second pass.
 - For UI work, prioritize clarity, consistency, readability, and teacher usability.
 
+---
+
+## Project context and data model
+
+ClassTracker tracks Australian Curriculum v9 (P-6) student progress. Everything
+in the app flows through Instructional Components (ICs):
+
+Curriculum descriptor -> ICs -> Lessons -> Mastery -> Progress -> Next teaching decision
+
+No feature should bypass ICs. If a proposed feature does not connect to ICs, it
+is out of scope, flag this rather than building it.
+
+---
+
+## Design docs - read before touching related areas
+
+The `docs/` folder describes product intent and data schema. Some of these
+documents go stale relative to what's actually built, when in doubt about
+whether something already exists, check `app.js` directly rather than trusting
+a doc.
+
+| File | Purpose |
+|---|---|
+| `docs/MASTER-PROJECT-SUMMARY.md` | Product overview, core workflow |
+| `docs/PRODUCT-RULES-DOCUMENT.md` | Enforcement rules, check before every feature |
+| `docs/DATA-SCHEMA-DOCUMENT.md` | Data structures and relationships |
+| `docs/IC-FRAMEWORK-SPEC.md` | IC generation rules, ownership, mastery calculation |
+| `docs/WEEKLY-PLANNER-SPEC.md` | Weekly Planner UI and interaction spec |
+
+If a proposed change conflicts with the data model or enforcement rules in
+these documents, do not proceed, flag the conflict instead.
+
+---
+
+## Known bug pattern - Apps Script header lookups
+
+`updateProgress` previously returned `{success:true}` while silently changing
+nothing, because its column lookups (`headers.indexOf("mastery")`, etc.)
+assumed short header names that didn't match the live sheet's actual headers
+(`mastery_level`, `date_assessed`, etc.). A mismatched `indexOf` returns `-1`
+and the write for that field is skipped with no error surfaced anywhere.
+
+This was confirmed fixed, and `updateStandardsJudgment`/`updateProgressionPlacement`
+were checked against verified live sheet headers on 26/08/2026 and found to have
+no equivalent mismatch (see `docs/SHEET-SCHEMA.md`, added same date). If working
+in or near these functions, check the target sheet's actual header row text
+before assuming a lookup is correct.
+
+---
+
+## PR description requirements
+
+Every PR description must state:
+- Exactly which files and functions were changed
+- What the change does, in plain terms a reviewer working from GitHub alone
+  can verify against the original spec
+- Any known side effects, incomplete parts, or follow-up work needed, stated
+  explicitly rather than only describing the happy path
