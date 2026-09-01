@@ -39,6 +39,9 @@ function doPost(e) {
 
   try {
     var data = JSON.parse(e.postData.contents || "{}");
+    if (data.token !== getAuthToken()) {
+      return jsonOutput({ error: "Unauthorized" });
+    }
     var action = data.action;
 
     if      (action === "getAll")                     result = getAll();
@@ -137,6 +140,19 @@ function getClaudeKey() {
   }
 
   return key;
+}
+
+
+function getAuthToken() {
+  var token = PropertiesService
+    .getScriptProperties()
+    .getProperty("AUTH_TOKEN");
+
+  if (!token) {
+    throw new Error("Auth token not configured");
+  }
+
+  return token;
 }
 
 
