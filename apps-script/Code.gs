@@ -40,7 +40,13 @@ function doPost(e) {
 
   try {
     var data = JSON.parse(e.postData.contents || "{}");
-    if (data.token !== getAuthToken()) {
+    var authToken;
+    try {
+      authToken = getAuthToken();
+    } catch (authError) {
+      return jsonOutput({ error: "Unauthorized" });
+    }
+    if (data.token !== authToken) {
       return jsonOutput({ error: "Unauthorized" });
     }
     var action = data.action;
