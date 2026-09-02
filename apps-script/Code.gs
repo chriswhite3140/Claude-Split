@@ -18,6 +18,7 @@
 var API_VERSION = "1.5.0";
 var ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
 var CACHE_SECONDS = 300;
+var AUTH_TOKEN_CACHE = null;
 
 var SHEET_STUDENTS = "Students";
 var SHEET_PROGRESS = "Progress";
@@ -39,6 +40,15 @@ function doPost(e) {
 
   try {
     var data = JSON.parse(e.postData.contents || "{}");
+    var authToken;
+    try {
+      authToken = getAuthToken();
+    } catch (authError) {
+      return jsonOutput({ error: "Unauthorized" });
+    }
+    if (data.token !== authToken) {
+      return jsonOutput({ error: "Unauthorized" });
+    }
     var action = data.action;
 
     if      (action === "getAll")                     result = getAll();
@@ -137,6 +147,24 @@ function getClaudeKey() {
   }
 
   return key;
+}
+
+
+function getAuthToken() {
+  if (AUTH_TOKEN_CACHE) {
+    return AUTH_TOKEN_CACHE;
+  }
+
+  var token = PropertiesService
+    .getScriptProperties()
+    .getProperty("AUTH_TOKEN");
+
+  if (!token) {
+    throw new Error("Auth token not configured");
+  }
+
+  AUTH_TOKEN_CACHE = token;
+  return AUTH_TOKEN_CACHE;
 }
 
 

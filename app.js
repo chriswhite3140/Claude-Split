@@ -749,7 +749,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.13';
+const APP_VERSION = '1.16.15';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1013,6 +1013,10 @@ function truncateWithTooltip(text, maxChars = 80, extraClass = '', focusable = f
 
 // ── CONFIG ──
 const API_URL = 'https://script.google.com/macros/s/AKfycbxjuzVDv1FP2_YWRvs4MV2R3vXL3Az971mRIbuIvnrTYm2wr5AnZjw4YFgmS8jeSZCp/exec';
+// Must match the AUTH_TOKEN Script Property in the live Apps Script project. This is
+// visible in page source because the app is static; it deters casual and automated access,
+// not a determined attacker.
+const AUTH_TOKEN = 'PLACEHOLDER_TOKEN_REPLACE_ME';
 const GITHUB_RAW = 'https://raw.githubusercontent.com/chriswhite3140/claude-split/main/data/';
 
 const CSV_FILES = {
@@ -1224,9 +1228,12 @@ async function apiCall(action, data = null, opts = {}) {
     const resp = await fetch(API_URL + '?action=' + action, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action, ...(data || {}) })
+      body: JSON.stringify({ action, ...(data || {}), token: AUTH_TOKEN })
     });
     const result = await resp.json();
+    if (result && result.error === 'Unauthorized') {
+      throw new Error('Unauthorized');
+    }
     if (!quiet) setSyncing(false);
     return result;
   } catch (err) {
@@ -1336,7 +1343,7 @@ async function loadStubICsFromSheets() {
   const resp = await fetch(API_URL + '?action=loadStubICs', {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ action: 'loadStubICs' })
+    body: JSON.stringify({ action: 'loadStubICs', token: AUTH_TOKEN })
   });
   const result = await resp.json();
   if (!result || !Array.isArray(result.stubs) || !result.stubs.length) return;
@@ -11467,6 +11474,7 @@ function saveStubIC() {
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({
           action: 'saveStubIC',
+          token: AUTH_TOKEN,
           icId: newIC.id,
           ownerTier: newIC.ownerTier,
           icReadinessStatus: newIC.icReadinessStatus,
@@ -11541,7 +11549,7 @@ function promoteStubIC(icId) {
       const resp = await fetch(API_URL + '?action=promoteStubIC', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action: 'promoteStubIC', icId, name: ic.name })
+        body: JSON.stringify({ action: 'promoteStubIC', token: AUTH_TOKEN, icId, name: ic.name })
       });
       const result = await resp.json();
       if (!resp.ok || result.error || result.success === false) {
@@ -11569,7 +11577,7 @@ function deleteStubIC(icId) {
       const resp = await fetch(API_URL + '?action=deleteStubIC', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action: 'deleteStubIC', icId })
+        body: JSON.stringify({ action: 'deleteStubIC', token: AUTH_TOKEN, icId })
       });
       const result = await resp.json();
       if (!resp.ok || result.error || result.success === false) {
