@@ -10,6 +10,10 @@
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
  *
+ * v1.16.16 - Show a clear, safe message when the app password does not match Google,
+ *   instead of showing an empty class; draft IC saves now report a failed Sheets save
+ *   instead of claiming it worked.
+ *
  * v1.16.12 - Review fix for v1.16.11's re-entrant-save guard (Macroscope + Codex, both
  *   independently): the new `ba.saving` flag stops a second SAVE from firing, but left
  *   the mastery rating buttons, the "Apply to All" buttons, and the date input fully
@@ -749,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.15';
+const APP_VERSION = '1.16.16';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1104,6 +1108,7 @@ let state = {
   currentView: 'dashboard',
   selectedStudent: null,
   loading: true,
+  authFailed: false,
   syncing: false,
   detailSubjectFilter: null,
   studentSortBy: 'last_name', // 'last_name' | 'first_name'
@@ -1232,6 +1237,7 @@ async function apiCall(action, data = null, opts = {}) {
     });
     const result = await resp.json();
     if (result && result.error === 'Unauthorized') {
+      state.authFailed = true;
       throw new Error('Unauthorized');
     }
     if (!quiet) setSyncing(false);
@@ -1346,6 +1352,10 @@ async function loadStubICsFromSheets() {
     body: JSON.stringify({ action: 'loadStubICs', token: AUTH_TOKEN })
   });
   const result = await resp.json();
+  if (result && result.error === 'Unauthorized') {
+    state.authFailed = true;
+    return;
+  }
   if (!result || !Array.isArray(result.stubs) || !result.stubs.length) return;
   result.stubs.forEach(stub => {
     if (!stub.icId || !stub.name || !stub.homeDescriptorId) return;
@@ -11477,14 +11487,14 @@ function saveStubIC() {
   });
   state.instructionalComponents.push(newIC);
 
-  // Fire-and-forget persist — do not block wizard UI
-  (async () => {
-    // TEST MODE: this bypasses apiCall() entirely (a raw fetch, not routed through the
-    // shared dispatcher), so it needs its own guard rather than inheriting apiCall's
-    // interception. The local state.instructionalComponents mutation above already
-    // happened, so the wizard/lesson-linking flow below is completely unaffected —
-    // only the real Sheets write is skipped.
-    if (TEST_MODE_ACTIVE) return;
+  // Fire-and-forget persist — do not block the wizard UI or undo its local change.
+  // The success toast waits for a confirmed Sheets reply so a rejected write is not
+  // presented as saved.
+  const persistToSheets = (successMessage, successType = 'success') => (async () => {
+    if (TEST_MODE_ACTIVE) {
+      toast(successMessage, successType);
+      return;
+    }
     try {
       const resp = await fetch(API_URL + '?action=saveStubIC', {
         method: 'POST',
@@ -11501,9 +11511,16 @@ function saveStubIC() {
           createdAt: newIC.createdAt,
         })
       });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const result = await resp.json();
+      if (!resp.ok || result?.error || result?.success === false) {
+        console.error('[StubIC] saveStubIC failed:', result?.error || resp.status);
+        toast('Draft IC was not saved to Sheets. It will be gone after a reload.', 'error');
+        return;
+      }
+      toast(successMessage, successType);
     } catch(err) {
       console.error('[StubIC] Failed to persist to Sheets:', err);
+      toast('Draft IC was not saved to Sheets. It will be gone after a reload.', 'error');
     }
   })();
 
@@ -11521,14 +11538,14 @@ function saveStubIC() {
     if (li >= 0) {
       const linked = Array.isArray(state.lessonPlans[li].linkedICIds) ? [...state.lessonPlans[li].linkedICIds] : [];
       if (linked.length >= 3) {
-        toast(`Draft IC "${name}" created, but the lesson already has 3 ICs`, 'info');
+        persistToSheets(`Draft IC "${name}" created, but the lesson already has 3 ICs`, 'info');
       } else {
         linked.push(newIC.id);
         state.lessonPlans[li] = { ...state.lessonPlans[li], linkedICIds: linked };
         saveLessonPlansState();
-        toast(`Draft IC "${name}" created and linked to the lesson`, 'success');
+        persistToSheets(`Draft IC "${name}" created and linked to the lesson`);
       }
-    }
+    } else persistToSheets(`Draft IC "${name}" created`);
     if (state.currentView === 'planner' || state.currentView === 'unit-plans') renderView();
     return;
   }
@@ -11545,7 +11562,7 @@ function saveStubIC() {
   const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
   if (btn) btn.textContent = dlStep2NextLabel();
 
-  toast(`Draft IC "${name}" created and added to lesson`, 'success');
+  persistToSheets(`Draft IC "${name}" created and added to lesson`);
 }
 
 function promoteStubIC(icId) {
@@ -11561,7 +11578,10 @@ function promoteStubIC(icId) {
   (async () => {
     // TEST MODE: raw fetch, bypasses apiCall() — see saveStubIC's identical guard above
     // for why this needs its own check. The local `ic` mutation above already happened.
-    if (TEST_MODE_ACTIVE) return;
+    if (TEST_MODE_ACTIVE) {
+      toast(`IC promoted: "${name}"`, 'success');
+      return;
+    }
     try {
       const resp = await fetch(API_URL + '?action=promoteStubIC', {
         method: 'POST',
@@ -11569,15 +11589,18 @@ function promoteStubIC(icId) {
         body: JSON.stringify({ action: 'promoteStubIC', token: AUTH_TOKEN, icId, name: ic.name })
       });
       const result = await resp.json();
-      if (!resp.ok || result.error || result.success === false) {
+      if (!resp.ok || result?.error || result?.success === false) {
         console.error('[StubIC] promoteStubIC failed:', result?.error || resp.status);
+        toast('Draft IC promotion was not saved to Sheets. It will be gone after a reload.', 'error');
+        return;
       }
+      toast(`IC promoted: "${name}"`, 'success');
     } catch(err) {
       console.error('[StubIC] Failed to persist promotion to Sheets:', err);
+      toast('Draft IC promotion was not saved to Sheets. It will be gone after a reload.', 'error');
     }
   })();
   updateStubBadge();
-  toast(`IC promoted: "${name}"`, 'success');
   openCodeDetail(ic.homeDescriptorId, null);
 }
 
@@ -11589,7 +11612,10 @@ function deleteStubIC(icId) {
   (async () => {
     // TEST MODE: raw fetch, bypasses apiCall() — see saveStubIC's identical guard above
     // for why this needs its own check. The local state filter above already happened.
-    if (TEST_MODE_ACTIVE) return;
+    if (TEST_MODE_ACTIVE) {
+      toast('Draft IC deleted', 'success');
+      return;
+    }
     try {
       const resp = await fetch(API_URL + '?action=deleteStubIC', {
         method: 'POST',
@@ -11597,15 +11623,18 @@ function deleteStubIC(icId) {
         body: JSON.stringify({ action: 'deleteStubIC', token: AUTH_TOKEN, icId })
       });
       const result = await resp.json();
-      if (!resp.ok || result.error || result.success === false) {
+      if (!resp.ok || result?.error || result?.success === false) {
         console.error('[StubIC] deleteStubIC failed:', result?.error || resp.status);
+        toast('Draft IC delete was not saved to Sheets. The draft will come back after a reload.', 'error');
+        return;
       }
+      toast('Draft IC deleted', 'success');
     } catch(err) {
       console.error('[StubIC] Failed to delete stub from Sheets:', err);
+      toast('Draft IC delete was not saved to Sheets. The draft will come back after a reload.', 'error');
     }
   })();
   updateStubBadge();
-  toast('Draft IC deleted', 'success');
   openCodeDetail(descriptorId, null);
 }
 
@@ -12786,9 +12815,19 @@ function plannerWipeLegacyPlanningData() {
   } catch (e) {}
 }
 
+function showAuthFailureMessage(message) {
+  const main = document.getElementById('main-content');
+  if (main) main.innerHTML = `<div class="loading"><div style="margin-top:12px;color:var(--text3);font-size:13px">${message}</div></div>`;
+}
+
 async function init() {
   const verEl = document.getElementById('sidebar-version');
   if (verEl) verEl.textContent = APP_VERSION;
+  if (AUTH_TOKEN === 'PLACEHOLDER_TOKEN_REPLACE_ME') {
+    state.loading = false;
+    showAuthFailureMessage("Can't connect to your data. The app password does not match the Google password. Your data is safe. Nothing has been changed. The app password has not been set.");
+    return;
+  }
   initTheme();
   initTextSize();
   loadAssessmentScale();
@@ -12826,6 +12865,11 @@ async function init() {
 
   if (sheetsResult.status === 'rejected') console.warn('Sheets load failed:', sheetsResult.reason);
   if (csvResult.status   === 'rejected') console.warn('CSV load failed:',    csvResult.reason);
+  if (state.authFailed) {
+    state.loading = false;
+    showAuthFailureMessage("Can't connect to your data. The app password does not match the Google password. Your data is safe. Nothing has been changed. Tell Chris to check the password.");
+    return;
+  }
 
   buildDescriptorIndex();
   // Load persisted stubs after CSVs — stub wins on any ID collision
@@ -12833,6 +12877,11 @@ async function init() {
     await loadStubICsFromSheets();
   } catch(e) {
     console.warn('[StubIC] Failed to load stubs from Sheets:', e);
+  }
+  if (state.authFailed) {
+    state.loading = false;
+    showAuthFailureMessage("Can't connect to your data. The app password does not match the Google password. Your data is safe. Nothing has been changed. Tell Chris to check the password.");
+    return;
   }
   state.loading = false;
   renderView();
