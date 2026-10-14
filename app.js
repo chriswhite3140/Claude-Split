@@ -1020,7 +1020,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbxjuzVDv1FP2_YWRvs4MV2R
 // Must match the AUTH_TOKEN Script Property in the live Apps Script project. This is
 // visible in page source because the app is static; it deters casual and automated access,
 // not a determined attacker.
-const AUTH_TOKEN = 'PLACEHOLDER_TOKEN_REPLACE_ME';
+const AUTH_TOKEN = 'AS0fXwhwOh8nLjFX0erhuhrljVz3pivLjP1McGZT';
 const GITHUB_RAW = 'https://raw.githubusercontent.com/chriswhite3140/claude-split/main/data/';
 
 const CSV_FILES = {
