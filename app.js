@@ -7972,11 +7972,12 @@ async function saveBulkAssess() {
   const changes = Object.entries(ba.pendingChanges);
   if (!changes.length) return;
   ba.saving = true;
-  renderBulkAssess(document.getElementById('main-content')); // reflect "saving" immediately, disabling the button for the duration
-  setSyncing(true);
-  toast(`Saving ${changes.length} change${changes.length>1?'s':''}…`, 'info');
   let saved = 0;
+  let failed = 0;
   try {
+    renderBulkAssess(document.getElementById('main-content')); // reflect "saving" immediately, disabling the button for the duration
+    setSyncing(true);
+    toast(`Saving ${changes.length} change${changes.length>1?'s':''}…`, 'info');
     for (const [key, rawMastery] of changes) {
       // A null pending value means "clear this rating" — persist it as 'Not taught'
       // so the saved record is unset rather than left at its previous value.
@@ -7986,20 +7987,36 @@ async function saveBulkAssess() {
       try {
         if (existing) {
           const r = await apiCall('updateProgress', { progress_id:existing.id, mastery_level:mastery, date_assessed:ba.date, teacher_notes:existing.notes||'' });
-          if (r.success) { existing.mastery=mastery; existing.date=ba.date; saved++; }
+          if (r.success) {
+            existing.mastery=mastery; existing.date=ba.date; saved++;
+            if (ba.pendingChanges[key] === rawMastery) delete ba.pendingChanges[key];
+          } else {
+            failed++;
+          }
         } else {
           const r = await apiCall('saveProgress', { student_id:studentId, content_descriptor_code:code, mastery_level:mastery, date_assessed:ba.date, teacher_notes:'' });
-          if (r.success) { state.progress.push({ id:r.progress_id, student_id:studentId, code, mastery, date:ba.date, notes:'' }); saved++; }
+          if (r.success) {
+            state.progress.push({ id:r.progress_id, student_id:studentId, code, mastery, date:ba.date, notes:'' }); saved++;
+            if (ba.pendingChanges[key] === rawMastery) delete ba.pendingChanges[key];
+          } else {
+            failed++;
+          }
         }
-      } catch(e) { console.error('Failed to save', key, e); }
+      } catch(e) { console.error('Failed to save', key, e); failed++; }
     }
-    ba.pendingChanges = {};
+
+    if (saved > 0) toast(`✓ Saved ${saved} assessment${saved>1?'s':''}`, 'success');
+    if (failed > 0) {
+      state.syncing = false;
+      setError();
+      toast(`${failed} assessment${failed>1?'s':''} did not save and ${failed>1?'are':'is'} still on screen to retry`, 'error');
+    } else {
+      setSyncing(false);
+    }
   } finally {
     ba.saving = false;
+    renderBulkAssess(document.getElementById('main-content'));
   }
-  setSyncing(false);
-  toast(`✓ Saved ${saved} assessment${saved>1?'s':''}`, 'success');
-  renderBulkAssess(document.getElementById('main-content'));
 }
 
 // ── REPORT HELPERS ──
