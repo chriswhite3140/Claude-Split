@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.16';
+const APP_VERSION = '1.16.17';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1605,14 +1605,14 @@ function setError() {
 }
 
 // ── TOAST ──
-function toast(msg, type = 'success') {
+function toast(msg, type = 'success', duration) {
   const wrap = document.getElementById('toast-wrap');
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   const icon = type === 'success' ? '✓' : type === 'info' ? '✦' : '✗';
   el.innerHTML = `<span>${icon}</span> ${msg}`;
   wrap.appendChild(el);
-  setTimeout(() => el.remove(), type === 'info' ? 4000 : 3000);
+  setTimeout(() => el.remove(), duration ?? (type === 'info' ? 4000 : 3000));
 }
 
 // ── HELPERS ──
@@ -12429,7 +12429,7 @@ function dlNext() {
     } else {
       dlState.masteryMap = {};
       saveDailyLog();
-      toast('Session saved. No students have reached the 80% IC threshold for a mastery judgment yet.', 'success');
+      toast('No students have reached the 80% IC threshold for a mastery judgment yet.', 'info');
     }
   } else {
     saveDailyLog();
@@ -12503,9 +12503,10 @@ async function saveDailyLog() {
 
   if (!entries.length) { toast('Nothing to save', 'error'); return; }
 
-  toast(`Saving ${entries.length} taught records…`, 'success');
+  toast(`Saving ${entries.length} taught records…`, 'info');
   setSyncing(true);
   let saved = 0;
+  let logSaved = false;
 
   try {
     // NOTE: Apps Script saveTaughtLog must accept and persist a lessonId field (a
@@ -12513,7 +12514,7 @@ async function saveDailyLog() {
     // update, it's silently dropped server-side while still landing in local state
     // below, same class of gap as the got_it/needs_review note further down.
     const result = await apiCall('saveTaughtLog', { entries });
-    if (result.success) {
+    if (result?.success) {
       // Add to local state
       entries.forEach((e, i) => {
         state.taughtLog.push({
@@ -12526,6 +12527,7 @@ async function saveDailyLog() {
         });
       });
       saved = entries.length;
+      logSaved = true;
     }
   } catch(err) {
     // Fallback: save locally so session isn't lost
@@ -12533,24 +12535,28 @@ async function saveDailyLog() {
       state.taughtLog.push({ id: 'local_' + Date.now() + '_' + i, ...e });
     });
     saved = entries.length;
-    toast('Saved locally (Sheets sync failed)', 'error');
   }
 
   // Also save any mastery ratings through the existing progress flow
-  const masteryEntries = Object.entries(masteryMapSnapshot);
-  for (const [key, mastery] of masteryEntries) {
+  const masteryEntries = [];
+  Object.entries(masteryMapSnapshot).forEach(([key, mastery]) => {
     const [studentId, code] = key.split('|');
-    if (!mastery) continue;
-    try {
-      await saveProgress({
-        student_id: studentId,
-        content_descriptor_code: code,
-        mastery_level: mastery,
-        date_assessed: sessionDate,
-        teacher_notes: 'Logged via daily session'
-      });
-    } catch(e) { console.warn('Could not save mastery for', key); }
+    if (!mastery) return;
+    masteryEntries.push({
+      student_id: studentId,
+      content_descriptor_code: code,
+      mastery_level: mastery,
+      date_assessed: sessionDate,
+      teacher_notes: 'Logged via daily session'
+    });
+  });
+  let ratingsSaved = 0;
+  try {
+    ratingsSaved = await saveProgressBatch(masteryEntries);
+  } catch(e) {
+    console.warn('Could not save mastery ratings:', e);
   }
+  const ratingsFailed = masteryEntries.length - ratingsSaved;
 
   // Save IC class scan records — one row per student per IC (batch write)
   // All three statuses (taught / got_it / needs_review) mean the IC was taught;
@@ -12562,6 +12568,7 @@ async function saveDailyLog() {
   // Each IC's own lessonId (exact, unlike the code-level best-effort attribution
   // above) — null for an IC added by hand rather than via the Week Board checkbox.
   const icEntries = [];
+  let icSaved = false;
   if (sessionICs.length) {
     presentStudents.forEach(student => {
       sessionICs.forEach(icId => {
@@ -12572,13 +12579,13 @@ async function saveDailyLog() {
   }
   if (icEntries.length) {
     try {
-      await saveTaughtICsBatch(icEntries);
+      const result = await saveTaughtICsBatch(icEntries);
+      icSaved = result?.success === true;
     } catch(e) {
       console.warn('IC class scan save failed:', e);
     }
   }
 
-  setSyncing(false);
   checkDailyLogBadge();
   let icNote = '';
   if (icEntries.length) {
@@ -12591,6 +12598,18 @@ async function saveDailyLog() {
     if (nTaught)      parts.push(`${nTaught} taught`);
     icNote = ` · IC scan: ${parts.join(', ')}`;
   }
+  const failedParts = [];
+  if (!logSaved) failedParts.push('the class log');
+  if (ratingsFailed > 0) failedParts.push(`${ratingsFailed} of ${masteryEntries.length} mastery ratings`);
+  if (icEntries.length && !icSaved) failedParts.push('the IC class scan');
+  if (failedParts.length) {
+    state.syncing = false;
+    setError();
+    toast(`Session NOT fully saved to Google: ${failedParts.join(', ')} did not save. They will be gone after a reload. Redoing the whole session may double up what did save.`, 'error', 10000);
+    renderView();
+    return;
+  }
+  setSyncing(false);
   toast(`✓ Session logged — ${saved} codes taught to ${presentStudents.length} students${icNote}`, 'success');
   renderView();
 }
