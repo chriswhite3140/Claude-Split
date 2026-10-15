@@ -11487,14 +11487,11 @@ function saveStubIC() {
   });
   state.instructionalComponents.push(newIC);
 
-  // Fire-and-forget persist — do not block the wizard UI or undo its local change.
-  // The success toast waits for a confirmed Sheets reply so a rejected write is not
-  // presented as saved.
-  const persistToSheets = (successMessage, successType = 'success') => (async () => {
-    if (TEST_MODE_ACTIVE) {
-      toast(successMessage, successType);
-      return;
-    }
+  // Start persistence immediately so later screen updates cannot prevent the save.
+  // The returned promise reports whether Sheets accepted the write; the existing
+  // confirmation messages below wait for that result.
+  const saveToSheets = (async () => {
+    if (TEST_MODE_ACTIVE) return true;
     try {
       const resp = await fetch(API_URL + '?action=saveStubIC', {
         method: 'POST',
@@ -11515,14 +11512,18 @@ function saveStubIC() {
       if (!resp.ok || result?.error || result?.success === false) {
         console.error('[StubIC] saveStubIC failed:', result?.error || resp.status);
         toast('Draft IC was not saved to Sheets. It will be gone after a reload.', 'error');
-        return;
+        return false;
       }
-      toast(successMessage, successType);
+      return true;
     } catch(err) {
       console.error('[StubIC] Failed to persist to Sheets:', err);
       toast('Draft IC was not saved to Sheets. It will be gone after a reload.', 'error');
+      return false;
     }
   })();
+  const showSavedMessage = (message, type = 'success') => {
+    saveToSheets.then(saved => { if (saved) toast(message, type); });
+  };
 
   updateStubBadge();
 
@@ -11538,14 +11539,14 @@ function saveStubIC() {
     if (li >= 0) {
       const linked = Array.isArray(state.lessonPlans[li].linkedICIds) ? [...state.lessonPlans[li].linkedICIds] : [];
       if (linked.length >= 3) {
-        persistToSheets(`Draft IC "${name}" created, but the lesson already has 3 ICs`, 'info');
+        showSavedMessage(`Draft IC "${name}" created, but the lesson already has 3 ICs`, 'info');
       } else {
         linked.push(newIC.id);
         state.lessonPlans[li] = { ...state.lessonPlans[li], linkedICIds: linked };
         saveLessonPlansState();
-        persistToSheets(`Draft IC "${name}" created and linked to the lesson`);
+        showSavedMessage(`Draft IC "${name}" created and linked to the lesson`);
       }
-    } else persistToSheets(`Draft IC "${name}" created`);
+    } else showSavedMessage(`Draft IC "${name}" created`);
     if (state.currentView === 'planner' || state.currentView === 'unit-plans') renderView();
     return;
   }
@@ -11562,7 +11563,7 @@ function saveStubIC() {
   const btn = document.querySelector('#dl-overlay button[onclick="dlNext()"]');
   if (btn) btn.textContent = dlStep2NextLabel();
 
-  persistToSheets(`Draft IC "${name}" created and added to lesson`);
+  showSavedMessage(`Draft IC "${name}" created and added to lesson`);
 }
 
 function promoteStubIC(icId) {
