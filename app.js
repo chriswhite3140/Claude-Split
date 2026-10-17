@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.17';
+const APP_VERSION = '1.16.18';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -7468,11 +7468,23 @@ async function submitCSVImport() {
   if (!students.length) { toast('No students to import', 'error'); return; }
   closeModal();
   let added = 0;
+  let failed = 0;
   for (const s of students) {
-    const result = await apiCall('addStudent', s);
-    if (result.success) { state.students.push({ id:result.student_id, first_name:s.first_name, last_name:s.last_name, year_level:s.year_level, date_added:new Date().toISOString() }); added++; }
+    try {
+      const result = await apiCall('addStudent', s);
+      if (result.success) { state.students.push({ id:result.student_id, first_name:s.first_name, last_name:s.last_name, year_level:s.year_level, date_added:new Date().toISOString() }); added++; }
+      else { failed++; }
+    } catch (error) {
+      failed++;
+    }
   }
-  toast(`✓ Imported ${added} student${added!==1?'s':''}`, 'success');
+  if (failed === 0) {
+    toast(`✓ Imported ${added} student${added!==1?'s':''}`, 'success');
+  } else {
+    state.syncing = false;
+    setError();
+    toast(`Imported ${added} of ${students.length} students. ${failed} did not save to Google. Choose the same file again to add the rest. Students already added will be skipped.`, 'error', 10000);
+  }
   renderView();
 }
 
@@ -7481,8 +7493,23 @@ async function submitAddStudent() {
   const last  = document.getElementById('f-lastname').value.trim();
   const year  = document.getElementById('f-year').value;
   if (!first || !last || !year) { toast('Please fill in all fields', 'error'); return; }
-  closeModal();
-  await addStudent({ first_name: first, last_name: last, year_level: year });
+  const submitBtn = document.getElementById('modal-submit-btn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Adding…';
+  try {
+    const result = await addStudent({ first_name: first, last_name: last, year_level: year });
+    if (result.success) {
+      closeModal();
+      return;
+    }
+  } catch (error) {
+    // The form remains open so the teacher can retry without re-entering details.
+  }
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Add Student';
+  state.syncing = false;
+  setError();
+  toast('Student was not added. Google did not save it. Check your connection and try again. What you typed is still here.', 'error');
 }
 
 function openMasteryPicker(studentId, code, currentMastery) {
