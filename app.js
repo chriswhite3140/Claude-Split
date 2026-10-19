@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.20';
+const APP_VERSION = '1.16.21';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1463,7 +1463,7 @@ async function saveStandardsJudgment(data) {
     result = await apiCall('saveStandardsJudgment', data);
     if (result.success) {
       state.standardsJudgments.push({
-        id: result.judgment_id, student_id: data.student_id,
+        id: result.standards_judgment_id || result.judgment_id, student_id: data.student_id,
         standard_id: data.standard_id, judgment: data.judgment,
         locked: data.locked || false, date: data.date,
         notes: data.notes || '', period: data.period || ''
@@ -1493,7 +1493,7 @@ async function saveProgressionPlacement(data) {
     result = await apiCall('saveProgressionPlacement', data);
     if (result.success) {
       state.progressionPlacements.push({
-        id: result.placement_id, ...data
+        id: result.progression_placement_id || result.placement_id, ...data
       });
     }
   }
