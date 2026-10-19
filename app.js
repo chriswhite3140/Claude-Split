@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.18';
+const APP_VERSION = '1.16.19';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -9804,7 +9804,7 @@ function openJudgmentPicker(studentId, standardId) {
         </label>
         <div style="display:flex;gap:8px">
           <button class="btn" onclick="closeModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="submitJudgment('${studentId}','${standardId}')">Save Judgment</button>
+          <button class="btn btn-primary" id="judgment-save-btn" onclick="submitJudgment('${studentId}','${standardId}')">Save Judgment</button>
         </div>
       </div>
     </div>
@@ -9832,19 +9832,33 @@ function selectJudgment(itemId) {
 async function submitJudgment(studentId, standardId) {
   const selected = document.getElementById('judgment-scale')?.dataset.selected;
   if (!selected) { toast('Please select a judgment', 'error'); return; }
+  const saveBtn = document.getElementById('judgment-save-btn');
+  if (saveBtn?.disabled) return;
   const date   = document.getElementById('j-date')?.value || new Date().toISOString().split('T')[0];
   const notes  = document.getElementById('j-notes')?.value || '';
   const period = document.getElementById('j-period')?.value || '';
   const locked = document.getElementById('j-locked')?.checked || false;
-  closeModal();
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+  }
   setSyncing(true);
-  const result = await saveStandardsJudgment({ student_id:studentId, standard_id:standardId, judgment:selected, date, notes, period, locked });
-  setSyncing(false);
-  if (result?.success) {
+  try {
+    const result = await saveStandardsJudgment({ student_id:studentId, standard_id:standardId, judgment:selected, date, notes, period, locked });
+    if (!result?.success) throw new Error('Judgment save was unsuccessful');
+
+    setSyncing(false);
+    closeModal();
     toast('Judgment saved', 'success');
     renderView();
-  } else {
-    toast('Could not save judgment', 'error');
+  } catch (error) {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Judgment';
+    }
+    state.syncing = false;
+    setError();
+    toast('Judgment was not saved. Check your connection and try again. What you typed is still here.', 'error');
   }
 }
 
