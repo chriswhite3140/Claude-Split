@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.19';
+const APP_VERSION = '1.16.20';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -10067,7 +10067,7 @@ function openPlacementPicker(studentId, element, subElement) {
       </div>
       <div class="modal-foot">
         <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitPlacement('${studentId}','${element.replace(/'/g,"\\'")}','${subElement.replace(/'/g,"\\'")}')">Save Placement</button>
+        <button class="btn btn-primary" id="placement-save-btn" onclick="submitPlacement('${studentId}','${element.replace(/'/g,"\\'")}','${subElement.replace(/'/g,"\\'")}')">Save Placement</button>
       </div>
     </div>
   `;
@@ -10090,19 +10090,33 @@ async function submitPlacement(studentId, element, subElement) {
   const modal = document.getElementById('modal-overlay');
   const level = modal?.dataset.selectedLevel;
   if (!level) { toast('Please select a level', 'error'); return; }
+  const saveBtn = document.getElementById('placement-save-btn');
+  if (saveBtn?.disabled) return;
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+  }
   const date      = document.getElementById('pp-date')?.value || new Date().toISOString().split('T')[0];
   const notes     = document.getElementById('pp-notes')?.value || '';
   const extLabel  = document.getElementById('pp-ext-label')?.value || '';
   const extValue  = document.getElementById('pp-ext-value')?.value || '';
-  closeModal();
   setSyncing(true);
-  const result = await saveProgressionPlacement({ student_id:studentId, element, sub_element:subElement, level, date, notes, ext_label:extLabel, ext_value:extValue });
-  setSyncing(false);
-  if (result?.success) {
+  try {
+    const result = await saveProgressionPlacement({ student_id:studentId, element, sub_element:subElement, level, date, notes, ext_label:extLabel, ext_value:extValue });
+    if (!result?.success) throw new Error('Placement save was unsuccessful');
+
+    setSyncing(false);
+    closeModal();
     toast('Placement saved', 'success');
     renderView();
-  } else {
-    toast('Could not save placement', 'error');
+  } catch (error) {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Placement';
+    }
+    state.syncing = false;
+    setError();
+    toast('Placement was not saved. Check your connection and try again. What you typed is still here.', 'error');
   }
 }
 
