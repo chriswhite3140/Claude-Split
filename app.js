@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.21';
+const APP_VERSION = '1.16.22';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -1526,27 +1526,24 @@ async function saveProgress(data) {
       date_assessed: data.date_assessed,
       teacher_notes: data.teacher_notes
     });
-    if (result.success) {
-      existing.mastery = data.mastery_level;
-      existing.date = data.date_assessed;
-      existing.notes = data.teacher_notes;
-      toast('Progress updated', 'success');
-    }
+    if (result?.success !== true) throw new Error('Progress update was unsuccessful');
+    existing.mastery = data.mastery_level;
+    existing.date = data.date_assessed;
+    existing.notes = data.teacher_notes;
+    toast('Progress updated', 'success');
   } else {
     const result = await apiCall('saveProgress', data);
-    if (result.success) {
-      state.progress.push({
-        id: result.progress_id,
-        student_id: data.student_id,
-        code: data.content_descriptor_code,
-        mastery: data.mastery_level,
-        date: data.date_assessed,
-        notes: data.teacher_notes
-      });
-      toast('Progress saved', 'success');
-    }
+    if (result?.success !== true) throw new Error('Progress save was unsuccessful');
+    state.progress.push({
+      id: result.progress_id,
+      student_id: data.student_id,
+      code: data.content_descriptor_code,
+      mastery: data.mastery_level,
+      date: data.date_assessed,
+      notes: data.teacher_notes
+    });
+    toast('Progress saved', 'success');
   }
-  renderView();
 }
 
 async function saveProgressBatch(entries) {
@@ -7553,7 +7550,7 @@ function openMasteryPicker(studentId, code, currentMastery) {
       </div>
       <div class="modal-foot">
         <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitMastery('${studentId}','${code}')">Save</button>
+        <button class="btn btn-primary" id="mastery-save-btn" onclick="submitMastery('${studentId}','${code}')">Save</button>
       </div>
     </div>
   `;
@@ -7584,36 +7581,56 @@ function selectMastery(btn, mastery) {
 async function submitMastery(studentId, code) {
   const selected = document.querySelector('.mp-option[class*="selected-"]');
   if (!selected) { toast('Please select a mastery level', 'error'); return; }
+  const saveBtn = document.getElementById('mastery-save-btn');
+  if (saveBtn?.disabled) return;
   const mastery = selected.dataset.mastery;
   const date = document.getElementById('f-date').value;
   const notes = document.getElementById('f-notes').value;
 
-  const componentInputs = [...document.querySelectorAll('[data-component-mastery]')];
-  componentInputs.forEach(input => {
-    const componentId = input.getAttribute('data-component-mastery');
-    const componentMastery = input.value;
-    if (!componentId || !componentMastery) return;
-    const existing = state.componentProgress.find(p => p.student_id === studentId && p.component_id === componentId);
-    if (existing) {
-      existing.mastery = componentMastery;
-      existing.date = date;
-      existing.notes = notes || existing.notes || '';
-      existing.code = code;
-    } else {
-      state.componentProgress.push({
-        id: `cprog_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
-        student_id: studentId,
-        component_id: componentId,
-        code,
-        mastery: componentMastery,
-        date,
-        notes: notes || ''
-      });
+  const componentInputs = [...document.querySelectorAll('[data-component-mastery]')].map(input => ({
+    componentId: input.getAttribute('data-component-mastery'),
+    mastery: input.value
+  }));
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+  }
+
+  try {
+    await saveProgress({ student_id:studentId, content_descriptor_code:code, mastery_level:mastery, date_assessed:date, teacher_notes:notes });
+
+    componentInputs.forEach(({ componentId, mastery: componentMastery }) => {
+      if (!componentId || !componentMastery) return;
+      const existing = state.componentProgress.find(p => p.student_id === studentId && p.component_id === componentId);
+      if (existing) {
+        existing.mastery = componentMastery;
+        existing.date = date;
+        existing.notes = notes || existing.notes || '';
+        existing.code = code;
+      } else {
+        state.componentProgress.push({
+          id: `cprog_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+          student_id: studentId,
+          component_id: componentId,
+          code,
+          mastery: componentMastery,
+          date,
+          notes: notes || ''
+        });
+      }
+    });
+    saveComponentProgressState();
+    closeModal();
+    renderView();
+  } catch (error) {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
     }
-  });
-  saveComponentProgressState();
-  closeModal();
-  await saveProgress({ student_id:studentId, content_descriptor_code:code, mastery_level:mastery, date_assessed:date, teacher_notes:notes });
+    state.syncing = false;
+    setError();
+    toast('Mastery was not saved. Check your connection and try again. What you typed is still here.', 'error');
+  }
 }
 
 function openBulkAssess(studentId) {
