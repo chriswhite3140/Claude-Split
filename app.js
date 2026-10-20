@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.22';
+const APP_VERSION = '1.16.23';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -9256,17 +9256,32 @@ async function submitMasteryBanner() {
   }
 
   const btn = document.querySelector('#mastery-banner-modal .btn-primary');
+  const originalBtnLabel = btn?.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   try {
     const savedCount = await saveProgressBatch(toSave);
-    document.getElementById('mastery-banner-modal')?.remove();
-    toast(`${savedCount} mastery judgement${savedCount !== 1 ? 's' : ''} saved`, 'success');
-    renderView();
+    if (savedCount === toSave.length) {
+      document.getElementById('mastery-banner-modal')?.remove();
+      toast(`${savedCount} mastery judgement${savedCount !== 1 ? 's' : ''} saved`, 'success');
+      renderView();
+      return;
+    }
+
+    if (btn) { btn.disabled = false; btn.textContent = originalBtnLabel; }
+    state.syncing = false;
+    setError();
+    if (savedCount === 0) {
+      toast('Mastery judgements were not saved. Check your connection and try again. What you chose is still here.', 'error', 10000);
+    } else {
+      toast(`Only ${savedCount} of ${toSave.length} mastery judgements were saved. Press Save again to retry. The ones already saved will not be doubled.`, 'error', 10000);
+    }
   } catch(e) {
     console.error('submitMasteryBanner error:', e);
-    toast('Could not save judgements', 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Save judgements'; }
+    if (btn) { btn.disabled = false; btn.textContent = originalBtnLabel; }
+    state.syncing = false;
+    setError();
+    toast('Mastery judgements were not saved. Check your connection and try again. What you chose is still here.', 'error', 10000);
   }
 }
 
