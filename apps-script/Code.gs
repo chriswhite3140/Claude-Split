@@ -111,7 +111,17 @@ function saveTaughtICs(data) {
     return [id, entry.date, entry.student_id, entry.ic_id, entry.status, entry.notes || '', entry.lessonId || ''];
   });
   if (rows.length) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 7).setValues(rows);
+    const lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(30000);
+    } catch (err) {
+      return { success: false, error: "Busy, please try again" };
+    }
+    try {
+      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 7).setValues(rows);
+    } finally {
+      lock.releaseLock();
+    }
   }
   return { success: true, ids };
 }
@@ -433,7 +443,17 @@ function saveTaughtLog(data) {
       ids.push(id);
       return [id, entry.date || '', entry.student_id || '', entry.code || '', entry.notes || '', entry.lessonId || ''];
     });
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 6).setValues(rows);
+    var lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(30000);
+    } catch (err) {
+      return { success: false, error: "Busy, please try again" };
+    }
+    try {
+      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 6).setValues(rows);
+    } finally {
+      lock.releaseLock();
+    }
     clearAllCache();
     return { success: true, ids: ids };
   }
