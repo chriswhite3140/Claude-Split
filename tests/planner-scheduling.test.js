@@ -5192,6 +5192,9 @@ function makeTestModeSandbox(opts = {}) {
       ';globalThis.__tmLoadStubICsFromSheets = function(){ return typeof loadStubICsFromSheets === "function" ? loadStubICsFromSheets : undefined; };\n' +
       ';globalThis.__tmFetchICsCSVFromGitHub = function(){ return typeof fetchICsCSVFromGitHub === "function" ? fetchICsCSVFromGitHub : undefined; };\n' +
       ';globalThis.__tmSeedSampleDataExtras = function(){ return typeof seedSampleDataExtras === "function" ? seedSampleDataExtras : undefined; };\n' +
+      ';globalThis.__tmPlannerLessonsForDay = function(weekKey, dayKey){ return plannerLessonsForDay(weekKey, dayKey); };\n' +
+      ';globalThis.__tmPlannerBuildDailySheetColumns = function(lessons, ics){ return plannerBuildDailySheetColumns(lessons, ics); };\n' +
+      ';globalThis.__tmBuildPlannerDailySheetHtml = function(data){ return buildPlannerDailySheetHtml(data); };\n' +
       ';globalThis.__tmGetState = function(){ return typeof state !== "undefined" ? state : undefined; };\n',
       tmSandbox,
       { filename: 'app.js (test-mode sandbox)' }
@@ -5813,6 +5816,89 @@ test('syncNavHighlight() clears a stale highlight rather than only ever adding �
   nav.setCurrentView('coverage', { persist: false });
   nav.syncNavHighlight();
   assertOnlyActive(navBtns, 'nav-coverage', 'second sync must clear the first, not accumulate');
+});
+
+// ── Weekly Planner daily print sheet ──────────────────────────────────────────
+console.log('Weekly Planner daily print sheet');
+
+test('daily print-sheet columns follow the day lesson order and retain the owning lesson title', () => {
+  const columns = sandbox.plannerBuildDailySheetColumns([
+    { id: 'lesson_1', title: 'Warm-up', linkedICIds: ['ic_2', 'ic_1'] },
+    { id: 'lesson_2', title: 'Main lesson', linkedICIds: ['ic_3'] },
+  ], [
+    { id: 'ic_1', name: 'Identify halves', homeDescriptorId: 'AC9M3N01' },
+    { id: 'ic_2', name: 'Compare fractions', homeDescriptorId: 'AC9M3N02' },
+    { id: 'ic_3', name: 'Explain equivalence', homeDescriptorId: 'AC9M3N03' },
+  ]);
+  eqJson(columns.map(c => [c.label, c.name, c.descriptorCode, c.lessonTitle]), [
+    ['IC1', 'Compare fractions', 'AC9M3N02', 'Warm-up'],
+    ['IC2', 'Identify halves', 'AC9M3N01', 'Warm-up'],
+    ['IC3', 'Explain equivalence', 'AC9M3N03', 'Main lesson'],
+  ], 'columns must preserve linked-IC order and associate each column with its scheduled lesson');
+});
+
+test('daily print-sheet columns de-duplicate an IC shared by two scheduled lessons', () => {
+  const columns = sandbox.plannerBuildDailySheetColumns([
+    { title: 'First lesson', linkedICIds: ['shared', 'first-only'] },
+    { title: 'Second lesson', linkedICIds: ['shared', 'second-only'] },
+  ], [
+    { id: 'shared', name: 'Shared IC', homeDescriptorId: 'AC9M3N01' },
+    { id: 'first-only', name: 'First IC', homeDescriptorId: 'AC9M3N02' },
+    { id: 'second-only', name: 'Second IC', homeDescriptorId: 'AC9M3N03' },
+  ]);
+  assert.strictEqual(columns.length, 3, 'the shared IC must appear once only');
+  assert.strictEqual(columns[0].lessonTitle, 'First lesson', 'the first scheduled lesson owns the shared IC heading');
+  eqJson(columns.map(c => c.label), ['IC1', 'IC2', 'IC3'], 'labels must be consecutive after de-duplication');
+});
+
+test('daily print-sheet columns split into ten-column pages without shrinking the grid', () => {
+  const columns = Array.from({ length: 23 }, (_, index) => ({ label: 'IC' + (index + 1) }));
+  const pages = sandbox.plannerSplitDailySheetColumns(columns);
+  eqJson(pages.map(page => page.map(column => column.label)), [
+    ['IC1', 'IC2', 'IC3', 'IC4', 'IC5', 'IC6', 'IC7', 'IC8', 'IC9', 'IC10'],
+    ['IC11', 'IC12', 'IC13', 'IC14', 'IC15', 'IC16', 'IC17', 'IC18', 'IC19', 'IC20'],
+    ['IC21', 'IC22', 'IC23'],
+  ], 'more than ten ICs must continue on repeated-grid pages');
+});
+
+test('daily print-sheet layout retains 28 full-height student rows with 12mm marking cells', () => {
+  const students = Array.from({ length: 28 }, (_, index) => ({ id: 'student_' + index, first_name: 'Student', last_name: String(index + 1) }));
+  const html = sandbox.buildPlannerDailySheetHtml({
+    date: 'Monday, 29 June 2026', className: 'My Class', students,
+    columns: [{ label: 'IC1', name: 'Compare fractions', descriptorCode: 'AC9M3N02', lessonTitle: 'Fractions' }],
+  });
+  assert.strictEqual((html.match(/class="daily-sheet-student"/g) || []).length, 28, 'the 28-student fixture must render one name-strip row per student');
+  assert.ok(html.includes('min-width:12mm'), 'marking cells must retain a 12mm minimum width');
+  assert.ok(html.includes('height:8mm'), 'marking cells must retain an approximately 8mm row height');
+  assert.ok(html.includes('border-right:0.35mm dashed #000'), 'the name strip must have a dashed fold line');
+});
+
+test('daily print-sheet implementation is read-only: its print path has no API or localStorage write', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  const start = source.indexOf('function printPlannerDailySheet(');
+  assert.ok(start >= 0, 'print function must exist');
+  const end = source.indexOf('\nfunction ', start + 1);
+  const block = source.slice(start, end < 0 ? source.length : end);
+  assert.ok(!/apiCall\s*\(|fetch\s*\(|localStorage\.setItem\s*\(/.test(block), 'opening a daily sheet must not call the API or write localStorage');
+});
+
+test('Test Mode sample data traces to an 18-row Tuesday print sheet with the scheduled unit lesson ICs and no API call or storage write', () => {
+  const { sandbox: tm, fetchCalls, backing } = makeTestModeSandbox({ locationSearch: '?testMode=1&sampleData=1' });
+  const fixture = tm.CT_SAMPLE_TEST_MODE_DATA;
+  const state = tm.__tmGetState();
+  state.students = fixture.students;
+  tm.__tmSeedSampleDataExtras()();
+  const beforeFetches = fetchCalls.length;
+  const beforeStorage = JSON.stringify(backing);
+  const lessons = tm.__tmPlannerLessonsForDay('2026-08-03', 'tue');
+  const columns = tm.__tmPlannerBuildDailySheetColumns(lessons, state.instructionalComponents);
+  const html = tm.__tmBuildPlannerDailySheetHtml({ date: 'Tuesday, 4 August 2026', className: 'Year 3/4 Composite', students: state.students, columns });
+  assert.strictEqual(lessons.length, 1, 'the sample Tuesday must include its scheduled unit lesson occurrence');
+  assert.strictEqual(lessons[0].title, 'Drafting our persuasive letters');
+  assert.deepStrictEqual(Array.from(columns, column => column.label), ['IC1', 'IC2']);
+  assert.strictEqual((html.match(/class="daily-sheet-student"/g) || []).length, 18, 'the sample roster has 18 rows');
+  assert.strictEqual(fetchCalls.length, beforeFetches, 'building the sheet must make no API call');
+  assert.strictEqual(JSON.stringify(backing), beforeStorage, 'building the sheet must make no localStorage write');
 });
 
 // ── Summary ─────────────────────────────────────────────────────────────────────

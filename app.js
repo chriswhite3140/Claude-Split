@@ -2,13 +2,17 @@
  * ============================================================
  * ClassTracker — Australian Curriculum Progress Tracker
  * ============================================================
- * THIS FILE IS VERSION: 1.16.12
+ * THIS FILE IS VERSION: 1.16.25
  * Last updated: 2026-08-12
  * ============================================================
  *
  * Author: Chris White
  * Repo:   https://github.com/chriswhite3140/class-tracker-split
  * Live:   https://chriswhite3140.github.io/class-tracker-split
+ *
+ * v1.16.25 - Weekly Planner: add a read-only Print sheet action for a selected day.
+ *   It opens an A4 hand-marking sheet using the Week Board's scheduled lesson order,
+ *   the Daily Log Wizard's sorted roster, and linked ICs only; it never saves data.
  *
  * v1.16.16 - Show a clear, safe message when the app password does not match Google,
  *   instead of showing an empty class; draft IC saves now report a failed Sheets save
@@ -753,7 +757,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.24';
+const APP_VERSION = '1.16.25';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -2053,7 +2057,7 @@ function renderPlanner(main) {
   const weekKey = plannerSelectedWeekKey();
   // Exclude lessons that belong to a unit — those are placed on the board via
   // scheduledSlots (below), not by their legacy weekKey/dayKey.
-  const weekLessons = state.lessonPlans.filter(lesson => lesson.weekKey === weekKey && !lesson.unitId);
+  const { weekLessons, unitOccurrences } = plannerWeekBoardLessonData(weekKey);
   // Any standalone lesson whose dayKey isn't one of the rendered columns (in practice
   // only the legacy 'unscheduled' value) — kept visible in their own area instead of
   // disappearing now that the Unscheduled column is gone.
@@ -2062,16 +2066,6 @@ function renderPlanner(main) {
   // Unit lessons appear on the same board as standalone lessons — one card per slot
   // that targets the displayed week. The same lesson can yield several occurrences
   // (multi-slot), so it renders once per matching slot.
-  const unitOccurrences = [];
-  (state.lessonPlans || []).forEach(lesson => {
-    if (!lesson.unitId) return;
-    (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).forEach(slot => {
-      if (isValidScheduledSlot(slot) && slot.weekKey === weekKey) {
-        unitOccurrences.push({ lesson, dayKey: slot.dayKey });
-      }
-    });
-  });
-
   // Scope the selected lesson to the displayed week so navigating weeks doesn't leave
   // the drawer editing a now-hidden lesson from another week. A standalone lesson must
   // belong to this week; a unit lesson must have at least one occurrence this week —
@@ -2151,6 +2145,7 @@ function renderPlanner(main) {
             aria-label="Jump to date" onclick="event.stopPropagation();plannerToggleDatePicker()">${PLANNER_CALENDAR_ICON_SVG}</button>
           ${state.plannerUi.datePickerOpen ? plannerDatePickerHtml() : ''}
         </div>
+         <button class="btn" type="button" onclick="openPlannerDailySheetPicker()">Print sheet</button>
         <button class="btn btn-primary" id="planner-add-lesson-btn" type="button" onclick="plannerAddLesson()">+ Add Lesson</button>
       </div>
     </div>
@@ -2246,6 +2241,142 @@ function plannerDayItemsInOrder(weekKey, dayKey, weekLessons, unitOccurrences) {
       .map(entry => entry.item);
   }
   return items;
+}
+
+// The Week Board and daily print sheet deliberately share this occurrence builder, so
+// both standalone lessons and each scheduled unit-lesson occurrence mean the same thing.
+function plannerWeekBoardLessonData(weekKey) {
+  const weekLessons = (state.lessonPlans || []).filter(lesson => lesson.weekKey === weekKey && !lesson.unitId);
+  const unitOccurrences = [];
+  (state.lessonPlans || []).forEach(lesson => {
+    if (!lesson.unitId) return;
+    (Array.isArray(lesson.scheduledSlots) ? lesson.scheduledSlots : []).forEach(slot => {
+      if (isValidScheduledSlot(slot) && slot.weekKey === weekKey) unitOccurrences.push({ lesson, dayKey: slot.dayKey });
+    });
+  });
+  return { weekLessons, unitOccurrences };
+}
+
+// Pure transformation used by the print sheet and its regression tests. The first
+// scheduled lesson that uses an IC owns its heading; later uses remain de-duplicated.
+function plannerBuildDailySheetColumns(dayLessons, instructionalComponents) {
+  const icsById = new Map((instructionalComponents || []).map(ic => [ic.id, ic]));
+  const seen = new Set();
+  const columns = [];
+  (dayLessons || []).forEach(lesson => {
+    (Array.isArray(lesson.linkedICIds) ? lesson.linkedICIds : []).forEach(icId => {
+      if (!icId || seen.has(icId)) return;
+      seen.add(icId);
+      const ic = icsById.get(icId);
+      if (!ic) return;
+      columns.push({
+        id: icId,
+        lessonTitle: lesson.title || 'Untitled lesson',
+        name: ic.name || icId,
+        descriptorCode: ic.homeDescriptorId || '',
+      });
+    });
+  });
+  return columns.map((column, index) => ({ ...column, label: `IC${index + 1}` }));
+}
+
+function plannerSplitDailySheetColumns(columns, columnsPerPage = 10) {
+  const pages = [];
+  for (let start = 0; start < columns.length; start += columnsPerPage) pages.push(columns.slice(start, start + columnsPerPage));
+  return pages;
+}
+
+function plannerDailySheetDayChoices(weekKey) {
+  const labels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+  return PLANNER_SCHEDULABLE_DAYS.map((key, index) => ({ key, label: labels[index], date: plannerDateForSlot(weekKey, key) }));
+}
+
+function plannerDefaultDailySheetDayKey(weekKey) {
+  const today = toIsoDate(new Date());
+  return plannerDailySheetDayChoices(weekKey).find(day => day.date === today)?.key || 'mon';
+}
+
+function plannerDailySheetDateLabel(isoDate) {
+  const date = parseIsoDateLocal(isoDate);
+  return date ? date.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : isoDate;
+}
+
+function plannerLessonsForDay(weekKey, dayKey) {
+  const { weekLessons, unitOccurrences } = plannerWeekBoardLessonData(weekKey);
+  return plannerDayItemsInOrder(weekKey, dayKey, weekLessons, unitOccurrences).map(item => {
+    if (item.type === 'standalone') return weekLessons.find(lesson => lesson.id === item.lessonId);
+    return unitOccurrences.find(occurrence => occurrence.dayKey === dayKey && occurrence.lesson.id === item.lessonId)?.lesson;
+  }).filter(Boolean);
+}
+
+function openPlannerDailySheetPicker() {
+  const weekKey = plannerSelectedWeekKey();
+  const defaultDay = plannerDefaultDailySheetDayKey(weekKey);
+  const choices = plannerDailySheetDayChoices(weekKey);
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'planner-daily-sheet-overlay';
+  modal.innerHTML = `
+    <div class="modal" style="width:440px;max-width:95vw">
+      <div class="modal-head"><div class="modal-title">Print daily sheet</div><button class="modal-close" onclick="closePlannerDailySheetPicker()">×</button></div>
+      <div class="modal-body">
+        <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Choose a day from the week currently shown. The sheet is for hand marking only and does not save anything.</div>
+        <label class="form-label" for="planner-daily-sheet-day">Day</label>
+        <select class="form-select" id="planner-daily-sheet-day">
+          ${choices.map(day => `<option value="${day.key}" ${day.key === defaultDay ? 'selected' : ''}>${escapeHtml(day.label)} — ${escapeHtml(plannerDailySheetDateLabel(day.date))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="modal-foot"><button class="btn" onclick="closePlannerDailySheetPicker()">Cancel</button><button class="btn btn-primary" onclick="printPlannerDailySheet('${weekKey}')">Open &amp; Print</button></div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function closePlannerDailySheetPicker() {
+  document.getElementById('planner-daily-sheet-overlay')?.remove();
+}
+
+function plannerDailySheetPageHtml(columns, students, date, className) {
+  const lessonGroups = [];
+  columns.forEach(column => {
+    const last = lessonGroups[lessonGroups.length - 1];
+    if (last && last.title === column.lessonTitle) last.count += 1;
+    else lessonGroups.push({ title: column.lessonTitle, count: 1 });
+  });
+  return `<section class="daily-sheet-page">
+    <header class="daily-sheet-header"><h1>${escapeHtml(date)}</h1><div class="daily-sheet-meta"><span><strong>Class:</strong> ${escapeHtml(className)}</span><span><strong>Legend:</strong> ✓ = got it &nbsp; × = needs review &nbsp; blank = not assessed</span></div></header>
+    <table class="daily-sheet-grid">
+      <thead><tr><th class="daily-sheet-name-head" rowspan="2">Student</th><th class="daily-sheet-number-head" rowspan="2">#</th>${lessonGroups.map(group => `<th class="daily-sheet-lesson" colspan="${group.count}">${escapeHtml(group.title)}</th>`).join('')}</tr>
+      <tr>${columns.map(column => `<th class="daily-sheet-ic-head">${column.label}</th>`).join('')}</tr></thead>
+      <tbody>${students.map((student, index) => `<tr><th class="daily-sheet-student">${escapeHtml(`${student.first_name || ''} ${student.last_name || ''}`.trim() || 'Unnamed student')}</th><td class="daily-sheet-row-number">${index + 1}</td>${columns.map(() => '<td class="daily-sheet-cell"></td>').join('')}</tr>`).join('')}</tbody>
+    </table>
+    <div class="daily-sheet-key"><strong>IC key</strong>${columns.map(column => `<div><b>${column.label}</b> — ${escapeHtml(column.name)}${column.descriptorCode ? ` <span>(${escapeHtml(column.descriptorCode)})</span>` : ''}</div>`).join('')}</div>
+  </section>`;
+}
+
+function buildPlannerDailySheetHtml({ date, className, students, columns }) {
+  const pages = plannerSplitDailySheetColumns(columns);
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Daily marking sheet — ${escapeHtml(date)}</title><style>
+    * { box-sizing:border-box; } body { margin:0; background:#fff; color:#000; font-family:Arial,sans-serif; } @page { size:A4 portrait; margin:7mm; }
+    .daily-sheet-page { page-break-after:always; } .daily-sheet-page:last-child { page-break-after:auto; } .daily-sheet-header { margin:0 0 5mm; } .daily-sheet-header h1 { margin:0 0 2mm; font-size:16pt; } .daily-sheet-meta { font-size:10pt; display:flex; justify-content:space-between; gap:8mm; } .daily-sheet-legend { margin-top:2mm; font-size:9pt; }
+    .daily-sheet-grid { border-collapse:collapse; width:max-content; min-width:100%; table-layout:fixed; } .daily-sheet-grid th, .daily-sheet-grid td { border:0.25mm solid #000; } .daily-sheet-name-head, .daily-sheet-student { width:44mm; min-width:44mm; max-width:44mm; padding:1.5mm 2mm; text-align:left; font-size:8.5pt; font-weight:600; border-right:0.35mm dashed #000 !important; } .daily-sheet-number-head, .daily-sheet-row-number { width:7mm; min-width:7mm; text-align:center; font-size:8pt; } .daily-sheet-lesson { height:9mm; padding:1mm; font-size:7.5pt; font-weight:600; text-align:center; vertical-align:bottom; } .daily-sheet-ic-head { width:12mm; min-width:12mm; height:7mm; font-size:8pt; text-align:center; } .daily-sheet-cell { width:12mm; min-width:12mm; height:8mm; } .daily-sheet-key { margin-top:4mm; font-size:8.5pt; line-height:1.35; columns:2; column-gap:8mm; } .daily-sheet-key strong { display:block; margin-bottom:1mm; } .daily-sheet-key div { break-inside:avoid; } .daily-sheet-key span { font-family:monospace; }
+    @media print { body { background:#fff !important; color:#000 !important; } .daily-sheet-page { break-after:page; } .daily-sheet-page:last-child { break-after:auto; } }
+  </style></head><body>${pages.map(page => plannerDailySheetPageHtml(page, students, date, className)).join('')}</body></html>`;
+}
+
+function printPlannerDailySheet(weekKey) {
+  const dayKey = document.getElementById('planner-daily-sheet-day')?.value || plannerDefaultDailySheetDayKey(weekKey);
+  const lessons = plannerLessonsForDay(weekKey, dayKey);
+  const columns = plannerBuildDailySheetColumns(lessons, state.instructionalComponents);
+  if (!columns.length) { toast('No lessons with linked ICs are scheduled for that day.', 'info'); return; }
+  const students = sortStudents(state.students);
+  const activeGroup = state.classSettings ? getActiveGroup() : null;
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) { toast('Allow pop-ups to open the daily sheet for printing.', 'error'); return; }
+  closePlannerDailySheetPicker();
+  printWindow.document.write(buildPlannerDailySheetHtml({ date: plannerDailySheetDateLabel(plannerDateForSlot(weekKey, dayKey)), className: activeGroup?.name || 'My Class', students, columns }));
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => printWindow.print(), 600);
 }
 
 function plannerLessonCardHtml(lesson) {
