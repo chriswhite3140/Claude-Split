@@ -753,7 +753,7 @@ if (TEST_MODE_ACTIVE) {
   })();
 }
 
-const APP_VERSION = '1.16.23';
+const APP_VERSION = '1.16.24';
 // Cache version is tied to APP_VERSION so any version bump auto-invalidates the CSV cache.
 const CSV_CACHE_VERSION = APP_VERSION;
 const LESSON_PLANS_STORAGE_KEY = 'ct_planner_lessons_v2';
@@ -7480,7 +7480,7 @@ async function submitCSVImport() {
   } else {
     state.syncing = false;
     setError();
-    toast(`Imported ${added} of ${students.length} students. ${failed} did not save to Google. Choose the same file again to add the rest. Students already added will be skipped.`, 'error', 10000);
+    toast(`Imported ${added} of ${students.length} students. ${failed} did not save. Check your connection, then choose the same file again to add the rest. Students already added will be skipped.`, 'error', 10000);
   }
   renderView();
 }
@@ -7506,7 +7506,7 @@ async function submitAddStudent() {
   submitBtn.textContent = 'Add Student';
   state.syncing = false;
   setError();
-  toast('Student was not added. Google did not save it. Check your connection and try again. What you typed is still here.', 'error');
+  toast('Student was not added. Check your connection and try again. What you typed is still here.', 'error');
 }
 
 function openMasteryPicker(studentId, code, currentMastery) {
@@ -11598,13 +11598,13 @@ function saveStubIC() {
       const result = await resp.json();
       if (!resp.ok || result?.error || result?.success === false) {
         console.error('[StubIC] saveStubIC failed:', result?.error || resp.status);
-        toast('Draft IC was not saved to Sheets. It will be gone after a reload.', 'error');
+        toast('Draft IC was not saved. It will be gone after a reload.', 'error');
         return false;
       }
       return true;
     } catch(err) {
       console.error('[StubIC] Failed to persist to Sheets:', err);
-      toast('Draft IC was not saved to Sheets. It will be gone after a reload.', 'error');
+      toast('Draft IC was not saved. It will be gone after a reload.', 'error');
       return false;
     }
   })();
@@ -11679,13 +11679,13 @@ function promoteStubIC(icId) {
       const result = await resp.json();
       if (!resp.ok || result?.error || result?.success === false) {
         console.error('[StubIC] promoteStubIC failed:', result?.error || resp.status);
-        toast('Draft IC promotion was not saved to Sheets. It will be gone after a reload.', 'error');
+        toast('Draft IC promotion was not saved. It will be gone after a reload.', 'error');
         return;
       }
       toast(`IC promoted: "${name}"`, 'success');
     } catch(err) {
       console.error('[StubIC] Failed to persist promotion to Sheets:', err);
-      toast('Draft IC promotion was not saved to Sheets. It will be gone after a reload.', 'error');
+      toast('Draft IC promotion was not saved. It will be gone after a reload.', 'error');
     }
   })();
   updateStubBadge();
@@ -11713,13 +11713,13 @@ function deleteStubIC(icId) {
       const result = await resp.json();
       if (!resp.ok || result?.error || result?.success === false) {
         console.error('[StubIC] deleteStubIC failed:', result?.error || resp.status);
-        toast('Draft IC delete was not saved to Sheets. The draft will come back after a reload.', 'error');
+        toast('Draft IC delete was not saved. The draft will come back after a reload.', 'error');
         return;
       }
       toast('Draft IC deleted', 'success');
     } catch(err) {
       console.error('[StubIC] Failed to delete stub from Sheets:', err);
-      toast('Draft IC delete was not saved to Sheets. The draft will come back after a reload.', 'error');
+      toast('Draft IC delete was not saved. The draft will come back after a reload.', 'error');
     }
   })();
   updateStubBadge();
@@ -12692,7 +12692,7 @@ async function saveDailyLog() {
   if (failedParts.length) {
     state.syncing = false;
     setError();
-    toast(`Session NOT fully saved to Google: ${failedParts.join(', ')} did not save. They will be gone after a reload. Redoing the whole session may double up what did save.`, 'error', 10000);
+    toast(`Session NOT fully saved: ${failedParts.join(', ')} did not save. They will be gone after a reload. Redoing the whole session may double up what did save.`, 'error', 10000);
     renderView();
     return;
   }
